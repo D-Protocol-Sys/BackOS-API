@@ -25,6 +25,12 @@ export class AuthService {
 
     async requestOtp(dto: RequestOtpDto) {
         
+        const existingUser = await this.prisma.user.findUnique({
+            where: { email: dto.email },
+        });
+
+        const isBrandNewUser = !existingUser;
+
         const user = await this.prisma.user.upsert({
             where: { email: dto.email },
             update: { firstName: dto.firstName, lastName: dto.lastName },
@@ -35,6 +41,19 @@ export class AuthService {
             },
         });
 
+        if (isBrandNewUser) {
+            const totalUsers = await this.prisma.user.count();
+            if (totalUsers === 1) {
+                const ownerRole = await this.prisma.role.findUnique({
+                    where: { name: 'owner' },
+                });
+                if (ownerRole) {
+                    await this.prisma.userRole.create({
+                        data: { userId: user.id, roleId: ownerRole.id },
+                    });
+                }
+            }
+        }
         
         const recentCode = await this.prisma.otpCode.findFirst({
             where: {
@@ -83,6 +102,10 @@ export class AuthService {
 
         if (!user) {
             throw new UnauthorizedException('Code invalide ou expiré.');
+        }
+
+        if (!user.isActive) {
+            throw new UnauthorizedException('Ce compte est désactivé.');
         }
 
         const otpCode = await this.prisma.otpCode.findFirst({
@@ -160,7 +183,9 @@ export class AuthService {
 
     private async issueTokens(userId: string, email: string) {
 
-        const accessToken = this.jwtService.sign({ sub: userId, email });
+        const permissions = await this.getPermissionsForUser(userId);
+
+        const accessToken = this.jwtService.sign({ sub: userId, email, permissions });
 
         const rawRefreshToken = crypto.randomBytes(64).toString('hex');
         const tokenHash = this.hashToken(rawRefreshToken);
@@ -180,6 +205,27 @@ export class AuthService {
 
         return { accessToken, refreshToken: rawRefreshToken };
 
+    }
+
+    private async getPermissionsForUser(userId: string): Promise<string[]> {
+        const userRoles = await this.prisma.userRole.findMany({
+            where: { userId },
+            include: {
+                role: {
+                    include: { rolePermissions: { include: { permission: true } } },
+                },
+            },
+        });
+
+        const permissionSet = new Set<string>();
+
+        for (const userRole of userRoles) {
+            for (const rolePermission of userRole.role.rolePermissions) {
+                permissionSet.add(rolePermission.permission.key);
+            }
+        }
+
+        return Array.from(permissionSet);
     }
 
     private hashToken(rawToken: string): string {

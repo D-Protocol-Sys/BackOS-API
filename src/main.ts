@@ -3,35 +3,47 @@ import { ValidationPipe, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
+import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 
 async function bootstrap() {
 
-  const app = await NestFactory.create(AppModule);
-  const configService = app.get(ConfigService);
+    const app = await NestFactory.create(AppModule);
 
-  app.use(helmet());
+    const configService = app.get(ConfigService);
 
-  app.enableCors({
-    origin: configService.get<string>('CORS_ORIGIN', 'http://localhost:9173'),
-    credentials: true,
-  });
+    app.use(helmet());
 
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      forbidNonWhitelisted: true,
-      transform: true,
-      transformOptions: { enableImplicitConversion: true },
-    }),
-  );
+    app.enableCors({
 
-  app.setGlobalPrefix('api');
+        origin: configService.get<string>(
+            'CORS_ORIGIN',
+            'http://localhost:9173'
+        ),
 
-  const port = configService.get<number>('PORT', 4803);
+        credentials: true,
 
-  await app.listen(port);
+    });
 
-  Logger.log(`back-os Backend listening on ${port}`, 'Bootstrap');
+    app.useGlobalPipes(
+
+        new ValidationPipe({
+            whitelist: true,
+            forbidNonWhitelisted: true,
+            transform: true,
+            transformOptions: { enableImplicitConversion: true },
+        }),
+        
+    );
+
+    app.useGlobalFilters(new AllExceptionsFilter());
+
+    app.setGlobalPrefix('api');
+
+    const port = configService.get<number>('PORT', 4803);
+
+    await app.listen(port);
+
+    Logger.log(`back-os Backend listening on ${port}`, 'Bootstrap');
 
 }
 

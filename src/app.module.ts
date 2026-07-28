@@ -4,50 +4,76 @@ import { configuration } from './config';
 import { validationSchema } from './config/env.validation';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
-// import { AppController } from './app.controller';
-// import { AppService } from './app.service';
+import { AppController } from './app.controller';
+import { AppService } from './app.service';
 import { PrismaModule } from './prisma/prisma.module';
 import { EmailModule } from './email/email.module';
 import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
+import { UsersModule } from './users/users.module';
+import { PermissionsGuard } from './common/guards/permissions.guard';
+import { PermissionsModule } from './permissions/permissions.module';
+import { RolesModule } from './roles/roles.module';
+import { CommonModule } from './common/common.module';
+import { ScheduleModule } from '@nestjs/schedule';
+import { CleanupModule } from './cleanup/cleanup.module';
 
 @Module({
 
-  imports: [
+    imports: [
 
-    ConfigModule.forRoot({
-      isGlobal: true,
+        ConfigModule.forRoot({
 
-      cache: true,
+            isGlobal: true,
 
-      load: configuration,
+            cache: true,
 
-      validationSchema,
+            load: configuration,
 
-      validationOptions: {
-        abortEarly: false,
-      },
+            validationSchema,
 
-      expandVariables: true,
+            validationOptions: {
+                abortEarly: false,
+            },
 
-      envFilePath: `.env.${process.env.NODE_ENV ?? 'development'}`,
+            expandVariables: true,
 
-      ignoreEnvFile: process.env.NODE_ENV === 'production',
-    }),
+            envFilePath: `.env.${process.env.NODE_ENV ?? 'development'}`,
 
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
-    PrismaModule,
-    EmailModule,
-    AuthModule,
-  ],
+            ignoreEnvFile: process.env.NODE_ENV === 'production',
+            
+        }),
 
-  controllers: [],
+        ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
+            
+        PrismaModule,
+            
+        EmailModule,
+            
+        AuthModule,
+            
+        UsersModule,
+            
+        PermissionsModule,
+            
+        RolesModule,
+        
+        CommonModule,
 
-  providers: [
-    // AppService,
-    { provide: APP_GUARD, useClass: ThrottlerGuard },
-    { provide: APP_GUARD, useClass: JwtAuthGuard },
-  ],
+        ScheduleModule.forRoot(),
+
+        CleanupModule,
+
+    ],
+
+    controllers: [AppController],
+
+    providers: [
+        AppService,
+        { provide: APP_GUARD, useClass: ThrottlerGuard },
+        { provide: APP_GUARD, useClass: JwtAuthGuard },
+        { provide: APP_GUARD, useClass: PermissionsGuard },
+    ],
 
 })
 

@@ -66,6 +66,7 @@ model Role {
   name        String  @unique
   description String?
   isSystem    Boolean @default(false)
+  level       Int     @default(30)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -209,8 +210,8 @@ model Generation {
   platformId String
   platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
-  triggeredById String
-  triggeredBy   User   @relation(fields: [triggeredById], references: [id])
+  triggeredById String?
+  triggeredBy   User?   @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
 
   status   GenerationStatus @default(PENDING)
   logs     String?
