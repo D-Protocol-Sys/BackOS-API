@@ -20,6 +20,7 @@ export const PERMISSIONS = {
     PLATFORM_READ: 'platform.read',
     PLATFORM_UPDATE: 'platform.update',
     PLATFORM_DELETE: 'platform.delete',
+    PLATFORM_MANAGE_MEMBERS: 'platform.manage-members',
     PLATFORM_TRANSFER_OWNERSHIP: 'platform.transfer-ownership',
 
     // Entities
@@ -61,6 +62,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
     [PERMISSIONS.PLATFORM_READ]: 'View platform details',
     [PERMISSIONS.PLATFORM_UPDATE]: "Update a platform's configuration",
     [PERMISSIONS.PLATFORM_DELETE]: 'Delete a platform',
+    [PERMISSIONS.PLATFORM_MANAGE_MEMBERS]: 'Add, update, or remove members on any platform',
     [PERMISSIONS.PLATFORM_TRANSFER_OWNERSHIP]: 'Transfer ownership of a platform to another user',
 
     [PERMISSIONS.ENTITY_CREATE]: 'Create a new entity (table) on a platform',
