@@ -4,6 +4,8 @@ import { ProvisioningService } from './provisioning.service';
 import { SchemaBuilderService } from './schema-builder.service';
 import { ProjectScaffolderService } from './project-scaffolder.service';
 import { CrudGeneratorService } from './crud-generator.service';
+import { GenerationProcessor } from './generation.processor';
+import { GenerationsService } from './generations.service';
 
 @Module({
 
@@ -13,7 +15,9 @@ import { CrudGeneratorService } from './crud-generator.service';
         ProvisioningService,
         SchemaBuilderService,
         ProjectScaffolderService,
-        CrudGeneratorService
+        CrudGeneratorService,
+        GenerationsService,
+        GenerationProcessor,
     ],
     
     exports: [
