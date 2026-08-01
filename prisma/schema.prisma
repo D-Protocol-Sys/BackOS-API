@@ -137,6 +137,23 @@ enum PlatformRole {
   ADMIN
 }
 
+model PlatformDatabase {
+  id         String   @id @default(uuid())
+  platformId String   @unique
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  host              String
+  port              Int
+  databaseName      String
+  databaseUser      String
+  encryptedPassword String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_databases")
+}
+
 model Platform {
   id          String         @id @default(uuid())
   name        String
@@ -151,6 +168,8 @@ model Platform {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  database    PlatformDatabase?
+  
   entities    Entity[]
   generations Generation[]
   members     PlatformMember[]

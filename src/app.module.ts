@@ -19,6 +19,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupModule } from './cleanup/cleanup.module';
 import { EntitiesModule } from './entities/entities.module';
 import { FieldsModule } from './fields/fields.module';
+import { GeneratorModule } from './generator/generator.module';
 
 @Module({
 
@@ -68,7 +69,9 @@ import { FieldsModule } from './fields/fields.module';
 
         EntitiesModule,
 
-        FieldsModule
+        FieldsModule,
+
+        GeneratorModule
 
     ],
 

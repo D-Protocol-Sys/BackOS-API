@@ -64,3 +64,5 @@ prisma/generated
 .agents/
 .claude/
 .windsurf/
+
+**/scripts/
