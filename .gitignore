@@ -66,3 +66,4 @@ prisma/generated
 .windsurf/
 
 **/scripts/
+generated/
