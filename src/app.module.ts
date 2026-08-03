@@ -20,6 +20,7 @@ import { CleanupModule } from './cleanup/cleanup.module';
 import { EntitiesModule } from './entities/entities.module';
 import { FieldsModule } from './fields/fields.module';
 import { GeneratorModule } from './generator/generator.module';
+import { PlatformsModule } from './platforms/platforms.module';
 
 @Module({
 
@@ -66,6 +67,8 @@ import { GeneratorModule } from './generator/generator.module';
         ScheduleModule.forRoot(),
 
         CleanupModule,
+
+        PlatformsModule,
 
         EntitiesModule,
 
