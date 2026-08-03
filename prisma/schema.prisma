@@ -229,6 +229,11 @@ model Entity {
   isArchived Boolean @default(false)
   isSchedulable Boolean @default(false)
 
+  authProtectCreate Boolean @default(false)
+  authProtectRead   Boolean @default(false)
+  authProtectUpdate Boolean @default(false)
+  authProtectDelete Boolean @default(false)
+
   platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())

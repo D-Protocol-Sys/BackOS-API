@@ -4,10 +4,16 @@ import { BlueprintModuleRef } from './auth-user.generator';
 
 export async function generateMailingFiles(
     projectPath: string,
-    _config: Record<string, unknown>,
+    config: Record<string, unknown>,
 ): Promise<BlueprintModuleRef[]> {
 
     await fs.mkdir(path.join(projectPath, 'src', 'mail', 'dto'), { recursive: true });
+
+    const requiresAuth = config.requiresAuth === true || config.requiresAuth === 'true';
+    const guardImport = requiresAuth
+        ? `import { UseGuards } from '@nestjs/common';\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';\n`
+        : '';
+    const guardDecorator = requiresAuth ? '  @UseGuards(JwtAuthGuard)\n' : '';
 
     const files: Record<string, string> = {
 
@@ -62,14 +68,14 @@ export async function generateMailingFiles(
 
         'src/mail/mail.controller.ts': `
             import { Body, Controller, Post } from '@nestjs/common';
-            import { MailService } from './mail.service';
+            ${guardImport}import { MailService } from './mail.service';
             import { SendMailDto } from './dto/send-mail.dto';
 
             @Controller('mail')
             export class MailController {
                 constructor(private readonly mailService: MailService) {}
 
-                @Post('send')
+                ${guardDecorator}  @Post('send')
                 async send(@Body() dto: SendMailDto) {
                     await this.mailService.send(dto.to, dto.subject, dto.text, dto.html);
                     return { message: 'Email envoyé.' };

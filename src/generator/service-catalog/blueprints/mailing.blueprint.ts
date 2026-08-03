@@ -14,6 +14,7 @@ export const MAILING_BLUEPRINT: ServiceBlueprint = {
         { key: 'smtpUser', label: 'Utilisateur SMTP', secret: false, required: true },
         { key: 'smtpPassword', label: 'Mot de passe SMTP', secret: true, required: true },
         { key: 'fromEmail', label: 'Adresse expéditeur', secret: false, required: true },
+        { key: 'requiresAuth', label: 'Protéger /mail/send (nécessite Auth & User actif)', secret: false, required: false, placeholder: 'false' },
     ],
 
 };

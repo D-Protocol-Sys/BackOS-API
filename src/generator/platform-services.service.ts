@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prismamodels/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
@@ -36,6 +36,18 @@ export class PlatformServicesService {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.PLATFORM_UPDATE);
 
         this.catalog.validateConfig(serviceKey, fullConfig);
+
+        if (serviceKey === 'mailing' && fullConfig.requiresAuth === true) {
+            const authUserActive = await this.prisma.platformService.findUnique({
+                where: { platformId_serviceKey: { platformId, serviceKey: 'auth-user' } },
+            });
+            if (!authUserActive) {
+                throw new BadRequestException(
+                    'Active "Auth & User" avant de demander la protection de /mail/send.',
+                );
+            }
+        }
+
         const { plain, secret } = this.catalog.splitConfig(serviceKey, fullConfig);
 
         const encryptionKey = this.configService.getOrThrow<string>('ENCRYPTION_KEY');
