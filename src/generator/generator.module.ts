@@ -8,6 +8,7 @@ import { GenerationProcessor } from './generation.processor';
 import { GenerationsService } from './generations.service';
 import { ServiceCatalogModule } from './service-catalog.module';
 import { GeneratorController } from './generator.controller';
+import { PortAllocatorService } from './port-allocator.service';
 
 @Module({
 
@@ -24,13 +25,15 @@ import { GeneratorController } from './generator.controller';
         ProjectScaffolderService,
         CrudGeneratorService,
         GenerationsService,
+        PortAllocatorService,
         GenerationProcessor,
     ],
     
     exports: [
         ProvisioningService,
         SchemaBuilderService,
-        ProjectScaffolderService
+        ProjectScaffolderService,
+        PortAllocatorService
     ],
 
 })

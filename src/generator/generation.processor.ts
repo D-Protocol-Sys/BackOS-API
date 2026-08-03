@@ -8,6 +8,7 @@ import { ProvisioningService } from './provisioning.service';
 import { ProjectScaffolderService } from './project-scaffolder.service';
 import { GenerationsService } from './generations.service';
 import { runCommand, CommandFailedError } from '../common/utils/command-runner.util';
+import { PortAllocatorService } from './port-allocator.service';
 
 export interface GenerationJobData {
     platformId: string;
@@ -25,6 +26,7 @@ export class GenerationProcessor extends WorkerHost {
         private readonly provisioning: ProvisioningService,
         private readonly scaffolder: ProjectScaffolderService,
         private readonly generations: GenerationsService,
+        private readonly portAllocator: PortAllocatorService,
         private readonly configService: ConfigService,
     ) {
         super();
@@ -53,13 +55,14 @@ export class GenerationProcessor extends WorkerHost {
             }
 
             await this.log(generationId, '→ Génération des fichiers du projet...');
+            const port = await this.portAllocator.getOrAllocatePort(platformId);
             const { projectPath } = await this.scaffolder.scaffold({
                 platformId,
                 slug,
                 databaseUrl: dbUrl,
-                port: 4100,
+                port,
             });
-            await this.log(generationId, `  Projet écrit dans ${projectPath}`);
+            await this.log(generationId, `  Projet écrit dans ${projectPath} (port ${port})`);
 
             await this.log(generationId, '→ Installation des dépendances (pnpm install)...');
             await this.runStep(generationId, 'pnpm', ['install'], projectPath, timeoutMs);
