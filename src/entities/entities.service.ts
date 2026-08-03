@@ -48,6 +48,24 @@ export class EntitiesService {
         return this.prisma.entity.update({ where: { id: entity.id }, data: { name: dto.name } });
     }
 
+    async setSchedulable(actor: Actor, platformId: string, entityId: string, enabled: boolean) {
+        await this.assertCanEdit(actor, platformId, PERMISSIONS.ENTITY_UPDATE);
+        const entity = await this.findEntityOrThrow(platformId, entityId);
+
+        if (enabled) {
+            const schedulerActive = await this.prisma.platformService.findUnique({
+                where: { platformId_serviceKey: { platformId, serviceKey: 'scheduler' } },
+            });
+            if (!schedulerActive) {
+                throw new BadRequestException(
+                    'Le service "Scheduler" doit être activé sur cette plateforme avant de rendre une entité programmable.',
+                );
+            }
+        }
+
+        return this.prisma.entity.update({ where: { id: entity.id }, data: { isSchedulable: enabled } });
+    }
+
     async archive(actor: Actor, platformId: string, entityId: string) {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.ENTITY_DELETE);
         const entity = await this.findEntityOrThrow(platformId, entityId);

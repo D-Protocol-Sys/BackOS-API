@@ -6,6 +6,7 @@ import { FIELD_TYPE_VALIDATORS } from '../common/utils/field-type-validator-mapp
 
 interface EntityWithFields {
     tableName: string;
+    isSchedulable: boolean;
     fields: {
         column: string;
         type: string;
@@ -15,6 +16,10 @@ interface EntityWithFields {
 
 @Injectable()
 export class CrudGeneratorService {
+
+    private schedulableDtoFields(): string {
+        return `  @IsOptional()\n  @IsDateString()\n  publishAt?: string;\n\n  @IsOptional()\n  @IsDateString()\n  unpublishAt?: string;`;
+    }
 
     async generateModulesForEntities(
         projectPath: string,
@@ -33,19 +38,19 @@ export class CrudGeneratorService {
 
                 fs.writeFile(
                     path.join(dirPath, 'dto', `create-${entity.tableName}.dto.ts`),
-                    this.buildCreateDto(modelName, entity.fields),
+                    this.buildCreateDto(modelName, entity.fields, entity.isSchedulable),
                 ),
                 fs.writeFile(
                     path.join(dirPath, 'dto', `update-${entity.tableName}.dto.ts`),
-                    this.buildUpdateDto(modelName, entity.fields),
+                    this.buildUpdateDto(modelName, entity.fields, entity.isSchedulable),
                 ),
                 fs.writeFile(
                     path.join(dirPath, `${entity.tableName}.service.ts`),
-                    this.buildService(modelName, entity.tableName, entity.fields),
+                    this.buildService(modelName, entity.tableName, entity.fields, entity.isSchedulable),
                 ),
                 fs.writeFile(
                     path.join(dirPath, `${entity.tableName}.controller.ts`),
-                    this.buildController(modelName, entity.tableName),
+                    this.buildController(modelName, entity.tableName, entity.isSchedulable),
                 ),
                 fs.writeFile(
                     path.join(dirPath, `${entity.tableName}.module.ts`),
@@ -91,12 +96,15 @@ export class CrudGeneratorService {
         return Array.from(set).sort().join(', ');
     }
 
-    private buildCreateDto(modelName: string, fields: EntityWithFields['fields']): string {
-        const imports = this.collectImports(fields);
-        const body = this.buildDtoFields(fields, false);
+    private buildCreateDto(modelName: string, fields: EntityWithFields['fields'], isSchedulable: boolean): string {
+        const imports = new Set(this.collectImports(fields).split(', '));
+        if (isSchedulable) imports.add('IsDateString');
+        const body = [this.buildDtoFields(fields, false), isSchedulable ? this.schedulableDtoFields() : '']
+            .filter(Boolean)
+            .join('\n\n');
 
         return `
-            import { ${imports} } from 'class-validator';
+            import { ${Array.from(imports).sort().join(', ')} } from 'class-validator';
 
             export class Create${modelName}Dto {
                 ${body}
@@ -104,12 +112,15 @@ export class CrudGeneratorService {
         `;
     }
 
-    private buildUpdateDto(modelName: string, fields: EntityWithFields['fields']): string {
-        const imports = this.collectImports(fields);
-        const body = this.buildDtoFields(fields, true);
+    private buildUpdateDto(modelName: string, fields: EntityWithFields['fields'], isSchedulable: boolean): string {
+        const imports = new Set(this.collectImports(fields).split(', '));
+        if (isSchedulable) imports.add('IsDateString');
+        const body = [this.buildDtoFields(fields, true), isSchedulable ? this.schedulableDtoFields() : '']
+            .filter(Boolean)
+            .join('\n\n');
 
         return `
-            import { ${imports} } from 'class-validator';
+            import { ${Array.from(imports).sort().join(', ')} } from 'class-validator';
 
             export class Update${modelName}Dto {
                 ${body}
@@ -117,7 +128,7 @@ export class CrudGeneratorService {
         `;
     }
 
-    private buildService(modelName: string, tableName: string, fields: EntityWithFields['fields']): string {
+    private buildService(modelName: string, tableName: string, fields: EntityWithFields['fields'], isSchedulable: boolean): string {
         const modelCamel = toCamelCase(tableName);
         const dateFields = fields.filter(
             (f) => FIELD_TYPE_VALIDATORS[f.type as keyof typeof FIELD_TYPE_VALIDATORS].isDateField,
@@ -143,6 +154,25 @@ export class CrudGeneratorService {
         const createData = dateFields.length > 0 ? 'this.toPrismaData(dto)' : 'dto';
         const updateData = dateFields.length > 0 ? 'this.toPrismaData(dto)' : 'dto';
 
+        const findAllBody = isSchedulable
+            ? ` findAll(includeUnpublished = false) {
+                    const now = new Date();
+                    return this.prisma.${modelCamel}.findMany({
+                    where: includeUnpublished
+                        ? {}
+                        : {
+                            AND: [
+                            { OR: [{ publishAt: null }, { publishAt: { lte: now } }] },
+                            { OR: [{ unpublishAt: null }, { unpublishAt: { gt: now } }] },
+                            ],
+                        },
+                        orderBy: { createdAt: 'desc' },
+                    });
+                }`
+            : ` findAll() {
+                    return this.prisma.${modelCamel}.findMany({ orderBy: { createdAt: 'desc' } });
+                }`;
+
         return `
             import { Injectable, NotFoundException } from '@nestjs/common';
             import { PrismaService } from '../prisma/prisma.service';
@@ -159,9 +189,7 @@ export class CrudGeneratorService {
                     return this.prisma.${modelCamel}.create({ data: ${createData} as any });
                 }
 
-                findAll() {
-                    return this.prisma.${modelCamel}.findMany({ orderBy: { createdAt: 'desc' } });
-                }
+                ${findAllBody}
 
                 async findOne(id: string) {
                     const record = await this.prisma.${modelCamel}.findUnique({ where: { id } });
@@ -183,10 +211,22 @@ export class CrudGeneratorService {
         `;
     }
 
-    private buildController(modelName: string, tableName: string): string {
+    private buildController(modelName: string, tableName: string, isSchedulable: boolean): string {
+
+        const findAllSignature = isSchedulable
+            ? ` @Get()
+                findAll(@Query('includeUnpublished') includeUnpublished?: string) {
+                    return this.service.findAll(includeUnpublished === 'true');
+                }`
+            : ` @Get()
+                findAll() {
+                    return this.service.findAll();
+                }`;
+
+        const queryImport = isSchedulable ? ', Query' : '';
 
         return `
-            import { Body, Controller, Delete, Get, Param, Patch, Post } from '@nestjs/common';
+            import { Body, Controller, Delete, Get, Param, Patch, Post${queryImport} } from '@nestjs/common';
             import { ${modelName}Service } from './${tableName}.service';
             import { Create${modelName}Dto } from './dto/create-${tableName}.dto';
             import { Update${modelName}Dto } from './dto/update-${tableName}.dto';
@@ -201,10 +241,7 @@ export class CrudGeneratorService {
                     return this.service.create(dto);
                 }
 
-                @Get()
-                findAll() {
-                    return this.service.findAll();
-                }
+                ${findAllSignature}
 
                 @Get(':id')
                 findOne(@Param('id') id: string) {

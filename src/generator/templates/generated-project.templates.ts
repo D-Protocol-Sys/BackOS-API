@@ -1,46 +1,43 @@
 import { toPascalCase } from "../../common/utils/case.util";
 
-export function packageJsonTemplate(slug: string): string {
-
-    return JSON.stringify(
-        {
-            name: slug,
-            version: '0.0.1',
-            private: true,
-            scripts: {
-                'build': 'nest build',
-                'start': 'nest start',
-                'start:dev': 'nest start --watch',
-                'start:prod': 'node dist/main',
-                'prisma:generate': 'prisma generate',
-                'prisma:migrate': 'prisma migrate deploy',
-            },
-            dependencies: {
-                '@nestjs/common': '^11.0.1',
-                '@nestjs/core': '^11.0.1',
-                '@nestjs/platform-express': '^11.0.1',
-                '@prisma/client': '^7.9.0',
-                '@prisma/adapter-pg': '^7.9.0',
-                'pg': '^8.13.0',
-                'class-validator': '^0.14.1',
-                'class-transformer': '^0.5.1',
-                'reflect-metadata': '^0.2.2',
-                'rxjs': '^7.8.1',
-                'dotenv': '^16.4.5',
-            },
-            devDependencies: {
-                '@nestjs/cli': '^11.0.0',
-                '@nestjs/schematics': '^11.0.0',
-                '@types/node': '^24.0.0',
-                '@types/express': '^5.0.0',
-                'prisma': '^7.9.0',
-                'tsx': '^4.19.0',
-                'typescript': '^5.7.3',
-            },
+export function packageJsonObject(slug: string, extraDependencies: Record<string, string>) {
+    
+    return {
+        'name': slug,
+        'version': '0.0.1',
+        'private': true,
+        scripts: {
+            'build': 'nest build',
+            'start': 'nest start',
+            'start:dev': 'nest start --watch',
+            'start:prod': 'node dist/main',
+            'prisma:generate': 'prisma generate',
+            'prisma:migrate': 'prisma migrate deploy',
         },
-        null,
-        2,
-    );
+        dependencies: {
+            '@nestjs/common': '^11.0.1',
+            '@nestjs/core': '^11.0.1',
+            '@nestjs/platform-express': '^11.0.1',
+            '@prisma/client': '^7.9.0',
+            '@prisma/adapter-pg': '^7.9.0',
+            'pg': '^8.13.0',
+            'class-validator': '^0.14.1',
+            'class-transformer': '^0.5.1',
+            'reflect-metadata': '^0.2.2',
+            'rxjs': '^7.8.1',
+            'dotenv': '^16.4.5',
+            ...extraDependencies,
+        },
+        devDependencies: {
+            '@nestjs/cli': '^11.0.0',
+            '@nestjs/schematics': '^11.0.0',
+            '@types/node': '^24.0.0',
+            '@types/express': '^5.0.0',
+            'prisma': '^7.9.0',
+            'tsx': '^4.19.0',
+            'typescript': '^5.7.3',
+        },
+    };
 }
 
 export const NEST_CLI_JSON = JSON.stringify(
@@ -153,23 +150,30 @@ export function mainTsTemplate(): string {
     `;
 }
 
-export function appModuleTemplate(entities: { tableName: string }[]): string {
-    
-    const imports = entities
-        .map((e) => {
-            const modelName = toPascalCase(e.tableName);
-            return `import { ${modelName}Module } from './${e.tableName}/${e.tableName}.module';`;
-        })
+export function appModuleTemplate(
+    entities: { tableName: string }[],
+    extraModules: { name: string; importPath: string }[] = [],
+): string {
+
+    const entityImports = entities
+        .map((e) => `import { ${toPascalCase(e.tableName)}Module } from './${e.tableName}/${e.tableName}.module';`)
         .join('\n');
 
-    const moduleList = ['PrismaModule', ...entities.map((e) => `${toPascalCase(e.tableName)}Module`)].join(
-        ',\n    ',
-    );
+    const extraImports = extraModules
+        .map((m) => `import { ${m.name} } from '${m.importPath}';`)
+        .join('\n');
+
+    const moduleList = [
+        'PrismaModule',
+        ...extraModules.map((m) => m.name),
+        ...entities.map((e) => `${toPascalCase(e.tableName)}Module`),
+    ].join(',\n    ');
 
     return `
         import { Module } from '@nestjs/common';
         import { PrismaModule } from './prisma/prisma.module';
-        ${imports}
+        ${extraImports}
+        ${entityImports}
 
         @Module({
             imports: [
@@ -180,6 +184,21 @@ export function appModuleTemplate(entities: { tableName: string }[]): string {
     `;
 }
 
-export function envTemplate(databaseUrl: string, port: number): string {
-    return `DATABASE_URL="${databaseUrl}"\nPORT=${port}\n`;
+export function envTemplate(
+    databaseUrl: string,
+    port: number,
+    extraVars: Record<string, unknown> = {},
+): string {
+
+    const lines = [`DATABASE_URL="${databaseUrl}"`, `PORT=${port}`];
+
+    for (const [key, value] of Object.entries(extraVars)) {
+        lines.push(`${toEnvKey(key)}=${JSON.stringify(String(value))}`);
+    }
+
+    return lines.join('\n') + '\n';
+}
+
+function toEnvKey(camelKey: string): string {
+    return camelKey.replace(/([A-Z])/g, '_$1').toUpperCase();
 }

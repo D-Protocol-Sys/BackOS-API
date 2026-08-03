@@ -173,6 +173,7 @@ model Platform {
   entities    Entity[]
   generations Generation[]
   members     PlatformMember[]
+  services    PlatformService[]
 
   @@index([ownerId])
   @@index([status])
@@ -199,6 +200,22 @@ model PlatformMember {
   @@map("platform_members")
 }
 
+model PlatformService {
+  id         String   @id @default(uuid())
+  platformId String
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  serviceKey String
+
+  config          Json?
+  encryptedConfig String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([platformId, serviceKey])
+  @@map("platform_services")
+}
+
 // ----------------------------------------------------------
 // ENTITIES / FIELDS
 // ----------------------------------------------------------
@@ -209,6 +226,7 @@ model Entity {
   tableName  String
   platformId String
   isArchived Boolean @default(false)
+  isSchedulable Boolean @default(false)
 
   platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 

@@ -21,6 +21,7 @@ import { EntitiesModule } from './entities/entities.module';
 import { FieldsModule } from './fields/fields.module';
 import { GeneratorModule } from './generator/generator.module';
 import { PlatformsModule } from './platforms/platforms.module';
+import { ServiceCatalogModule } from './generator/service-catalog.module';
 
 @Module({
 
@@ -74,7 +75,9 @@ import { PlatformsModule } from './platforms/platforms.module';
 
         FieldsModule,
 
-        GeneratorModule
+        GeneratorModule,
+
+        ServiceCatalogModule
 
     ],
 

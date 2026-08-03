@@ -6,10 +6,17 @@ import { ProjectScaffolderService } from './project-scaffolder.service';
 import { CrudGeneratorService } from './crud-generator.service';
 import { GenerationProcessor } from './generation.processor';
 import { GenerationsService } from './generations.service';
+import { ServiceCatalogModule } from './service-catalog.module';
+import { GeneratorController } from './generator.controller';
 
 @Module({
 
-    imports: [GeneratorQueueModule],
+    imports: [
+        GeneratorQueueModule,
+        ServiceCatalogModule
+    ],
+
+    controllers: [GeneratorController],
 
     providers: [
         ProvisioningService,
