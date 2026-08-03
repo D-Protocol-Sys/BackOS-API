@@ -57,6 +57,16 @@ export class EntitiesController {
         return this.entitiesService.delete(actor, platformId, entityId);
     }
 
+    @Patch(':entityId/schedulable')
+    setSchedulable(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Param('entityId') entityId: string,
+        @Body('enabled') enabled: boolean,
+    ) {
+        return this.entitiesService.setSchedulable(actor, platformId, entityId, enabled);
+    }
+
     @Patch(':entityId/archive')
     archive(
         @CurrentUser() actor: Actor,

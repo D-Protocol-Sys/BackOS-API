@@ -16,8 +16,8 @@ export class SchemaBuilderService {
         });
     }
 
-    async buildSchema(platformId: string): Promise<string> {
-
+    async buildSchema(platformId: string, extraPrismaBlocks: string[] = []): Promise<string> {
+        
         const entities = await this.getActiveEntitiesWithFields(platformId);
 
         if (entities.length === 0) {
@@ -40,18 +40,20 @@ export class SchemaBuilderService {
         `;
 
         const models = entities.map((entity) => this.buildModel(entity)).join('\n\n');
+        const extra = extraPrismaBlocks.join('\n');
 
-        return `${header}\n${models}\n`;
+        return `${header}\n${models}\n${extra}\n`;
     }
 
     private buildModel(entity: {
         tableName: string;
+        isSchedulable: boolean;
         fields: {
             column: string;
             type: string;
             required: boolean;
             unique: boolean;
-            defaultValue: string | null;
+            defaultValue: string | null
         }[];
     }): string {
 
@@ -59,10 +61,15 @@ export class SchemaBuilderService {
 
         const fieldLines = entity.fields.map((field) => this.buildFieldLine(field));
 
+        const schedulableLines = entity.isSchedulable
+            ? [`  publishAt DateTime?`, `  unpublishAt DateTime?`]
+            : [];
+
         const lines = [
             `model ${modelName} {`,
             `  id String @id @default(uuid())`,
             ...fieldLines,
+            ...schedulableLines,
             `  createdAt DateTime @default(now())`,
             `  updatedAt DateTime @updatedAt`,
             ``,
