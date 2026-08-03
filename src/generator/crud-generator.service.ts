@@ -8,6 +8,10 @@ import { RelationFieldMeta } from '../common/utils/relation-metadata.util';
 interface EntityWithFields {
     tableName: string;
     isSchedulable: boolean;
+    authProtectCreate: boolean;
+    authProtectRead: boolean;
+    authProtectUpdate: boolean;
+    authProtectDelete: boolean;
     fields: { column: string; type: string; required: boolean }[];
 }
 
@@ -51,7 +55,12 @@ export class CrudGeneratorService {
                 ),
                 fs.writeFile(
                     path.join(dirPath, `${entity.tableName}.controller.ts`),
-                    this.buildController(modelName, entity.tableName, entity.isSchedulable),
+                    this.buildController(modelName, entity.tableName, entity.isSchedulable, {
+                        create: entity.authProtectCreate,
+                        read: entity.authProtectRead,
+                        update: entity.authProtectUpdate,
+                        delete: entity.authProtectDelete,
+                    }),
                 ),
                 fs.writeFile(
                     path.join(dirPath, `${entity.tableName}.module.ts`),
@@ -296,7 +305,18 @@ export class CrudGeneratorService {
         `;
     }
 
-    private buildController(modelName: string, tableName: string, isSchedulable: boolean): string {
+    private buildController(
+        modelName: string,
+        tableName: string,
+        isSchedulable: boolean,
+        authFlags: { create: boolean; read: boolean; update: boolean; delete: boolean },
+    ): string {
+
+        const anyProtected = authFlags.create || authFlags.read || authFlags.update || authFlags.delete;
+        const guardImport = anyProtected
+            ? `\nimport { UseGuards } from '@nestjs/common';\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';`
+            : '';
+        const guardDecorator = (protect: boolean) => (protect ? '  @UseGuards(JwtAuthGuard)\n' : '');
 
         const findAllSignature = isSchedulable
             ? ` @Get()
@@ -321,24 +341,24 @@ export class CrudGeneratorService {
 
                 constructor(private readonly service: ${modelName}Service) {}
 
-                @Post()
+                ${guardDecorator(authFlags.create)}  @Post()
                 create(@Body() dto: Create${modelName}Dto) {
                     return this.service.create(dto);
                 }
 
-                ${findAllSignature}
+                ${guardDecorator(authFlags.read)} ${findAllSignature}
 
-                @Get(':id')
+                ${guardDecorator(authFlags.read)} @Get(':id')
                 findOne(@Param('id') id: string) {
                     return this.service.findOne(id);
                 }
 
-                @Patch(':id')
+                ${guardDecorator(authFlags.update)}  @Patch(':id')
                 update(@Param('id') id: string, @Body() dto: Update${modelName}Dto) {
                     return this.service.update(id, dto);
                 }
 
-                @Delete(':id')
+                ${guardDecorator(authFlags.delete)}  @Delete(':id')
                 remove(@Param('id') id: string) {
                     return this.service.remove(id);
                 }

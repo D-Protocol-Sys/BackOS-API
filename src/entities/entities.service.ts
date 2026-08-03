@@ -155,4 +155,36 @@ export class EntitiesService {
         return candidate;
     }
 
+    async setAuthProtection(
+        actor: Actor,
+        platformId: string,
+        entityId: string,
+        flags: { create?: boolean; read?: boolean; update?: boolean; delete?: boolean },
+    ) {
+        await this.assertCanEdit(actor, platformId, PERMISSIONS.ENTITY_UPDATE);
+        const entity = await this.findEntityOrThrow(platformId, entityId);
+
+        const anyProtectionRequested = Object.values(flags).some(Boolean);
+        if (anyProtectionRequested) {
+            const authUserActive = await this.prisma.platformService.findUnique({
+                where: { platformId_serviceKey: { platformId, serviceKey: 'auth-user' } },
+            });
+            if (!authUserActive) {
+                throw new BadRequestException(
+                    'Le service "Auth & User" doit être activé sur cette plateforme avant de protéger une entité.',
+                );
+            }
+        }
+
+        return this.prisma.entity.update({
+            where: { id: entity.id },
+            data: {
+            ...(flags.create !== undefined && { authProtectCreate: flags.create }),
+            ...(flags.read !== undefined && { authProtectRead: flags.read }),
+            ...(flags.update !== undefined && { authProtectUpdate: flags.update }),
+            ...(flags.delete !== undefined && { authProtectDelete: flags.delete }),
+            },
+        });
+    }
+
 }

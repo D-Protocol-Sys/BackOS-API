@@ -83,13 +83,22 @@ export class ProjectScaffolderService {
 
         const schemaContent = await this.schemaBuilder.buildSchema(params.platformId, prismaBlocks);
         const entities = await this.schemaBuilder.getActiveEntitiesWithFields(params.platformId);
+        const activeServiceKeys = new Set(activeServices.map((s) => s.serviceKey));
+        const entitiesRequiringAuth = entities.filter(
+            (e) => e.authProtectCreate || e.authProtectRead || e.authProtectUpdate || e.authProtectDelete,
+        );
+        if (entitiesRequiringAuth.length > 0 && !activeServiceKeys.has('auth-user')) {
+            throw new BadRequestException(
+                `Les entités suivantes exigent une authentification mais "Auth & User" n'est plus actif : ${entitiesRequiringAuth.map((e) => e.tableName).join(', ')}`,
+            );
+        }
         const relations = await this.prisma.relation.findMany({ where: { platformId: params.platformId } });
         const relationFieldsByEntity = computeRelationFieldsByEntity(
             entities.map((e) => ({ id: e.id, tableName: e.tableName })),
             relations,
         );
         const entityIdByTableName = new Map(entities.map((e) => [e.tableName, e.id]));
-
+        
         await Promise.all([
             fs.writeFile(
                 path.join(projectPath, 'package.json'),

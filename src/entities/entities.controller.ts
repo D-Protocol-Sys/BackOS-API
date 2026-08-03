@@ -85,4 +85,14 @@ export class EntitiesController {
         return this.entitiesService.restore(actor, platformId, entityId);
     }
 
+    @Patch(':entityId/auth-protection')
+        setAuthProtection(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Param('entityId') entityId: string,
+        @Body() flags: { create?: boolean; read?: boolean; update?: boolean; delete?: boolean },
+    ) {
+        return this.entitiesService.setAuthProtection(actor, platformId, entityId, flags);
+    }
+
 }
