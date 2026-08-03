@@ -22,6 +22,7 @@ import { FieldsModule } from './fields/fields.module';
 import { GeneratorModule } from './generator/generator.module';
 import { PlatformsModule } from './platforms/platforms.module';
 import { ServiceCatalogModule } from './generator/service-catalog.module';
+import { RelationsModule } from './relations/relations.module';
 
 @Module({
 
@@ -77,7 +78,9 @@ import { ServiceCatalogModule } from './generator/service-catalog.module';
 
         GeneratorModule,
 
-        ServiceCatalogModule
+        ServiceCatalogModule,
+
+        RelationsModule
 
     ],
 
