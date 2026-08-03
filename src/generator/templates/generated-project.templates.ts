@@ -17,6 +17,7 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
         dependencies: {
             '@nestjs/common': '^11.0.1',
             '@nestjs/core': '^11.0.1',
+            '@nestjs/swagger': '^8.0.7',
             '@nestjs/platform-express': '^11.0.1',
             '@prisma/client': '^7.9.0',
             '@prisma/adapter-pg': '^7.9.0',
@@ -45,7 +46,7 @@ export const NEST_CLI_JSON = JSON.stringify(
         $schema: 'https://json.schemastore.org/nest-cli',
         collection: '@nestjs/schematics',
         sourceRoot: 'src',
-        compilerOptions: { deleteOutDir: true },
+        compilerOptions: { deleteOutDir: true, plugins: ['@nestjs/swagger'] },
     },
     null,
     2,
@@ -136,15 +137,27 @@ export function mainTsTemplate(): string {
     return `
         import { NestFactory } from '@nestjs/core';
         import { ValidationPipe } from '@nestjs/common';
+        import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
         import { AppModule } from './app.module';
 
         async function bootstrap() {
             const app = await NestFactory.create(AppModule);
             app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
             app.setGlobalPrefix('api');
+
+            const swaggerConfig = new DocumentBuilder()
+                .setTitle('API générée par BPG')
+                .setDescription('Documentation générée automatiquement à partir de la définition de cette plateforme.')
+                .setVersion('1.0')
+                .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
+                .build();
+            const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+            SwaggerModule.setup('api/docs', app, swaggerDocument);
+
             const port = process.env.PORT || 4000;
             await app.listen(port);
             console.log(\`API générée démarrée sur le port \${port}\`);
+            console.log(\`Documentation disponible sur http://localhost:\${port}/api/docs\`);
         }
         bootstrap();
     `;

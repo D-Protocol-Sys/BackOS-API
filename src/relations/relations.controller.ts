@@ -2,9 +2,12 @@ import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { RelationsService } from './relations.service';
 import { CreateRelationDto } from './dto/create-relation.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Relations')
+@ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/relations')
 export class RelationsController {
     

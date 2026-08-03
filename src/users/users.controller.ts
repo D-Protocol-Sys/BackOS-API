@@ -6,7 +6,10 @@ import { AssignRoleDto } from './dto/assign-role.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Users')
+@ApiBearerAuth('access-token')
 @Controller('users')
 export class UsersController {
     constructor(private readonly usersService: UsersService) {}

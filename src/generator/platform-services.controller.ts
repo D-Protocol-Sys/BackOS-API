@@ -2,9 +2,12 @@ import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
 import { PlatformServicesService } from './platform-services.service';
 import { EnableServiceDto } from './dto/enable-service.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Service Catalog')
+@ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/services')
 export class PlatformServicesController {
 

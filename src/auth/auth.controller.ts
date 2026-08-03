@@ -6,7 +6,9 @@ import { VerifyOtpDto } from './dto/verify-otp.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags } from '@nestjs/swagger';
 
+@ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
     constructor(private readonly authService: AuthService) {}

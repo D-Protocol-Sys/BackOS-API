@@ -332,11 +332,13 @@ export class CrudGeneratorService {
         
         return `
             import { Body, Controller, Delete, Get, Param, Patch, Post${queryImport} } from '@nestjs/common';
+            import { ApiTags${anyProtected ? ', ApiBearerAuth' : ''} } from '@nestjs/swagger';${guardImport}
             import { ${modelName}Service } from './${tableName}.service';
             import { Create${modelName}Dto } from './dto/create-${tableName}.dto';
             import { Update${modelName}Dto } from './dto/update-${tableName}.dto';
 
-            @Controller('${tableName}')
+            @ApiTags('${modelName}')
+            ${anyProtected ? `@ApiBearerAuth('access-token')\n` : ''}@Controller('${tableName}')
             export class ${modelName}Controller {
 
                 constructor(private readonly service: ${modelName}Service) {}

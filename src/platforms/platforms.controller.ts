@@ -8,9 +8,12 @@ import { TransferOwnershipDto } from './dto/transfer-ownership.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Platforms')
+@ApiBearerAuth('access-token')
 @Controller('platforms')
 export class PlatformsController {
 

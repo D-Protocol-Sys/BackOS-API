@@ -3,9 +3,12 @@ import { FieldsService } from './fields.service';
 import { CreateFieldDto } from './dto/create-field.dto';
 import { UpdateFieldDto } from './dto/update-field.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Fields')
+@ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/entities/:entityId/fields')
 export class FieldsController {
     

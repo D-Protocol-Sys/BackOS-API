@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
+import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 
 async function bootstrap() {
 
@@ -40,6 +41,16 @@ async function bootstrap() {
     app.setGlobalPrefix('api');
 
     const port = configService.get<number>('PORT', 4803);
+
+    const swaggerConfig = new DocumentBuilder()
+        .setTitle('BPG Core API')
+        .setDescription('API du générateur BPG (Backend Platform Generator)')
+        .setVersion('0.1.0')
+        .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
+        .build();
+
+    const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+    SwaggerModule.setup('api/docs', app, swaggerDocument);
 
     await app.listen(port);
 

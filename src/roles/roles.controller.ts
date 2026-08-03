@@ -6,7 +6,10 @@ import { ReplaceRolePermissionsDto } from './dto/replace-role-permissions.dto';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+@ApiTags('Roles')
+@ApiBearerAuth('access-token')
 @Controller('roles')
 export class RolesController {
     

@@ -7,9 +7,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import type { GenerationJobData } from './generation.processor';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Generetor')
+@ApiBearerAuth('access-token')
 @Controller('platforms/:platformId')
 export class GeneratorController {
 

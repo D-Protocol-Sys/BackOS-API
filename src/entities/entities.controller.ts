@@ -3,9 +3,12 @@ import { EntitiesService } from './entities.service';
 import { CreateEntityDto } from './dto/create-entity.dto';
 import { UpdateEntityDto } from './dto/update-entity.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
 type Actor = { userId: string; permissions: string[] };
 
+@ApiTags('Entities')
+@ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/entities')
 export class EntitiesController {
     
