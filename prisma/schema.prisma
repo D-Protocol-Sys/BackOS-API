@@ -10,6 +10,10 @@ datasource db {
 }
 
 
+// ----------------------------------------------------------
+// AUTH (OTP) / RBAC
+// ----------------------------------------------------------
+
 model User {
   id        String  @id @default(uuid())
   email     String  @unique
@@ -26,9 +30,11 @@ model User {
   platformOwned Platform[]     @relation("PlatformOwner")
   generations   Generation[]
 
+  platformMemberships         PlatformMember[] @relation("PlatformMemberUser")
+  platformRemovalRequestsMade PlatformMember[] @relation("PlatformMemberRemovalRequestedBy")
+
   @@map("users")
 }
-
 
 model OtpCode {
   id     String @id @default(uuid())
@@ -44,9 +50,9 @@ model OtpCode {
   createdAt DateTime @default(now())
 
   @@index([userId])
+  @@index([createdAt])
   @@map("otp_codes")
 }
-
 
 model RefreshToken {
   id        String    @id @default(uuid())
@@ -58,6 +64,8 @@ model RefreshToken {
   createdAt DateTime  @default(now())
 
   @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
   @@map("refresh_tokens")
 }
 
@@ -87,7 +95,6 @@ model Permission {
   @@map("permissions")
 }
 
-
 model UserRole {
   id     String @id @default(uuid())
   userId String
@@ -99,7 +106,6 @@ model UserRole {
   @@unique([userId, roleId])
   @@map("user_roles")
 }
-
 
 model RolePermission {
   id           String @id @default(uuid())
@@ -113,6 +119,9 @@ model RolePermission {
   @@map("role_permissions")
 }
 
+// ----------------------------------------------------------
+// PLATFORMS
+// ----------------------------------------------------------
 
 enum PlatformStatus {
   DRAFT
@@ -120,6 +129,29 @@ enum PlatformStatus {
   ACTIVE
   ERROR
   ARCHIVED
+}
+
+enum PlatformRole {
+  VIEWER
+  EDITOR
+  ADMIN
+}
+
+model PlatformDatabase {
+  id         String   @id @default(uuid())
+  platformId String   @unique
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  host              String
+  port              Int
+  databaseName      String
+  databaseUser      String
+  encryptedPassword String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("platform_databases")
 }
 
 model Platform {
@@ -136,18 +168,47 @@ model Platform {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  database    PlatformDatabase?
+  
   entities    Entity[]
   generations Generation[]
+  members     PlatformMember[]
 
+  @@index([ownerId])
+  @@index([status])
   @@map("platforms")
 }
 
+model PlatformMember {
+  id         String       @id @default(uuid())
+  platformId String
+  platform   Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  userId     String
+  user       User         @relation("PlatformMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+  role       PlatformRole
+
+  removalRequestedAt   DateTime?
+  removalRequestedById String?
+  removalRequestedBy   User?     @relation("PlatformMemberRemovalRequestedBy", fields: [removalRequestedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([platformId, userId])
+  @@index([userId])
+  @@map("platform_members")
+}
+
+// ----------------------------------------------------------
+// ENTITIES / FIELDS
+// ----------------------------------------------------------
 
 model Entity {
-  id         String @id @default(uuid())
+  id         String  @id @default(uuid())
   name       String
   tableName  String
   platformId String
+  isArchived Boolean @default(false)
 
   platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
@@ -157,9 +218,9 @@ model Entity {
   fields Field[]
 
   @@unique([platformId, tableName])
+  @@index([platformId, isArchived])
   @@map("entities")
 }
-
 
 enum FieldType {
   STRING
@@ -173,17 +234,17 @@ enum FieldType {
   JSON
 }
 
-
 model Field {
   id       String    @id @default(uuid())
   name     String
   column   String
   type     FieldType
-  required Boolean   
-  unique   Boolean
+  required Boolean   @default(false)
+  unique   Boolean   @default(false)
 
-  defaultValue String? 
+  defaultValue String?
   config       Json?
+  isArchived   Boolean @default(false)
 
   entityId String
   entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
@@ -194,9 +255,13 @@ model Field {
   updatedAt DateTime @updatedAt
 
   @@unique([entityId, column])
+  @@index([entityId, isArchived])
   @@map("fields")
 }
 
+// ----------------------------------------------------------
+// GENERATIONS
+// ----------------------------------------------------------
 
 enum GenerationStatus {
   PENDING

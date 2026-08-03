@@ -17,6 +17,10 @@ import { RolesModule } from './roles/roles.module';
 import { CommonModule } from './common/common.module';
 import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupModule } from './cleanup/cleanup.module';
+import { EntitiesModule } from './entities/entities.module';
+import { FieldsModule } from './fields/fields.module';
+import { GeneratorModule } from './generator/generator.module';
+import { PlatformsModule } from './platforms/platforms.module';
 
 @Module({
 
@@ -63,6 +67,14 @@ import { CleanupModule } from './cleanup/cleanup.module';
         ScheduleModule.forRoot(),
 
         CleanupModule,
+
+        PlatformsModule,
+
+        EntitiesModule,
+
+        FieldsModule,
+
+        GeneratorModule
 
     ],
 
