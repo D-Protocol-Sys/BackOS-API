@@ -19,6 +19,7 @@ import {
     appModuleTemplate,
     envTemplate,
 } from './templates/generated-project.templates';
+import { computeRelationFieldsByEntity } from '../common/utils/relation-metadata.util';
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9-]+$/;
 
@@ -82,6 +83,12 @@ export class ProjectScaffolderService {
 
         const schemaContent = await this.schemaBuilder.buildSchema(params.platformId, prismaBlocks);
         const entities = await this.schemaBuilder.getActiveEntitiesWithFields(params.platformId);
+        const relations = await this.prisma.relation.findMany({ where: { platformId: params.platformId } });
+        const relationFieldsByEntity = computeRelationFieldsByEntity(
+            entities.map((e) => ({ id: e.id, tableName: e.tableName })),
+            relations,
+        );
+        const entityIdByTableName = new Map(entities.map((e) => [e.tableName, e.id]));
 
         await Promise.all([
             fs.writeFile(
@@ -101,7 +108,12 @@ export class ProjectScaffolderService {
             fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.module.ts'), prismaModuleTemplate()),
         ]);
 
-        await this.crudGenerator.generateModulesForEntities(projectPath, entities);
+        await this.crudGenerator.generateModulesForEntities(
+            projectPath,
+            entities,
+            relationFieldsByEntity,
+            entityIdByTableName,
+        );
 
         await fs.writeFile(
             path.join(projectPath, 'src', 'app.module.ts'),

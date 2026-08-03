@@ -2,6 +2,7 @@ import { Injectable, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FIELD_TYPE_TO_PRISMA } from '../common/utils/field-type-mapper.util';
 import { toPascalCase, toCamelCase } from '../common/utils/case.util';
+import { buildRelationLinesByEntity } from '../common/utils/relation-schema-builder.util';
 
 @Injectable()
 export class SchemaBuilderService {
@@ -17,7 +18,7 @@ export class SchemaBuilderService {
     }
 
     async buildSchema(platformId: string, extraPrismaBlocks: string[] = []): Promise<string> {
-        
+
         const entities = await this.getActiveEntitiesWithFields(platformId);
 
         if (entities.length === 0) {
@@ -25,6 +26,12 @@ export class SchemaBuilderService {
                 'Cette plateforme ne contient aucune entité active. Ajoute au moins une table avant de générer.',
             );
         }
+
+        const relations = await this.prisma.relation.findMany({ where: { platformId } });
+        const relationLinesByEntity = buildRelationLinesByEntity(
+            entities.map((e) => ({ id: e.id, tableName: e.tableName })),
+            relations,
+        );
 
         const header = `
             generator client {
@@ -39,23 +46,29 @@ export class SchemaBuilderService {
             }
         `;
 
-        const models = entities.map((entity) => this.buildModel(entity)).join('\n\n');
+        const models = entities
+            .map((entity) => this.buildModel(entity, relationLinesByEntity.get(entity.id) ?? []))
+            .join('\n\n');
+
         const extra = extraPrismaBlocks.join('\n');
 
         return `${header}\n${models}\n${extra}\n`;
     }
 
-    private buildModel(entity: {
-        tableName: string;
-        isSchedulable: boolean;
-        fields: {
-            column: string;
-            type: string;
-            required: boolean;
-            unique: boolean;
-            defaultValue: string | null
-        }[];
-    }): string {
+    private buildModel(
+        entity: {
+            tableName: string;
+            isSchedulable: boolean;
+            fields: {
+                column: string;
+                type: string;
+                required: boolean;
+                unique: boolean;
+                defaultValue: string | null;
+            }[];
+        },
+        relationLines: string[],
+    ): string {
 
         const modelName = toPascalCase(entity.tableName);
 
@@ -69,6 +82,7 @@ export class SchemaBuilderService {
             `model ${modelName} {`,
             `  id String @id @default(uuid())`,
             ...fieldLines,
+            ...relationLines,
             ...schedulableLines,
             `  createdAt DateTime @default(now())`,
             `  updatedAt DateTime @updatedAt`,
