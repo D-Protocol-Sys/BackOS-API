@@ -162,6 +162,8 @@ model Platform {
   url         String?
   status      PlatformStatus @default(DRAFT)
 
+  generatedPort Int?
+
   ownerId String
   owner   User   @relation("PlatformOwner", fields: [ownerId], references: [id])
 
