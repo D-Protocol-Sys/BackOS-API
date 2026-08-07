@@ -1,53 +1,133 @@
 services:
-  backos-postgres:
+  # =========================================================================
+  # 1. Primary PostgreSQL Database Service
+  # =========================================================================
+  # PostgreSQL serves as the relational database storing main application data.
+  postgres:
+    # Use the lightweight Alpine Linux-based official image for small size and speed.
     image: postgres:16-alpine
-    container_name: backos-postgres
-    restart: unless-stopped
-    environment:
-      POSTGRES_USER: backos_user
-      POSTGRES_PASSWORD: backos_password
-      POSTGRES_DB: backos_db
-    ports:
-      - "5432:5432"
-    volumes:
-      - backos_postgres_data:/var/lib/postgresql/data
-      - ./docker/postgres-init:/docker-entrypoint-initdb.d
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U backos_user -d backos_db"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
+    container_name: ${SERVER_NAME}-postgres
 
-  backos-redis:
-    image: redis:7-alpine
-    container_name: backos-redis
+    # Ensures high availability: automatically restarts the container unless manually stopped.
     restart: unless-stopped
+
+    # Environment variables pass database initialization credentials to the container.
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+
+    # Port mapping format: "HOST_PORT:CONTAINER_PORT"
+    # Bound to an ENV variable so you can disable or rebind it in production.
     ports:
-      - "6379:6379"
+      - "${POSTGRES_PORT:-5432}:5432"
+
+    # Persistent storage and initialization scripts:
+    volumes:
+      # 1. Persists database data across container restarts and reinstantiations.
+      - ${SERVER_NAME}_postgres_data:/var/lib/postgresql/data
+      # 2. Automatically executes SQL scripts in this directory on initial database startup.
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d
+
+    networks:
+      - ${SERVER_NAME}-network
+
+    # Health check ensures dependent services wait until PostgreSQL is fully ready for connections.
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s   # Time between health checks
+      timeout: 5s    # Maximum execution time allowed for the test command
+      retries: 5     # Number of consecutive failures before marking container as unhealthy
+
+  # =========================================================================
+  # 2. Redis Caching & Queue Service
+  # =========================================================================
+  # Redis acts as an in-memory datastore used for caching, session management, or background job queues.
+  redis:
+    image: redis:7-alpine
+    container_name: ${SERVER_NAME}-redis
+    restart: unless-stopped
+
+    # Maps local machine port to default Redis port 6379.
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+
+    networks:
+      - ${SERVER_NAME}-network
+
+    # Verifies that the Redis server responds to ping commands.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
-  
-  # backos-postgres-test:
+
+  # =========================================================================
+  # 3. Application API Service (NestJS Backend)
+  # =========================================================================
+  # Main application service containing the backend business logic and endpoints.
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: ${SERVER_NAME}-api
+    restart: unless-stopped
+    ports:
+      - "${API_PORT:-4803}:${API_PORT:-4803}"
+    environment:
+      NODE_ENV: ${NODE_ENV:-production}
+      # NOTE: Internal communications inside Docker network use service names ("postgres", "redis"), not container names.
+      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    # Ensures database and cache services are healthy BEFORE the API starts up.
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - ${SERVER_NAME}-network
+
+  # =========================================================================
+  # 4. Isolated Test Database Service (Disabled/Commented Out)
+  # =========================================================================
+  # Useful for integration/e2e testing without corrupting primary development data.
+  # postgres-test:
   #   image: postgres:16-alpine
-  #   container_name: backos-postgres-test
+  #   container_name: ${SERVER_NAME}-postgres-test
   #   restart: unless-stopped
   #   environment:
-  #     POSTGRES_USER: backos_test
-  #     POSTGRES_PASSWORD: backos_test_password
-  #     POSTGRES_DB: backos_test
+  #     POSTGRES_USER: ${POSTGRES_USER}_test
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}_test
+  #     POSTGRES_DB: ${POSTGRES_DB}_test
   #   ports:
-  #     - "5433:5432"
+  #     - "5433:5432" # Uses port 5433 on the host to avoid port collisions with main database
   #   volumes:
-  #     - backos_postgres_test_data:/var/lib/postgresql/data
+  #     - ${SERVER_NAME}_postgres_test_data:/var/lib/postgresql/data
+  #   networks:
+  #     - app-network
   #   healthcheck:
-  #     test: ["CMD-SHELL", "pg_isready -U backos_test -d backos_test"]
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}_test -d ${POSTGRES_DB}_test"]
   #     interval: 5s
   #     timeout: 5s
   #     retries: 5
 
+# =============================================================================
+# Network Definition
+# =============================================================================
+# Bridge network isolating communication between services in this stack.
+networks:
+  app-network:
+    name: ${SERVER_NAME}-network
+    driver: bridge
+
+# =============================================================================
+# Named Volumes Definition
+# =============================================================================
+# Declares Docker-managed volumes to guarantee persistent data lifecycle management.
 volumes:
-  backos_postgres_data:
-  # backos_postgres_test_data:
+  postgres_data: # Dynamically named persistent volume for database files
+  # ${SERVER_NAME}_postgres_test_data: # Persists test database files when uncommented

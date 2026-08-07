@@ -1,1 +1,0 @@
-CREATE ROLE backos_provisioner WITH LOGIN PASSWORD 'change-moi-en-dev-aussi-si-tu-veux' CREATEDB CREATEROLE;
