@@ -3,6 +3,7 @@ export const PERMISSIONS = {
     // Users
     USERS_READ: 'users.read',
     USERS_UPDATE: 'users.update',
+    USERS_CREATE: 'users.create',
     USERS_DEACTIVATE: 'users.deactivate',
     USERS_DELETE: 'users.delete',
     USERS_EXPORT: 'users.export',
@@ -38,6 +39,9 @@ export const PERMISSIONS = {
     // Generator
     GENERATOR_EXECUTE: 'generator.execute',
     GENERATION_READ: 'generation.read',
+
+    // Audit
+    AUDIT_READ: 'audit.read',
     
 } as const;
 
@@ -47,6 +51,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 
     [PERMISSIONS.USERS_READ]: "View any user's profile and account details",
     [PERMISSIONS.USERS_UPDATE]: "Update any user's profile information (first name, last name)",
+    [PERMISSIONS.USERS_CREATE]: 'Create a new user account by invitation (bypasses self-registration)',
     [PERMISSIONS.USERS_DEACTIVATE]: 'Deactivate or reactivate a user account',
     [PERMISSIONS.USERS_DELETE]: 'Permanently delete a user account',
     [PERMISSIONS.USERS_EXPORT]: "Export any user's personal data",
@@ -77,5 +82,7 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 
     [PERMISSIONS.GENERATOR_EXECUTE]: 'Trigger the backend generation process for a platform',
     [PERMISSIONS.GENERATION_READ]: 'View generation history and logs',
+
+    [PERMISSIONS.AUDIT_READ]: 'View the audit log of sensitive actions',
 
 };

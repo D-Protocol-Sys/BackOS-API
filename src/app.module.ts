@@ -23,6 +23,7 @@ import { GeneratorModule } from './generator/generator.module';
 import { PlatformsModule } from './platforms/platforms.module';
 import { ServiceCatalogModule } from './generator/service-catalog.module';
 import { RelationsModule } from './relations/relations.module';
+import { AuditModule } from './audit/audit.module';
 
 @Module({
 
@@ -80,7 +81,9 @@ import { RelationsModule } from './relations/relations.module';
 
         ServiceCatalogModule,
 
-        RelationsModule
+        RelationsModule,
+
+        AuditModule
 
     ],
 

@@ -11,47 +11,170 @@ datasource db {
 
 
 // ----------------------------------------------------------
-// AUTH (OTP) / RBAC
+// AUTH (Invitation + TOTP) / RBAC
 // ----------------------------------------------------------
 
+enum UserStatus {
+  INVITED
+  ACTIVATING
+  ACTIVE
+  SUSPENDED
+  DISABLED
+}
+
+enum StatusChangeReason {
+  ONBOARDING
+  VOLUNTARY_LEAVE
+  TERMINATION
+  LONG_LEAVE
+  SECURITY_SUSPENSION
+  PERIODIC_CLEANUP
+  OTHER
+}
+
 model User {
-  id        String  @id @default(uuid())
-  email     String  @unique
+  id String @id @default(uuid())
+
+  workEmail     String @unique
+  personalEmail String? @unique
+  username      String @unique
+
   firstName String
   lastName  String
-  isActive  Boolean @default(true)
+
+  status UserStatus @default(INVITED)
+
+  lastLoginAt DateTime?
+  lastSeenAt  DateTime?
+
+  suspendedAt DateTime?
+  disabledAt  DateTime?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  otpCodes      OtpCode[]
-  refreshTokens RefreshToken[]
-  userRoles     UserRole[]
-  platformOwned Platform[]     @relation("PlatformOwner")
-  generations   Generation[]
+  profile          UserProfile?
+  mfa              UserMfa?
+  recoveryCodes    RecoveryCode[]
+  invitations      Invitation[]
+  refreshTokens    RefreshToken[]
+  userRoles        UserRole[]
+  platformOwned    Platform[] @relation("PlatformOwner")
+  generations      Generation[]
+  auditLogs        AuditLog[] @relation("AuditActor")
 
-  platformMemberships         PlatformMember[] @relation("PlatformMemberUser")
-  platformRemovalRequestsMade PlatformMember[] @relation("PlatformMemberRemovalRequestedBy")
+  statusHistory               UserStatusHistory[]   @relation("UserStatusHistorySubject")
+  performedStatusChanges      UserStatusHistory[]   @relation("UserStatusHistoryPerformedBy")
+  platformMemberships         PlatformMember[]      @relation("PlatformMemberUser")
+  platformRemovalRequestsMade PlatformMember[]      @relation("PlatformMemberRemovalRequestedBy")
+
+  @@index([status])
+  @@index([username])
+  @@index([workEmail])
 
   @@map("users")
 }
 
-model OtpCode {
+model UserProfile {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  bio             String?
+  phone           String?
+  phoneVerifiedAt DateTime?
+  dateOfBirth     DateTime?
+  location        String?
+  country         String?
+  company         String?
+  jobTitle        String?
+  websiteUrl      String?
+  avatarUrl       String?
+  language        String? @default("fr")
+  timezone        String?
+
+  socialLinks Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_profiles")
+}
+
+model UserStatusHistory {
+  id      String @id @default(uuid())
+  userId  String
+  user    User   @relation("UserStatusHistorySubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  previousStatus UserStatus?
+  newStatus      UserStatus
+
+  reason         StatusChangeReason
+
+  comment        String?
+
+  performedById  String?
+  performedBy    User?      @relation("UserStatusHistoryPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([performedById])
+
+  @@map("user_status_history")
+}
+
+model Invitation {
+  id     String @id @default(uuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String @unique
+  codeHash  String
+  attempts  Int    @default(0)
+
+  used      Boolean   @default(false)
+  usedAt    DateTime?
+  expiresAt DateTime
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@map("invitations")
+}
+
+enum MfaStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+}
+
+model UserMfa {
+  id     String @id @default(uuid())
+  userId String @unique
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  secretEncrypted String
+  status          MfaStatus @default(PENDING)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("user_mfa")
+}
+
+model RecoveryCode {
   id     String @id @default(uuid())
   userId String
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   codeHash String
-  attempts Int    @default(0)
-
-  expiresAt  DateTime
-  consumedAt DateTime?
+  usedAt   DateTime?
 
   createdAt DateTime @default(now())
 
   @@index([userId])
-  @@index([createdAt])
-  @@map("otp_codes")
+  @@map("recovery_codes")
 }
 
 model RefreshToken {
@@ -67,6 +190,33 @@ model RefreshToken {
   @@index([expiresAt])
   @@index([revokedAt])
   @@map("refresh_tokens")
+}
+
+model AuditLog {
+  id      String  @id @default(uuid())
+  actorId String?
+  actor   User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  action String
+
+  targetType  String?
+  targetId    String?
+
+  metadata Json?
+
+  ipAddress String?
+  userAgent String?
+
+  requestId String?
+
+  createdAt DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+
+  @@map("audit_logs")
 }
 
 model Role {

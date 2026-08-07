@@ -1,15 +1,29 @@
 import 'dotenv/config';
-import { PrismaClient } from './generated/prisma/client';
+import * as crypto from 'crypto';
+import * as bcrypt from 'bcrypt';
+import { PrismaClient, UserStatus } from './generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 import { PERMISSION_DESCRIPTIONS, PERMISSIONS } from '../src/common/constants/permissions.constant';
 
-const adapter = new PrismaPg({ connectionString: process.env.DATABASE_URL });
+// Import configuration factories
+import databaseConfig from '../src/config/database.config';
+import ownerConfig from '../src/config/owner.config';
+import appConfig from '../src/config/app.config';
+
+// Instantiate configuration objects
+const dbConf = databaseConfig();
+const ownerConf = ownerConfig();
+const appConf = appConfig();
+
+// Initialize Prisma Client with PostgreSQL adapter
+const adapter = new PrismaPg({ connectionString: dbConf.url });
 const prisma = new PrismaClient({ adapter });
 
 async function main() {
     
     const allPermissionKeys = Object.values(PERMISSIONS);
 
+    // 1. Seed system permissions (Idempotent upsert)
     for (const key of allPermissionKeys) {
         await prisma.permission.upsert({
             where: { key },
@@ -18,9 +32,10 @@ async function main() {
         });
     }
 
+    // 2. Define application roles and assign permission mappings
     const rolesDefinition: Record<string, { level: number; perms: string[] | 'ALL' }> = {
-
-        owner: { level: 0,  perms: 'ALL' },
+        
+        owner: { level: 0, perms: 'ALL' },
 
         admin: { level: 10, perms: [
             PERMISSIONS.USERS_READ,
@@ -60,13 +75,9 @@ async function main() {
             PERMISSIONS.GENERATOR_EXECUTE,
             PERMISSIONS.GENERATION_READ,
         ]},
-
-        viewer: { level: 30, perms: [PERMISSIONS.PLATFORM_READ, PERMISSIONS.GENERATION_READ] },
-
     };
 
     for (const [roleName, { level, perms }] of Object.entries(rolesDefinition)) {
-
         const role = await prisma.role.upsert({
             where: { name: roleName },
             update: { level },
@@ -91,12 +102,68 @@ async function main() {
         }
     }
 
-    console.log('✅ Seed terminé : permissions et rôles créés.');
+    // 3. Create initial System Owner (Genesis User) if database is empty
+    const existingUsers = await prisma.user.count();
+
+    if (existingUsers === 0) {
+        
+        // Ensure all required Owner attributes are provided in the environment
+        if (
+            !ownerConf.workEmail ||
+            !ownerConf.personalEmail ||
+            !ownerConf.firstName ||
+            !ownerConf.lastName ||
+            !ownerConf.username
+        ) {
+            throw new Error("❌ All OWNER_* configuration parameters must be defined in the environment.");
+        }
+
+        const ownerRole = await prisma.role.findUniqueOrThrow({ where: { name: 'owner' } });
+
+        const genesisUser = await prisma.user.create({
+            data: {
+                workEmail: ownerConf.workEmail,
+                personalEmail: ownerConf.personalEmail,
+                firstName: ownerConf.firstName,
+                lastName: ownerConf.lastName,
+                username: ownerConf.username,
+                status: UserStatus.INVITED,
+            },
+        });
+
+        await prisma.userRole.create({ 
+            data: { userId: genesisUser.id, roleId: ownerRole.id } 
+        });
+
+        // Generate secure activation token and numeric code
+        const rawToken = crypto.randomBytes(32).toString('hex');
+        const code = crypto.randomInt(100000, 1000000).toString();
+
+        const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+        const codeHash = await bcrypt.hash(code, appConf.bcryptSaltRounds);
+
+        await prisma.invitation.create({
+            data: {
+                userId: genesisUser.id,
+                tokenHash,
+                codeHash,
+                expiresAt: new Date(Date.now() + 48 * 60 * 60 * 1000), // Valid for 48 hours
+            },
+        });
+
+        console.log('\n🔑 Initial Owner account created — Complete activation using the details below:');
+        console.log(`   Work Email     : ${genesisUser.workEmail}`);
+        console.log(`   Personal Email : ${genesisUser.personalEmail}`);
+        console.log(`   Activation Link: ${appConf.frontendUrl}/activate?token=${rawToken}`);
+        console.log(`   OTP Code       : ${code}\n`);
+    }
+
+    console.log('✅ Database seed completed: Permissions, roles, and initial system user created.');
 }
 
 main()
     .catch((e) => {
-        console.error(e);
+        console.error('❌ Database seed failed:', e);
         process.exit(1);
     })
     .finally(async () => {
