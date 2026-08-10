@@ -68,3 +68,4 @@ prisma/generated
 
 **/scripts/
 generated/
+uploads/

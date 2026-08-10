@@ -68,6 +68,11 @@ model User {
   platformMemberships         PlatformMember[]      @relation("PlatformMemberUser")
   platformRemovalRequestsMade PlatformMember[]      @relation("PlatformMemberRemovalRequestedBy")
 
+  files                   FileAsset[]
+  personalPlanningEntries PlanningEntry[]         @relation("PersonalPlanningOwner")
+  createdPlanningEntries  PlanningEntry[]         @relation("PlanningEntryCreator")
+  planningAssignments     PlanningEntryAssignee[]
+
   @@index([status])
   @@index([username])
   @@index([workEmail])
@@ -327,6 +332,8 @@ model Platform {
   members     PlatformMember[]
   services    PlatformService[]
   relations   Relation[]
+  
+  planningEntries PlanningEntry[]
 
   @@index([ownerId])
   @@index([status])
@@ -496,4 +503,96 @@ model Relation {
   updatedAt DateTime @updatedAt
 
   @@map("relations")
+}
+
+// ----------------------------------------------------------
+// FILES & PLANNING
+// ----------------------------------------------------------
+
+enum FileCategory {
+  DOCUMENT
+  SPREADSHEET
+  PRESENTATION
+  IMAGE
+  ARCHIVE
+}
+
+model FileAsset {
+  id         String @id @default(uuid())
+  uploaderId String
+  uploader   User   @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  originalName String
+  storedName   String       @unique
+  mimeType     String
+  extension    String
+  category     FileCategory
+  sizeBytes    Int
+
+  planningEntryId String?
+  planningEntry   PlanningEntry? @relation(fields: [planningEntryId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+
+  @@index([uploaderId])
+  @@index([planningEntryId])
+  @@map("file_assets")
+}
+
+enum PlanningItemType {
+  EVENT
+  TASK
+  NOTE
+  MILESTONE
+}
+
+enum PlanningItemStatus {
+  TODO
+  IN_PROGRESS
+  DONE
+}
+
+model PlanningEntry {
+  id   String           @id @default(uuid())
+  type PlanningItemType
+
+  personalUserId String?
+  personalUser   User?     @relation("PersonalPlanningOwner", fields: [personalUserId], references: [id], onDelete: Cascade)
+  platformId     String?
+  platform       Platform? @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  creatorId String
+  creator   User   @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
+
+  title       String
+  description String?
+
+  startAt    DateTime?
+  endAt      DateTime?
+  dueDate    DateTime?
+  targetDate DateTime?
+  status     PlanningItemStatus?
+
+  assignees   PlanningEntryAssignee[]
+  attachments FileAsset[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([personalUserId])
+  @@index([platformId])
+  @@map("planning_entries")
+}
+
+model PlanningEntryAssignee {
+  id      String        @id @default(uuid())
+  entryId String
+  entry   PlanningEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
+  userId  String
+  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([entryId, userId])
+  @@map("planning_entry_assignees")
 }

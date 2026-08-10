@@ -24,6 +24,8 @@ import { PlatformsModule } from './platforms/platforms.module';
 import { ServiceCatalogModule } from './generator/service-catalog.module';
 import { RelationsModule } from './relations/relations.module';
 import { AuditModule } from './audit/audit.module';
+import { PlanningModule } from './planning/planning.module';
+import { FilesModule } from './files/files.module';
 
 @Module({
 
@@ -82,6 +84,10 @@ import { AuditModule } from './audit/audit.module';
         ServiceCatalogModule,
 
         RelationsModule,
+
+        PlanningModule,
+
+        FilesModule,
 
         AuditModule
 

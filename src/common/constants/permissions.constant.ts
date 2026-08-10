@@ -36,6 +36,11 @@ export const PERMISSIONS = {
     FIELD_UPDATE: 'field.update',
     FIELD_DELETE: 'field.delete',
 
+    // Files & Planning
+    FILE_MANAGE: 'file.manage',
+    PLANNING_READ: 'planning.read',
+    PLANNING_MANAGE: 'planning.manage',
+
     // Generator
     GENERATOR_EXECUTE: 'generator.execute',
     GENERATION_READ: 'generation.read',
@@ -79,6 +84,10 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
     [PERMISSIONS.FIELD_READ]: "View a field's definition",
     [PERMISSIONS.FIELD_UPDATE]: "Update a field's definition",
     [PERMISSIONS.FIELD_DELETE]: 'Delete a field',
+
+    [PERMISSIONS.FILE_MANAGE]: 'Delete or manage any uploaded file, regardless of ownership',
+    [PERMISSIONS.PLANNING_READ]: 'View any platform planning, regardless of membership',
+    [PERMISSIONS.PLANNING_MANAGE]: 'Create, edit, or delete any platform planning entry',
 
     [PERMISSIONS.GENERATOR_EXECUTE]: 'Trigger the backend generation process for a platform',
     [PERMISSIONS.GENERATION_READ]: 'View generation history and logs',
