@@ -1,7 +1,6 @@
 import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
-import { ApiBearerAuth, ApiCreatedResponse, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
+import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
-
 import { AuthService } from './auth.service';
 import { ValidateInvitationDto } from './dto/validate-invitation.dto';
 import { ConsumeInvitationDto } from './dto/consume-invitation.dto';
@@ -9,7 +8,6 @@ import { ConfirmMfaDto } from './dto/confirm-mfa.dto';
 import { LoginDto } from './dto/login.dto';
 import { RecoveryLoginDto } from './dto/recovery-login.dto';
 import { RefreshTokenDto } from './dto/refresh-token.dto';
-
 import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 

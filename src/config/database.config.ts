@@ -24,7 +24,7 @@ export default registerAs('database', () => ({
      * Used exclusively by the `ProvisioningService` to execute DDL commands (`CREATE DATABASE`, `CREATE ROLE`).
      * * @example "postgresql://provisioner:admin_pass@localhost:5432/postgres"
      */
-    provisioningUrl: process.env.DATABASE_PROVISIONING_URL,
+    provisioningUrl: process.env.POSTGRES_PROVISIONING_URL,
 
     /**
      * Dedicated Administrative Role Name.

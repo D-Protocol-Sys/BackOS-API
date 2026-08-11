@@ -6,6 +6,11 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { AuthController } from './auth.controller';
 import { JwtStrategy } from './strategies/jwt.strategy';
+import { RecoveryCodeService } from '../common/utils/recovery-code.service';
+import { MfaService } from '../common/services/mfa.service';
+import { TotpService } from '../common/utils/totp.service';
+import { QrCodeService } from '../common/utils/qr-code.service';
+import { CryptoService } from '../common/services/crypto.service';
 
 @Module({
 
@@ -26,7 +31,17 @@ import { JwtStrategy } from './strategies/jwt.strategy';
 
     controllers: [AuthController],
 
-    providers: [AuthService, JwtStrategy],
+    providers: [
+        AuthService,
+        JwtStrategy,
+        RecoveryCodeService,
+        MfaService,
+        TotpService,
+        QrCodeService,
+        CryptoService
+    ],
+
+    exports: [AuthService],
 
 })
 

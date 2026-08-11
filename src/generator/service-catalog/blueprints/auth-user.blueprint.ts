@@ -1,10 +1,20 @@
 import { ServiceBlueprint } from '../service-blueprint.types';
 
+/**
+ * Service blueprint configuration for the "Auth & User" pluggable module.
+ * * This blueprint serves as a declarative manifest defining:
+ * 1. Package dependencies required to inject into target generated applications.
+ * 2. Environment/configuration fields required to operate the service.
+ * 3. Prisma Schema DSL models injected dynamically during code generation.
+ */
 export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
 
+    // Unique blueprint identifier key used across the code generation engine
     key: 'auth-user',
     name: 'Auth & User',
-    description: 'Authentification par code OTP (email) et gestion des utilisateurs de la plateforme générée.',
+    description: 'OTP email-based authentication and user management for the generated platform.',
+
+    // Required npm/pnpm dependencies injected into the target project's package.json
     pnpmDependencies: {
         '@nestjs/jwt': '^11.0.0',
         '@nestjs/passport': '^11.0.0',
@@ -13,6 +23,8 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
         'bcrypt': '^5.1.1',
         'nodemailer': '^6.9.16',
     },
+
+    // Config fields required from tenant users upon activating this service
     configFields: [
         { key: 'jwtSecret', label: 'Secret JWT', secret: true, required: true },
         { key: 'jwtExpiresIn', label: 'Durée de validité du token', secret: false, required: false, placeholder: '15m' },
@@ -22,6 +34,8 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
         { key: 'smtpPassword', label: 'Mot de passe SMTP', secret: true, required: true },
         { key: 'fromEmail', label: 'Adresse expéditeur', secret: false, required: true },
     ],
+
+    // Embedded Prisma Schema snippet injected into the generated project's schema.prisma
     prismaModels: `
         model AppUser {
             id        String   @id @default(uuid())

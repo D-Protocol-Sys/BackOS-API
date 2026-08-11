@@ -8,6 +8,10 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
+/**
+ * REST Controller providing administrative endpoints for managing system and custom roles,
+ * along with their assigned permission sets.
+ */
 @ApiTags('Roles')
 @ApiBearerAuth('access-token')
 @Controller('roles')
@@ -15,30 +19,55 @@ export class RolesController {
     
     constructor(private readonly rolesService: RolesService) {}
 
+    /**
+     * Lists all system and custom roles with their associated permissions.
+     * Requires `ROLES_READ` permission.
+     * @route GET /roles
+     */
     @RequirePermissions(PERMISSIONS.ROLES_READ)
     @Get()
     list() {
         return this.rolesService.list();
     }
 
+    /**
+     * Retrieves detailed information about a specific role by ID.
+     * Requires `ROLES_READ` permission.
+     * @route GET /roles/:id
+     */
     @RequirePermissions(PERMISSIONS.ROLES_READ)
     @Get(':id')
     getById(@Param('id') id: string) {
         return this.rolesService.getById(id);
     }
 
+    /**
+     * Creates a new role with assigned permissions.
+     * Requires `ROLES_CREATE` permission.
+     * @route POST /roles
+     */
     @RequirePermissions(PERMISSIONS.ROLES_CREATE)
     @Post()
     create(@CurrentUser() actor: { userId: string }, @Body() dto: CreateRoleDto) {
         return this.rolesService.create(actor.userId, dto);
     }
 
+    /**
+     * Updates role metadata (e.g., name, description).
+     * Requires `ROLES_UPDATE` permission.
+     * @route PATCH /roles/:id
+     */
     @RequirePermissions(PERMISSIONS.ROLES_UPDATE)
     @Patch(':id')
     update(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
         return this.rolesService.update(id, dto);
     }
 
+    /**
+     * Replaces the complete set of permissions assigned to a role.
+     * Requires `ROLES_UPDATE` permission.
+     * @route PUT /roles/:id/permissions
+     */
     @RequirePermissions(PERMISSIONS.ROLES_UPDATE)
     @Put(':id/permissions')
     replacePermissions(
@@ -48,6 +77,11 @@ export class RolesController {
         return this.rolesService.replacePermissions(id, dto.permissionKeys);
     }
 
+    /**
+     * Deletes a custom role by ID.
+     * Requires `ROLES_DELETE` permission.
+     * @route DELETE /roles/:id
+     */
     @RequirePermissions(PERMISSIONS.ROLES_DELETE)
     @Delete(':id')
     delete(@Param('id') id: string) {

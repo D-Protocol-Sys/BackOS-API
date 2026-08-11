@@ -9,6 +9,10 @@ import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RoleHierarchyService } from '../common/services/role-hierarchy.service';
 
+/**
+ * Service managing user roles lifecycle, role-permission associations,
+ * system role immutability checks, and hierarchy constraints.
+ */
 @Injectable()
 export class RolesService {
 
@@ -17,6 +21,10 @@ export class RolesService {
         private readonly roleHierarchy: RoleHierarchyService,
     ) {}
 
+    /**
+     * Lists all existing roles, including their nested permission definitions,
+     * ordered alphabetically by name.
+     */
     async list() {
         return this.prisma.role.findMany({
             include: { rolePermissions: { include: { permission: true } } },
@@ -24,15 +32,22 @@ export class RolesService {
         });
     }
 
+    /**
+     * Retrieves a single role by ID along with its assigned permissions.
+     */
     async getById(id: string) {
         const role = await this.prisma.role.findUnique({
             where: { id },
             include: { rolePermissions: { include: { permission: true } } },
         });
-        if (!role) throw new NotFoundException('Rôle introuvable.');
+        if (!role) throw new NotFoundException('Role not found.');
         return role;
     }
 
+    /**
+     * Creates a new role with assigned permissions after asserting 
+     * that the requesting actor has sufficient hierarchy level privileges.
+     */
     async create(actorUserId: string, dto: CreateRoleDto) {
 
         await this.roleHierarchy.assertCanCreateAtLevel(actorUserId, dto.level);
@@ -52,8 +67,12 @@ export class RolesService {
         });
     }
 
+    /**
+     * Updates role metadata (name, description).
+     * Prevents updates to immutable system roles.
+     */
     async update(id: string, dto: UpdateRoleDto) {
-        await this.assertNotSystemRole(id, 'modifier');
+        await this.assertNotSystemRole(id, 'modify');
         return this.prisma.role.update({
             where: { id },
             data: dto,
@@ -61,8 +80,12 @@ export class RolesService {
         });
     }
 
+    /**
+     * Overwrites all permission associations for a given role within a single database transaction.
+     * Prevents updates to immutable system roles.
+     */
     async replacePermissions(id: string, permissionKeys: string[]) {
-        await this.assertNotSystemRole(id, 'modifier les permissions de');
+        await this.assertNotSystemRole(id, 'modify permissions for');
         const permissions = await this.resolvePermissions(permissionKeys);
 
         await this.prisma.$transaction([
@@ -75,21 +98,31 @@ export class RolesService {
         return this.getById(id);
     }
 
+    /**
+     * Deletes a custom role by ID.
+     * Prevents deletion of system roles or roles currently assigned to active users.
+     */
     async delete(id: string) {
-        await this.assertNotSystemRole(id, 'supprimer');
+        await this.assertNotSystemRole(id, 'delete');
 
         const assignedCount = await this.prisma.userRole.count({
             where: { roleId: id },
         });
         if (assignedCount > 0) {
             throw new ConflictException(
-                'Ce rôle est encore assigné à des utilisateurs. Retire-le d\'abord.',
+                'This role is still assigned to users. Remove it from users first.',
             );
         }
 
         return this.prisma.role.delete({ where: { id } });
     }
 
+    // ---- Helpers ----
+
+    /**
+     * Resolves an array of permission key strings to their corresponding database entities.
+     * Throws an exception if any requested key is invalid or non-existent.
+     */
     private async resolvePermissions(keys: string[]) {
         const permissions = await this.prisma.permission.findMany({
             where: { key: { in: keys } },
@@ -98,18 +131,21 @@ export class RolesService {
             const foundKeys = permissions.map((p) => p.key);
             const missing = keys.filter((k) => !foundKeys.includes(k));
             throw new BadRequestException(
-                `Permissions inconnues : ${missing.join(', ')}`,
+                `Unknown permissions: ${missing.join(', ')}`,
             );
         }
         return permissions;
     }
 
+    /**
+     * Asserts that a target role exists and is not a built-in system role (`isSystem = true`).
+     */
     private async assertNotSystemRole(id: string, action: string) {
         const role = await this.prisma.role.findUnique({ where: { id } });
-        if (!role) throw new NotFoundException('Rôle introuvable.');
+        if (!role) throw new NotFoundException('Role not found.');
         if (role.isSystem) {
             throw new ConflictException(
-                `Impossible de ${action} un rôle système ("${role.name}").`,
+                `Cannot ${action} a system role ("${role.name}").`,
             );
         }
     }

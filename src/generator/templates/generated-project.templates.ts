@@ -1,5 +1,13 @@
 import { toPascalCase } from "../../common/utils/case.util";
 
+/**
+ * Builds the `package.json` object structure for a generated NestJS application.
+ * Merges baseline dependencies (NestJS, Prisma v7 with Pg adapter, class-validator) 
+ * with dynamic plugin dependencies required by activated service blueprints.
+ * * @param slug - The project name identifier.
+ * @param extraDependencies - Additional runtime package dependencies injected from service blueprints.
+ * @returns Serializable package configuration object.
+ */
 export function packageJsonObject(slug: string, extraDependencies: Record<string, string>) {
     
     return {
@@ -41,6 +49,10 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
     };
 }
 
+/**
+ * Static JSON configuration for the Nest CLI compiler in generated projects.
+ * Automatically registers `@nestjs/swagger` compiler plugin to auto-generate OpenAPI metadata.
+ */
 export const NEST_CLI_JSON = JSON.stringify(
     {
         $schema: 'https://json.schemastore.org/nest-cli',
@@ -52,6 +64,11 @@ export const NEST_CLI_JSON = JSON.stringify(
     2,
 );
 
+/**
+ * Static JSON configuration for `tsconfig.json` in generated projects.
+ * Configures decorator metadata support, ES target, and module path aliases 
+ * pointing `@prismamodels/*` to generated Prisma Client outputs.
+ */
 export const TSCONFIG_JSON = JSON.stringify(
     {
         compilerOptions: {
@@ -78,6 +95,10 @@ export const TSCONFIG_JSON = JSON.stringify(
     2,
 );
 
+/**
+ * Generates the Prisma configuration file content for Prisma v7 config API.
+ * Defines migration paths, schema location, and database source URL loading.
+ */
 export function prismaConfigTemplate(): string {
     return `
         import "dotenv/config";
@@ -91,6 +112,11 @@ export function prismaConfigTemplate(): string {
     `;
 }
 
+/**
+ * Generates the source code for `PrismaService` inside generated target apps.
+ * Utilizes the modern Prisma PostgreSQL driver adapter (`PrismaPg`) 
+ * and handles lifecycle database connection management (`$connect` / `$disconnect`).
+ */
 export function prismaServiceTemplate(): string {
     return `
         import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
@@ -109,7 +135,7 @@ export function prismaServiceTemplate(): string {
 
             async onModuleInit() {
                 await this.$connect();
-                this.logger.log('Connexion à la base de données établie');
+                this.logger.log('Database connection successfully established');
             }
 
             async onModuleDestroy() {
@@ -119,6 +145,11 @@ export function prismaServiceTemplate(): string {
     `;
 }
 
+/**
+ * Generates source code for global `PrismaModule`.
+ * Decorated with `@Global()` to make the singleton `PrismaService` available across 
+ * all entity modules without explicit re-importing.
+ */
 export function prismaModuleTemplate(): string {
     return `
         import { Global, Module } from '@nestjs/common';
@@ -133,6 +164,11 @@ export function prismaModuleTemplate(): string {
     `;
 }
 
+/**
+ * Generates the `main.ts` application bootstrap entrypoint for target generated apps.
+ * Configures global pipes (`ValidationPipe`), global API route prefix (`/api`), 
+ * and Swagger OpenAPI documentation served at `/api/docs`.
+ */
 export function mainTsTemplate(): string {
     return `
         import { NestFactory } from '@nestjs/core';
@@ -146,8 +182,8 @@ export function mainTsTemplate(): string {
             app.setGlobalPrefix('api');
 
             const swaggerConfig = new DocumentBuilder()
-                .setTitle('API générée par BPG')
-                .setDescription('Documentation générée automatiquement à partir de la définition de cette plateforme.')
+                .setTitle('Generated API by BPG')
+                .setDescription('Automatically generated documentation based on platform definitions.')
                 .setVersion('1.0')
                 .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
                 .build();
@@ -156,13 +192,19 @@ export function mainTsTemplate(): string {
 
             const port = process.env.PORT || 4000;
             await app.listen(port);
-            console.log(\`API générée démarrée sur le port \${port}\`);
-            console.log(\`Documentation disponible sur http://localhost:\${port}/api/docs\`);
+            console.log(\`Generated API running on port \${port}\`);
+            console.log(\`Documentation available at http://localhost:\${port}/api/docs\`);
         }
         bootstrap();
     `;
 }
 
+/**
+ * Generates root `AppModule` class source code dynamically, assembling imports 
+ * for dynamic entities and feature modules provided by blueprints.
+ * * @param entities - List of platform entity table definitions.
+ * @param extraModules - Injected module references generated from service blueprints.
+ */
 export function appModuleTemplate(
     entities: { tableName: string }[],
     extraModules: { name: string; importPath: string }[] = [],
@@ -180,7 +222,7 @@ export function appModuleTemplate(
         'PrismaModule',
         ...extraModules.map((m) => m.name),
         ...entities.map((e) => `${toPascalCase(e.tableName)}Module`),
-    ].join(',\n    ');
+    ].join(',\n        ');
 
     return `
         import { Module } from '@nestjs/common';
@@ -197,6 +239,13 @@ export function appModuleTemplate(
     `;
 }
 
+/**
+ * Generates `.env` file string content for target applications, converting camelCase 
+ * configuration keys into standard UPPER_SNAKE_CASE environment variable keys.
+ * * @param databaseUrl - Target database connection string.
+ * @param port - HTTP port assignment.
+ * @param extraVars - Dictionary of additional service blueprint settings.
+ */
 export function envTemplate(
     databaseUrl: string,
     port: number,
@@ -212,6 +261,10 @@ export function envTemplate(
     return lines.join('\n') + '\n';
 }
 
+/**
+ * Helper function converting camelCase identifiers into standard UPPER_SNAKE_CASE 
+ * env variable names (e.g., `smtpPassword` -> `SMTP_PASSWORD`).
+ */
 function toEnvKey(camelKey: string): string {
     return camelKey.replace(/([A-Z])/g, '_$1').toUpperCase();
 }

@@ -18,7 +18,7 @@ export const validationSchema = Joi.object({
 
     // --- DATABASES (POSTGRES & REDIS) ---
     DATABASE_URL: Joi.string().required(),
-    DATABASE_PROVISIONING_URL: Joi.string().required(),
+    POSTGRES_PROVISIONING_URL: Joi.string().required(),
     REDIS_HOST: Joi.string(),
     REDIS_PORT: Joi.number().default(6379),
 
@@ -57,8 +57,8 @@ export const validationSchema = Joi.object({
     // --- SEED / SYSTEM OWNER IDENTITY ---
     OWNER_WORKEMAIL: Joi.string().email().required(),
     OWNER_PERSONALEMAIL: Joi.string().email().required(),
-    OWNER_FIRST_NAME: Joi.string().required(),
-    OWNER_LAST_NAME: Joi.string().required(),
+    OWNER_FIRSTNAME: Joi.string().required(),
+    OWNER_LASTNAME: Joi.string().required(),
     OWNER_USERNAME: Joi.string().required(),
 
 });

@@ -5,6 +5,9 @@ import { toPascalCase, toCamelCase } from '../common/utils/case.util';
 import { FIELD_TYPE_VALIDATORS } from '../common/utils/field-type-validator-mapper.util';
 import { RelationFieldMeta } from '../common/utils/relation-metadata.util';
 
+/**
+ * Interface defining the schema definition and authorization settings of an entity.
+ */
 interface EntityWithFields {
     tableName: string;
     isSchedulable: boolean;
@@ -15,13 +18,29 @@ interface EntityWithFields {
     fields: { column: string; type: string; required: boolean }[];
 }
 
+/**
+ * NestJS Service driving the dynamic code generation for end-to-end CRUD modules.
+ * Produces DTOs, Controllers, Services, and Modules tailored to target entity schemas.
+ */
 @Injectable()
 export class CrudGeneratorService {
 
+    /**
+     * Generates DTO properties supporting schedulable/publishable entities (`publishAt`, `unpublishAt`).
+     * @returns String template representing DTO property entries.
+     */
     private schedulableDtoFields(): string {
         return `  @IsOptional()\n  @IsDateString()\n  publishAt?: string;\n\n  @IsOptional()\n  @IsDateString()\n  unpublishAt?: string;`;
     }
 
+    /**
+     * Asynchronously generates disk files for NestJS modules corresponding to each entity.
+     * * @param projectPath - Target project root directory path.
+     * @param entities - Entity metadata collection.
+     * @param relationFieldsByEntity - Map associating entity IDs with their relation metadata.
+     * @param entityIdByTableName - Mapping lookup linking table names to entity IDs.
+     * @returns Array of generated PascalCase module class names.
+     */
     async generateModulesForEntities(
         projectPath: string,
         entities: EntityWithFields[],
@@ -39,8 +58,8 @@ export class CrudGeneratorService {
             const dirPath = path.join(projectPath, 'src', entity.tableName);
             await fs.mkdir(path.join(dirPath, 'dto'), { recursive: true });
 
+            // Concurrent execution writing generated TypeScript files for each module component
             await Promise.all([
-
                 fs.writeFile(
                     path.join(dirPath, 'dto', `create-${entity.tableName}.dto.ts`),
                     this.buildCreateDto(modelName, entity.fields, relations, entity.isSchedulable),
@@ -74,8 +93,11 @@ export class CrudGeneratorService {
         return moduleNames;
     }
 
-    // ---- DTO fields (champs métier classiques) ----
+    // ---- DTO fields (Standard Business Fields) ----
 
+    /**
+     * Builds TypeScript property definitions and `class-validator` decorators for standard fields.
+     */
     private buildDtoFields(fields: EntityWithFields['fields'], forceOptional: boolean): string {
         return fields
             .map((field) => {
@@ -95,8 +117,11 @@ export class CrudGeneratorService {
             .join('\n\n');
     }
 
-    // ---- DTO fields liés aux relations ----
+    // ---- DTO fields (Relation FKs / Many-to-Many IDs) ----
 
+    /**
+     * Builds DTO field rules handling relational properties (Foreign Keys and Many-to-Many ID arrays).
+     */
     private buildRelationDtoFields(relations: RelationFieldMeta[], forceOptional: boolean): string {
         return relations
             .filter((r) => r.hasScalarFk || r.isManyToMany)
@@ -112,6 +137,9 @@ export class CrudGeneratorService {
             .join('\n\n');
     }
 
+    /**
+     * Inspects target fields/relations to deduce required `class-validator` imports dynamically.
+     */
     private collectImports(fields: EntityWithFields['fields'], relations: RelationFieldMeta[]): string {
         const set = new Set<string>();
         for (const field of fields) {
@@ -127,13 +155,16 @@ export class CrudGeneratorService {
         return Array.from(set).sort().join(', ');
     }
 
+    /**
+     * Generates source code for the entity's `CreateDto` class.
+     */
     private buildCreateDto(
         modelName: string,
         fields: EntityWithFields['fields'],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): string {
-        const imports =  new Set(this.collectImports(fields, relations).split(', '));
+        const imports = new Set(this.collectImports(fields, relations).split(', '));
         if (isSchedulable) imports.add('IsDateString');
         const body = [
             this.buildDtoFields(fields, false),
@@ -152,13 +183,16 @@ export class CrudGeneratorService {
         `;
     }
 
+    /**
+     * Generates source code for the entity's `UpdateDto` class with optional property markers.
+     */
     private buildUpdateDto(
         modelName: string,
         fields: EntityWithFields['fields'],
         relations: RelationFieldMeta[],
         isSchedulable: boolean
     ): string {
-        const imports =  new Set(this.collectImports(fields, relations).split(', '));
+        const imports = new Set(this.collectImports(fields, relations).split(', '));
         if (isSchedulable) imports.add('IsDateString');
         const body = [
             this.buildDtoFields(fields, true),
@@ -179,6 +213,9 @@ export class CrudGeneratorService {
 
     // ---- Service ----
 
+    /**
+     * Generates source code for the entity's service class (Prisma queries and data transformers).
+     */
     private buildService(
         modelName: string,
         tableName: string,
@@ -286,7 +323,7 @@ export class CrudGeneratorService {
 
                 async findOne(id: string) {
                     const record = await this.prisma.${modelCamel}.findUnique({ where: { id }${includeClause} });
-                    if (!record) throw new NotFoundException('${modelName} introuvable.');
+                    if (!record) throw new NotFoundException('${modelName} not found.');
                     return record;
                 }
 
@@ -298,13 +335,16 @@ export class CrudGeneratorService {
                 async remove(id: string) {
                     await this.findOne(id);
                     await this.prisma.${modelCamel}.delete({ where: { id } });
-                    return { message: '${modelName} supprimé.' };
+                    return { message: '${modelName} deleted.' };
                 }
                 
             }
         `;
     }
 
+    /**
+     * Generates source code for the entity controller (REST endpoints, route guards, Swagger tags).
+     */
     private buildController(
         modelName: string,
         tableName: string,
@@ -368,6 +408,9 @@ export class CrudGeneratorService {
         `;
     }
 
+    /**
+     * Generates source code for the target entity NestJS `@Module`.
+     */
     private buildModule(modelName: string, tableName: string): string {
         return `
             import { Module } from '@nestjs/common';

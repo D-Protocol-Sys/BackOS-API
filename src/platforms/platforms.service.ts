@@ -13,21 +13,35 @@ import { AddMemberDto } from './dto/add-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { slugify } from '../common/utils/slugify.util';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
-import { PlatformRole } from '@prismamodels/client';
+import { PlatformRole, UserStatus } from '@prismamodels/client';
 
+/**
+ * Type defining the requesting user (actor) details, including ID and global system permissions.
+ */
 type Actor = { userId: string; permissions: string[] };
 
+/**
+ * Hierarchy weight mapping used to compare platform roles during authorization checks.
+ */
 const ROLE_WEIGHT: Record<PlatformRole, number> = {
     VIEWER: 1,
     EDITOR: 2,
     ADMIN: 3,
 };
 
+/**
+ * Domain Service managing platform resources lifecycle, RBAC access checks,
+ * membership management, and two-step member removal workflows.
+ */
 @Injectable()
 export class PlatformsService {
 
     constructor(private readonly prisma: PrismaService) {}
 
+    /**
+     * Creates a new platform entity owned by the requesting actor.
+     * Automatically generates a unique URL-friendly slug based on the platform name.
+     */
     async create(actor: Actor, dto: CreatePlatformDto) {
 
         const slug = await this.generateUniqueSlug(dto.name);
@@ -43,6 +57,10 @@ export class PlatformsService {
         });
     }
 
+    /**
+     * Lists platforms accessible to the actor.
+     * Actors with global read permissions see all platforms; others see only owned/joined platforms.
+     */
     async list(actor: Actor, includeArchived = false) {
 
         const canSeeAll = actor.permissions.includes(PERMISSIONS.PLATFORM_READ);
@@ -67,12 +85,18 @@ export class PlatformsService {
 
     }
 
+    /**
+     * Retrieves a single platform by ID after verifying the actor has read access.
+     */
     async getById(actor: Actor, id: string) {
         const platform = await this.findPlatformOrThrow(id);
         await this.assertCanView(actor, platform);
         return platform;
     }
 
+    /**
+     * Updates platform details. Requires ADMIN role or global update permission.
+     */
     async update(actor: Actor, id: string, dto: UpdatePlatformDto) {
         const platform = await this.findPlatformOrThrow(id);
         await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_UPDATE);
@@ -80,61 +104,76 @@ export class PlatformsService {
         return this.prisma.platform.update({ where: { id }, data: dto });
     }
 
+    /**
+     * Soft-deletes/archives a platform. Reserved for owner or global delete permission holders.
+     */
     async archive(actor: Actor, id: string) {
         const platform = await this.findPlatformOrThrow(id);
         this.assertOwnerOrGlobalPermission(actor, platform, PERMISSIONS.PLATFORM_DELETE);
 
         if (platform.status === 'ARCHIVED') {
-            throw new BadRequestException('Cette plateforme est déjà archivée.');
+            throw new BadRequestException('This platform is already archived.');
         }
         return this.prisma.platform.update({ where: { id }, data: { status: 'ARCHIVED' } });
     }
 
+    /**
+     * Restores an archived platform back to DRAFT status.
+     */
     async restore(actor: Actor, id: string) {
         const platform = await this.findPlatformOrThrow(id);
         this.assertOwnerOrGlobalPermission(actor, platform, PERMISSIONS.PLATFORM_DELETE);
 
         if (platform.status !== 'ARCHIVED') {
-            throw new BadRequestException("Cette plateforme n'est pas archivée.");
+            throw new BadRequestException('This platform is not archived.');
         }
         return this.prisma.platform.update({ where: { id }, data: { status: 'DRAFT' } });
     }
 
+    /**
+     * Reassigns platform ownership to a different active user.
+     */
     async transferOwnership(actor: Actor, id: string, dto: TransferOwnershipDto) {
         const platform = await this.findPlatformOrThrow(id);
         this.assertOwnerOrGlobalPermission(actor, platform, PERMISSIONS.PLATFORM_TRANSFER_OWNERSHIP);
 
         const newOwner = await this.prisma.user.findUnique({ where: { id: dto.newOwnerId } });
-        if (!newOwner || !newOwner.isActive) {
-            throw new BadRequestException('Le nouveau propriétaire est invalide ou inactif.');
+        if (!newOwner || newOwner.status !== UserStatus.ACTIVE) {
+            throw new BadRequestException('The new owner is invalid or inactive.');
         }
 
         return this.prisma.platform.update({ where: { id }, data: { ownerId: dto.newOwnerId } });
     }
 
-    // ---- Membres ----
+    // ---- Members ----
 
+    /**
+     * Lists all members associated with a specific platform.
+     */
     async listMembers(actor: Actor, platformId: string) {
         const platform = await this.findPlatformOrThrow(platformId);
         await this.assertCanView(actor, platform);
 
         return this.prisma.platformMember.findMany({
             where: { platformId },
-            include: { user: { select: { id: true, email: true, firstName: true, lastName: true } } },
+            include: { user: { select: { id: true, workEmail: true, firstName: true, lastName: true } } },
         });
     }
 
+    /**
+     * Adds a user as a member or updates their existing role within the platform.
+     */
     async addMember(actor: Actor, platformId: string, dto: AddMemberDto) {
         const platform = await this.findPlatformOrThrow(platformId);
         await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
         this.assertCanGrantRole(actor, platform, dto.role);
 
         if (dto.userId === platform.ownerId) {
-            throw new BadRequestException('Le propriétaire n\'a pas besoin d\'être ajouté comme membre.');
+            throw new BadRequestException('The owner does not need to be added as a member.');
         }
         const targetUser = await this.prisma.user.findUnique({ where: { id: dto.userId } });
-        if (!targetUser || !targetUser.isActive) {
-            throw new BadRequestException('Utilisateur invalide ou inactif.');
+        if (!targetUser || targetUser.status !== UserStatus.ACTIVE) {
+            throw new BadRequestException('Invalid or inactive user.');
         }
 
         return this.prisma.platformMember.upsert({
@@ -144,6 +183,9 @@ export class PlatformsService {
         });
     }
 
+    /**
+     * Updates an existing platform member's assigned role.
+     */
     async updateMemberRole(actor: Actor, platformId: string, targetUserId: string, dto: UpdateMemberRoleDto) {
         const platform = await this.findPlatformOrThrow(platformId);
         await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
@@ -152,7 +194,7 @@ export class PlatformsService {
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
-        if (!membership) throw new NotFoundException('Ce membre ne fait pas partie de la plateforme.');
+        if (!membership) throw new NotFoundException('This member is not part of the platform.');
 
         return this.prisma.platformMember.update({
             where: { id: membership.id },
@@ -160,6 +202,10 @@ export class PlatformsService {
         });
     }
 
+    /**
+     * Initiates member removal. Immediate deletion if requested by owner/super-admin,
+     * otherwise flags a pending removal request requiring confirmation.
+     */
     async removeMember(actor: Actor, platformId: string, targetUserId: string) {
 
         const platform = await this.findPlatformOrThrow(platformId);
@@ -168,7 +214,7 @@ export class PlatformsService {
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
-        if (!membership) throw new NotFoundException('Ce membre ne fait pas partie de la plateforme.');
+        if (!membership) throw new NotFoundException('This member is not part of the platform.');
 
         const isOwnerOrGlobal =
             platform.ownerId === actor.userId ||
@@ -176,11 +222,11 @@ export class PlatformsService {
 
         if (isOwnerOrGlobal) {
             await this.prisma.platformMember.delete({ where: { id: membership.id } });
-            return { message: 'Membre retiré.', status: 'removed' };
+            return { message: 'Member removed.', status: 'removed' };
         }
 
         if (membership.removalRequestedAt) {
-            throw new ConflictException('Une demande de retrait est déjà en attente pour ce membre.');
+            throw new ConflictException('A removal request is already pending for this member.');
         }
 
         const updated = await this.prisma.platformMember.update({
@@ -192,6 +238,9 @@ export class PlatformsService {
     
     }
 
+    /**
+     * Confirms and executes a pending member removal request.
+     */
     async confirmMemberRemoval(actor: Actor, platformId: string, targetUserId: string) {
 
         const platform = await this.findPlatformOrThrow(platformId);
@@ -200,24 +249,27 @@ export class PlatformsService {
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
-        if (!membership) throw new NotFoundException('Ce membre ne fait pas partie de la plateforme.');
+        if (!membership) throw new NotFoundException('This member is not part of the platform.');
         if (!membership.removalRequestedAt) {
-            throw new BadRequestException('Aucune demande de retrait en attente pour ce membre.');
+            throw new BadRequestException('No pending removal request for this member.');
         }
 
         await this.prisma.platformMember.delete({ where: { id: membership.id } });
-        return { message: 'Retrait confirmé, membre supprimé.' };
+        return { message: 'Removal confirmed, member deleted.' };
     }
 
+    /**
+     * Cancels a pending member removal request.
+     */
     async cancelMemberRemoval(actor: Actor, platformId: string, targetUserId: string) {
 
         const platform = await this.findPlatformOrThrow(platformId);
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
-        if (!membership) throw new NotFoundException('Ce membre ne fait pas partie de la plateforme.');
+        if (!membership) throw new NotFoundException('This member is not part of the platform.');
         if (!membership.removalRequestedAt) {
-            throw new BadRequestException('Aucune demande de retrait en attente pour ce membre.');
+            throw new BadRequestException('No pending removal request for this member.');
         }
 
         const isOwnerOrGlobal =
@@ -226,7 +278,7 @@ export class PlatformsService {
         const isRequester = membership.removalRequestedById === actor.userId;
 
         if (!isOwnerOrGlobal && !isRequester) {
-            throw new ForbiddenException("Tu ne peux pas annuler cette demande.");
+            throw new ForbiddenException('You cannot cancel this request.');
         }
 
         return this.prisma.platformMember.update({
@@ -237,28 +289,40 @@ export class PlatformsService {
 
     // ---- Helpers ----
 
+    /**
+     * Helper retrieving a platform entity or throwing a 404 exception.
+     */
     private async findPlatformOrThrow(id: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id } });
-        if (!platform) throw new NotFoundException('Plateforme introuvable.');
+        if (!platform) throw new NotFoundException('Platform not found.');
         return platform;
     }
 
+    /**
+     * Helper retrieving membership record for a specific user and platform.
+     */
     private async getMembership(userId: string, platformId: string) {
         return this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId } },
         });
     }
 
+    /**
+     * Asserts actor has read permissions for the platform (Owner, Global Reader, or Member).
+     */
     private async assertCanView(actor: Actor, platform: { id: string; ownerId: string }) {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(PERMISSIONS.PLATFORM_READ)) return;
 
         const membership = await this.getMembership(actor.userId, platform.id);
         if (!membership) {
-            throw new NotFoundException('Plateforme introuvable.');
+            throw new NotFoundException('Platform not found.');
         }
     }
 
+    /**
+     * Asserts actor holds a specific minimum role weight or has global override permissions.
+     */
     private async assertHasAtLeastRole(
         actor: Actor,
         platform: { id: string; ownerId: string },
@@ -270,10 +334,13 @@ export class PlatformsService {
 
         const membership = await this.getMembership(actor.userId, platform.id);
         if (!membership || ROLE_WEIGHT[membership.role] < ROLE_WEIGHT[minRole]) {
-            throw new ForbiddenException('Action non autorisée sur cette plateforme.');
+            throw new ForbiddenException('Action not authorized on this platform.');
         }
     }
 
+    /**
+     * Asserts action is executed by the platform owner or an actor with global permission.
+     */
     private assertOwnerOrGlobalPermission(
         actor: Actor,
         platform: { ownerId: string },
@@ -281,9 +348,12 @@ export class PlatformsService {
     ) {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(globalPermission)) return;
-        throw new ForbiddenException('Action réservée au propriétaire de la plateforme.');
+        throw new ForbiddenException('Action reserved for the platform owner.');
     }
 
+    /**
+     * Restricts ADMIN role assignments strictly to the platform owner or global member managers.
+     */
     private assertCanGrantRole(
         actor: Actor,
         platform: { ownerId: string },
@@ -294,10 +364,13 @@ export class PlatformsService {
         if (actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS)) return;
 
         throw new ForbiddenException(
-            'Seul le propriétaire de la plateforme peut désigner un autre manager.',
+            'Only the platform owner can assign another admin.',
         );
     }
 
+    /**
+     * Generates a unique, URL-safe slug by appending numerical suffixes on collisons.
+     */
     private async generateUniqueSlug(name: string): Promise<string> {
         const base = slugify(name);
         let candidate = base;

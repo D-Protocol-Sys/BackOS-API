@@ -22,15 +22,24 @@ import { ProcessDisabledUserDto, RetentionAction } from './dto/process-disabled-
 /**
  * Standard Prisma selection object to avoid leaking sensitive credentials or internal security details.
  */
-const SAFE_USER_SELECT = {
+export const SAFE_USER_SELECT = {
     id: true,
     workEmail: true,
     personalEmail: true,
     username: true,
     firstName: true,
     lastName: true,
-    company: true,
-    jobTitle: true,
+    /*
+     * Fix Explanation:
+     * 'company' and 'jobTitle' are fields of the UserProfile model.
+     * We wrap them inside the 'profile' relation selection to match the Prisma schema.
+     */
+    profile: {
+        select: {
+            company: true,
+            jobTitle: true,
+        },
+    },
     status: true,
     createdAt: true,
     updatedAt: true,
@@ -265,8 +274,28 @@ export class UsersService {
                 firstName: dto.firstName,
                 lastName: dto.lastName,
                 username: dto.username,
-                company: dto.company, // Fallback handles platform assignment
-                jobTitle: dto.jobTitle,
+                /*
+                * Fix Explanation:
+                * 'company' and 'jobTitle' belong to the UserProfile model.
+                * We use Prisma's nested update/upsert on the 'profile' relation 
+                * to update existing profile attributes or create the relation if missing.
+                */
+                ...(dto.company !== undefined || dto.jobTitle !== undefined
+                    ? {
+                        profile: {
+                            upsert: {
+                                create: {
+                                    company: dto.company,
+                                    jobTitle: dto.jobTitle,
+                                },
+                                update: {
+                                    company: dto.company,
+                                    jobTitle: dto.jobTitle,
+                                },
+                            },
+                        },
+                    }
+                    : {}),
             },
             select: SAFE_USER_SELECT,
         });
@@ -328,7 +357,7 @@ export class UsersService {
                 },
                 data: {
                     status: UserStatus.SUSPENDED,
-                    deactivatedAt: new Date(),
+                    suspendedAt: new Date(),
                 },
                 select: SAFE_USER_SELECT,
             });
@@ -442,7 +471,7 @@ export class UsersService {
                 },
                 data: {
                     status: UserStatus.ACTIVE,
-                    deactivatedAt: null, // Clear deactivation timestamp upon reactivation
+                    suspendedAt: null, // Clear deactivation timestamp upon reactivation
                 },
                 select: SAFE_USER_SELECT,
             });
@@ -607,8 +636,6 @@ export class UsersService {
                         username: anonymousTag,
                         workEmail: `${anonymousTag}@anonymized.local`,
                         personalEmail: null,
-                        company: null,
-                        jobTitle: null,
                     },
                 });
             });
@@ -721,8 +748,17 @@ export class UsersService {
                 firstName: true,
                 lastName: true,
                 username: true,
-                company: true,
-                jobTitle: true,
+                /*
+                * Fix Explanation:
+                * 'company' and 'jobTitle' belong to the UserProfile model ('profile' relation).
+                * Nested select is required here to query those fields from the related table.
+                */
+                profile: {
+                    select: {
+                        company: true,
+                        jobTitle: true,
+                    },
+                },
                 status: true,
                 createdAt: true,
                 updatedAt: true,

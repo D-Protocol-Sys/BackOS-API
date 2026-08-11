@@ -68,28 +68,28 @@ services:
   # 3. Application API Service (NestJS Backend)
   # =========================================================================
   # Main application service containing the backend business logic and endpoints.
-  api:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: ${SERVER_NAME}-api
-    restart: unless-stopped
-    ports:
-      - "${API_PORT:-4803}:${API_PORT:-4803}"
-    environment:
-      NODE_ENV: ${NODE_ENV:-production}
-      # NOTE: Internal communications inside Docker network use service names ("postgres", "redis"), not container names.
-      DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      REDIS_HOST: redis
-      REDIS_PORT: 6379
-    # Ensures database and cache services are healthy BEFORE the API starts up.
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    networks:
-      - app-network
+  # api:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #   container_name: ${SERVER_NAME}-api
+  #   restart: unless-stopped
+  #   ports:
+  #     - "${API_PORT:-4803}:${API_PORT:-4803}"
+  #   environment:
+  #     NODE_ENV: ${NODE_ENV:-production}
+  #     # NOTE: Internal communications inside Docker network use service names ("postgres", "redis"), not container names.
+  #     DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+  #     REDIS_HOST: redis
+  #     REDIS_PORT: 6379
+  #   # Ensures database and cache services are healthy BEFORE the API starts up.
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #     redis:
+  #       condition: service_healthy
+  #   networks:
+  #     - app-network
 
   # =========================================================================
   # 4. Isolated Test Database Service (Disabled/Commented Out)

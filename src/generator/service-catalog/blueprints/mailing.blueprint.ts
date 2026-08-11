@@ -1,13 +1,25 @@
 import { ServiceBlueprint } from '../service-blueprint.types';
 
+/**
+ * Service blueprint configuration for the "Mailing" pluggable module.
+ * * This blueprint serves as a declarative manifest defining:
+ * 1. Package dependencies required for sending emails via SMTP.
+ * 2. Environment/configuration fields needed to connect to the email server.
+ * 3. Optional integration guardrails with other services (e.g., Auth & User dependency).
+ */
 export const MAILING_BLUEPRINT: ServiceBlueprint = {
 
+    // Unique blueprint identifier key used across the code generation engine
     key: 'mailing',
     name: 'Mailing',
-    description: "Envoi d'emails transactionnels via SMTP pour cette plateforme.",
+    description: 'Transactional email dispatching via SMTP for the platform.',
+
+    // Required npm/pnpm dependencies injected into the target project's package.json
     pnpmDependencies: {
         nodemailer: '^6.9.16',
     },
+
+    // Config fields required from tenant users upon activating this service
     configFields: [
         { key: 'smtpHost', label: 'Hôte SMTP', secret: false, required: true },
         { key: 'smtpPort', label: 'Port SMTP', secret: false, required: true, placeholder: '587' },
