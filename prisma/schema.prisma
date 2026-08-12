@@ -47,6 +47,8 @@ model User {
   lastLoginAt DateTime?
   lastSeenAt  DateTime?
 
+  lastActiveAt DateTime?
+
   suspendedAt DateTime?
   disabledAt  DateTime?
 
@@ -72,6 +74,10 @@ model User {
   personalPlanningEntries PlanningEntry[]         @relation("PersonalPlanningOwner")
   createdPlanningEntries  PlanningEntry[]         @relation("PlanningEntryCreator")
   planningAssignments     PlanningEntryAssignee[]
+
+  conversationParticipations ConversationParticipant[]
+  conversationReads          ConversationRead[]
+  sentMessages               Message[]
 
   @@index([status])
   @@index([username])
@@ -316,6 +322,8 @@ model Platform {
   description String?
   url         String?
   status      PlatformStatus @default(DRAFT)
+
+  channel Conversation?
 
   generatedPort Int?
 
@@ -595,4 +603,71 @@ model PlanningEntryAssignee {
 
   @@unique([entryId, userId])
   @@map("planning_entry_assignees")
+}
+
+// ----------------------------------------------------------
+// MESSAGING
+// ----------------------------------------------------------
+
+enum ConversationType {
+  DIRECT
+  PLATFORM_CHANNEL
+}
+
+model Conversation {
+  id         String           @id @default(uuid())
+  type       ConversationType
+  platformId String?          @unique
+  platform   Platform?        @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  participants ConversationParticipant[]
+  messages     Message[]
+  reads        ConversationRead[]
+
+  createdAt DateTime @default(now())
+
+  @@map("conversations")
+}
+
+model ConversationParticipant {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+
+  @@unique([conversationId, userId])
+  @@map("conversation_participants")
+}
+
+model ConversationRead {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  userId         String
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  lastReadAt         DateTime  @default(now())
+
+  lastEmailNotifiedAt DateTime?
+
+  @@unique([conversationId, userId])
+  @@map("conversation_reads")
+}
+
+model Message {
+  id             String       @id @default(uuid())
+  conversationId String
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderId       String
+  sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  content String
+
+  createdAt DateTime @default(now())
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
 }

@@ -9,6 +9,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
+import { MessagesService } from '../messages/messages.service';
 
 /**
  * Type defining the requesting user (actor) details, including ID and global permissions.
@@ -24,7 +25,10 @@ type Actor = { userId: string; permissions: string[] };
 @Controller('platforms')
 export class PlatformsController {
 
-    constructor(private readonly platformsService: PlatformsService) {}
+    constructor(
+        private readonly platformsService: PlatformsService,
+        private readonly messagesService: MessagesService,
+    ) {}
 
     /**
      * Creates a new platform entity.
@@ -168,6 +172,11 @@ export class PlatformsController {
         @Param('userId') userId: string,
     ) {
         return this.platformsService.cancelMemberRemoval(actor, id, userId);
+    }
+
+    @Get(':id/channel')
+    getChannel(@CurrentUser() actor: Actor, @Param('id') id: string) {
+        return this.messagesService.getOrCreatePlatformChannel(actor, id);
     }
 
 }

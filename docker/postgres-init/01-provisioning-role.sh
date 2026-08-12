@@ -61,4 +61,7 @@ WITH
 
 SQL
 
-echo "PostgreSQL provisioning role created successfully."
+echo "============================================================"
+echo " PostgreSQL provisioning role initialized"
+echo " Role: ${POSTGRES_PROVISIONING_ROLE}"
+echo "============================================================"

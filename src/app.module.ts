@@ -2,7 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { configuration } from './config';
 import { validationSchema } from './config/env.validation';
-import { APP_GUARD } from '@nestjs/core';
+import { APP_GUARD, APP_INTERCEPTOR } from '@nestjs/core';
 import { ThrottlerModule, ThrottlerGuard } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -26,6 +26,9 @@ import { RelationsModule } from './relations/relations.module';
 import { AuditModule } from './audit/audit.module';
 import { PlanningModule } from './planning/planning.module';
 import { FilesModule } from './files/files.module';
+import { TrackActivityInterceptor } from './common/interceptors/track-activity.interceptor';
+import { MessagesModule } from './messages/messages.module';
+import { ProvisioningHealthService } from './common/services/provisioning-health.service';
 
 @Module({
 
@@ -89,6 +92,8 @@ import { FilesModule } from './files/files.module';
 
         FilesModule,
 
+        MessagesModule,
+
         AuditModule
 
     ],
@@ -97,9 +102,11 @@ import { FilesModule } from './files/files.module';
 
     providers: [
         AppService,
+        ProvisioningHealthService,
         { provide: APP_GUARD, useClass: ThrottlerGuard },
         { provide: APP_GUARD, useClass: JwtAuthGuard },
         { provide: APP_GUARD, useClass: PermissionsGuard },
+        { provide: APP_INTERCEPTOR, useClass: TrackActivityInterceptor },
     ],
 
 })
