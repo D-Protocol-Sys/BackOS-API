@@ -1,17 +1,10 @@
-import {
-    Injectable,
-    Logger,
-    InternalServerErrorException,
-} from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Client, escapeIdentifier, escapeLiteral } from 'pg';
 import { PrismaService } from '../prisma/prisma.service';
 import { encrypt, decrypt } from '../common/utils/encryption.util';
 import { platformSlugToDbName, platformSlugToDbUser, generateSecurePassword } from '../common/utils/db-identifier.util';
 
-/**
- * Interface representing the structure of the database provisioning output.
- */
 interface ProvisionResult {
     host: string;
     port: number;
@@ -20,16 +13,15 @@ interface ProvisionResult {
     databaseUrl: string;
 }
 
-/**
- * Service responsible for multi-tenant database provisioning and lifecycle management.
- * * Handles dynamically creating dedicated PostgreSQL databases and user roles,
- * securing credentials, preventing race conditions using PostgreSQL advisory locks,
- * and maintaining metadata records within the primary system database.
- */
+interface ProvisioningResources {
+    roleCreated: boolean;
+    databaseCreated: boolean;
+}
+
 @Injectable()
 export class ProvisioningService {
-
     private readonly logger = new Logger(ProvisioningService.name);
+    private pendingPassword?: string;
 
     constructor(
         private readonly prisma: PrismaService,
@@ -37,494 +29,292 @@ export class ProvisioningService {
     ) {}
 
     /**
-     * Dynamically provisions a isolated PostgreSQL database and user role for a platform tenant.
-     * * @param platformId - The unique identifier of the target platform/tenant.
-     * @param slug - The platform's unique human-readable slug (used to derive DB names).
-     * @returns The newly created or existing database configuration and decrypted connection string.
-     * * @throws InternalServerErrorException - If provisioning or database record creation fails.
+     * Provisions a dedicated, isolated PostgreSQL database for a platform.
+     * Educational Note: Implements an idempotent flow using database-level advisory locks 
+     * to safely prevent concurrent execution and race conditions across distributed nodes.
      */
-    async provisionDatabaseForPlatform(
-        platformId: string,
-        slug: string,
-    ): Promise<ProvisionResult> {
-        // 1. Derive sanitized PostgreSQL database and role names from the tenant slug.
+    async provisionDatabaseForPlatform(platformId: string, slug: string): Promise<ProvisionResult> {
         const dbName = platformSlugToDbName(slug);
         const dbUser = platformSlugToDbUser(slug);
-
-        // Fetch infrastructure parameters from configuration with fallback defaults.
-        const host = this.configService.get<string>(
-            'database.provisioningHost',
-            'localhost',
-        );
-
-        const port = this.configService.get<number>(
-            'database.provisioningPort',
-            5432,
-        );
-
+        const host = this.configService.get<string>('database.provisioningHost', 'localhost');
+        const port = this.configService.get<number>('database.provisioningPort', 5432);
         const encryptionKey = this.configService.getOrThrow<string>('security.encryptionKey');
         const serverName = this.configService.getOrThrow<string>('app.serverName');
 
-        /*
-         * 2. First Idempotency Check (Fast-path):
-         * Check if this platform already has an active database record in BackOS.
-         * If present, return the existing connection settings immediately without contacting Postgres.
-         */
-        const existingDatabase = await this.prisma.platformDatabase.findUnique({
-            where: { platformId },
-        });
-
+        // Fast-path idempotency check before acquiring database locks
+        const existingDatabase = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
         if (existingDatabase) {
-            const databaseUrl = await this.getDecryptedConnectionUrl(platformId);
-
             return {
                 host: existingDatabase.host,
                 port: existingDatabase.port,
                 databaseName: existingDatabase.databaseName,
                 databaseUser: existingDatabase.databaseUser,
-                databaseUrl,
+                databaseUrl: await this.getDecryptedConnectionUrl(platformId),
             };
         }
 
-        // Generate a random high-entropy password for the new database user.
-        const password = generateSecurePassword();
-        
-        // Initialize direct raw `pg` client connected via administrative credentials.
         const adminClient = this.getAdminClient();
         await adminClient.connect();
-
-        /*
-         * 3. Concurrency Protection via PostgreSQL Distributed Advisory Locks:
-         * Prevents race conditions where two simultaneous API requests/workers attempt
-         * to provision a database for the exact same platform concurrently.
-         */
         const lockKey = `${serverName}:provision:${platformId}`;
+        const resources: ProvisioningResources = { roleCreated: false, databaseCreated: false };
 
         try {
-            // Acquire an exclusive session-level advisory lock using string hash.
-            await adminClient.query(
-                `SELECT pg_advisory_lock(hashtext($1))`,
-                [lockKey],
-            );
+            // Acquire distributed advisory lock on PostgreSQL session level
+            await this.acquireLock(adminClient, lockKey);
 
-            /*
-             * 4. Second Idempotency Check (Double-Checked Locking Pattern):
-             * Re-verify database existence after obtaining the lock.
-             * Another concurrent worker might have completed the provisioning process 
-             * while this request was waiting to acquire the advisory lock.
-             */
-            const databaseAfterLock =
-                await this.prisma.platformDatabase.findUnique({
-                    where: { platformId },
-                });
-
+            // Double-check existence after securing lock to eliminate race conditions
+            const databaseAfterLock = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
             if (databaseAfterLock) {
-                const databaseUrl = await this.getDecryptedConnectionUrl(platformId);
-
                 return {
                     host: databaseAfterLock.host,
                     port: databaseAfterLock.port,
                     databaseName: databaseAfterLock.databaseName,
                     databaseUser: databaseAfterLock.databaseUser,
-                    databaseUrl,
+                    databaseUrl: await this.getDecryptedConnectionUrl(platformId),
                 };
             }
 
-            /*
-             * 5. SQL Injection Prevention:
-             * Data Definition Language (DDL) statements like CREATE ROLE and CREATE DATABASE 
-             * do NOT support standard parameterized placeholders ($1, $2).
-             * We MUST explicitly sanitize identifiers and string literals using `pg` utilities.
-             */
             const roleIdentifier = escapeIdentifier(dbUser);
             const databaseIdentifier = escapeIdentifier(dbName);
-            const passwordLiteral = escapeLiteral(password);
-            const provisionRole = escapeIdentifier(
-                this.configService.getOrThrow<string>(
-                    'database.provisioningRole',
-                ),
-            );
+            const provisionRoleName = this.configService.getOrThrow<string>('database.provisioningRole');
+            const provisionRoleIdentifier = escapeIdentifier(provisionRoleName);
 
-            /*
-             * 6. Check Role Existence:
-             * Query system catalog `pg_roles` to verify if the role already exists.
-             */
-            const roleResult = await adminClient.query(
-                `
-                SELECT 1
-                FROM pg_roles
-                WHERE rolname = $1
-                `,
-                [dbUser],
-            );
+            // Check role existence prior to creation
+            const roleResult = await adminClient.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [dbUser]);
+            if (roleResult.rowCount === 0) {
+                const password = generateSecurePassword();
+                const passwordLiteral = escapeLiteral(password);
 
-            const roleExists = roleResult.rowCount === 1;
-
-            /*
-             * 7. Role Provisioning / Credentials Sync:
-             * Create the role with login permissions if missing.
-             * If it already exists, update its password to stay aligned with the new token.
-             */
-            if (!roleExists) {
-                await adminClient.query(
-                    `
-                    CREATE ROLE ${roleIdentifier}
-                    WITH LOGIN PASSWORD ${passwordLiteral}
-                    `,
-                );
+                await adminClient.query(`CREATE ROLE ${roleIdentifier} WITH LOGIN PASSWORD ${passwordLiteral}`);
+                resources.roleCreated = true;
+                this.pendingPassword = password;
             } else {
-                await adminClient.query(
-                    `
-                    ALTER ROLE ${roleIdentifier}
-                    WITH LOGIN PASSWORD ${passwordLiteral}
-                    `,
-                );
+                throw new Error(`PostgreSQL role "${dbUser}" already exists without a corresponding platform database record.`);
             }
 
-            /*
-             * 8. Check Database Existence:
-             * Query system catalog `pg_database` to verify database status and its owner.
-             */
+            const password = this.pendingPassword;
+            this.pendingPassword = undefined;
+            if (!password) {
+                throw new Error('Failed to retrieve generated PostgreSQL password credentials.');
+            }
+
+            // Check database existence
             const databaseResult = await adminClient.query(
-                `
-                SELECT
-                    datname,
-                    pg_get_userbyid(datdba) AS owner
-                FROM pg_database
-                WHERE datname = $1
-                `,
+                'SELECT datname, pg_get_userbyid(datdba) AS owner FROM pg_database WHERE datname = $1',
                 [dbName],
             );
 
-            const databaseExists = databaseResult.rowCount === 1;
-
-            if (!databaseExists) {
-
-                /*
-                 * PostgreSQL Permission Constraint Workaround:
-                 * In PostgreSQL, to assign a new role as the `OWNER` during `CREATE DATABASE`,
-                 * the executing superuser/provisioning role must temporarily be a member of that target role.
-                 */
-                await adminClient.query(
-                    `
-                    GRANT ${roleIdentifier}
-                    TO ${provisionRole}
-                    `,
-                );
-
-                try {
-                    // Create the database setting the tenant user as the official owner.
-                    await adminClient.query(
-                        `
-                        CREATE DATABASE ${databaseIdentifier}
-                        OWNER ${roleIdentifier}
-                        `,
-                    );
-                } finally {
-                    /*
-                     * Principle of Least Privilege:
-                     * Always immediately revoke the temporary role grant, even if database creation fails.
-                     */
-                    await adminClient.query(
-                        `
-                        REVOKE ${roleIdentifier}
-                        FROM ${provisionRole}
-                        `,
-                    );
-                }
-
-            } else {
-
+            if (databaseResult.rowCount === 1) {
                 const existingOwner = databaseResult.rows[0].owner;
+                throw new Error(`PostgreSQL database "${dbName}" already exists without metadata record. Existing owner: "${existingOwner}".`);
+            }
 
-                /*
-                 * Safety Assertion:
-                 * Refuse silently acquiring ownership if an existing database belongs to a different role.
-                 */
-                if (existingOwner !== dbUser) {
-                    throw new Error(
-                        `Database "${dbName}" already exists but belongs to owner "${existingOwner}".`,
+            // Temporarily grant permissions to provision database with target owner
+            await adminClient.query(`GRANT ${roleIdentifier} TO ${provisionRoleIdentifier}`);
+
+            try {
+                // Note: CREATE DATABASE cannot run inside an explicit transaction block
+                await adminClient.query(`CREATE DATABASE ${databaseIdentifier} OWNER ${roleIdentifier}`);
+                resources.databaseCreated = true;
+            } finally {
+                try {
+                    await adminClient.query(`REVOKE ${roleIdentifier} FROM ${provisionRoleIdentifier}`);
+                } catch (revokeError) {
+                    this.logger.error(
+                        `Failed to temporarily revoke role "${dbUser}" from provisioning user.`,
+                        revokeError instanceof Error ? revokeError.stack : String(revokeError),
                     );
+                    throw revokeError;
                 }
             }
 
-            /*
-             * 9. Security Hardening:
-             * Revoke default `PUBLIC` connection and creation permissions from the new database.
-             * This prevents unauthorized non-owner database users from creating tables or inspecting schema.
-             */
-            await adminClient.query(
-                `
-                REVOKE ALL
-                ON DATABASE ${databaseIdentifier}
-                FROM PUBLIC
-                `,
-            );
+            // Security Hardening: Revoke default database access from PUBLIC role
+            await adminClient.query(`REVOKE ALL ON DATABASE ${databaseIdentifier} FROM PUBLIC`);
 
-        } catch (error) {
-
-            this.logger.error(
-                `Provisioning failed for tenant slug "${slug}"`,
-                error instanceof Error ? error.stack : String(error),
-            );
-
-            /*
-             * Rollback Cleanup:
-             * Attempt to remove partially created database objects (database and user role).
-             */
-            await this.safeCleanup(
-                adminClient,
-                dbName,
-                dbUser,
-            );
-
-            throw new InternalServerErrorException(
-                'Failed to provision tenant database infrastructure.',
-            );
-
-        } finally {
-
-            // Always attempt to release the PostgreSQL advisory lock.
+            // Persist encrypted connection credentials in system metadata
             try {
-                await adminClient.query(
-                    `SELECT pg_advisory_unlock(hashtext($1))`,
-                    [lockKey],
+                await this.prisma.platformDatabase.create({
+                    data: {
+                        platformId,
+                        host,
+                        port,
+                        databaseName: dbName,
+                        databaseUser: dbUser,
+                        encryptedPassword: encrypt(password, encryptionKey),
+                    },
+                });
+            } catch (metadataError) {
+                this.logger.error(
+                    `Database "${dbName}" created successfully, but system metadata registration failed.`,
+                    metadataError instanceof Error ? metadataError.stack : String(metadataError),
                 );
-            } catch (unlockError) {
-                this.logger.warn(
-                    `Failed to release provisioning advisory lock for platform "${platformId}".`,
-                );
+
+                await this.cleanupCreatedResources(adminClient, dbName, dbUser, resources);
+                throw new InternalServerErrorException('PostgreSQL database created, but internal registration failed.');
             }
 
-            // Close administrative PostgreSQL connection client.
-            await adminClient.end();
-        }
-
-        /*
-         * 10. Metadata Record Registration:
-         * Store database parameters and AES-encrypted password in the system central database via Prisma.
-         */
-        try {
-
-            await this.prisma.platformDatabase.create({
-                data: {
-                    platformId,
-                    host,
-                    port,
-                    databaseName: dbName,
-                    databaseUser: dbUser,
-                    encryptedPassword: encrypt(
-                        password,
-                        encryptionKey,
-                    ),
-                },
-            });
-
-        } catch (error) {
-
-            /*
-             * Compensating Transaction:
-             * If metadata registration fails after successful PostgreSQL database creation,
-             * purge the orphan PostgreSQL database and role to maintain state consistency across systems.
-             */
-            this.logger.error(
-                `Database "${dbName}" was created successfully, but BackOS metadata registration failed. Cleaning up...`,
-                error instanceof Error ? error.stack : String(error),
-            );
-
-            const cleanupClient = this.getAdminClient();
-
-            try {
-                await cleanupClient.connect();
-
-                await this.safeCleanup(
-                    cleanupClient,
-                    dbName,
-                    dbUser,
-                );
-
-            } finally {
-                await cleanupClient.end();
-            }
-
-            throw new InternalServerErrorException(
-                'Database was provisioned, but metadata record creation failed.',
-            );
-        }
-
-        // Return provision result with formatted full connection string.
-        return {
-            host,
-            port,
-            databaseName: dbName,
-            databaseUser: dbUser,
-            databaseUrl: this.buildDatabaseUrl(
+            return {
                 host,
                 port,
-                dbName,
-                dbUser,
-                password,
-            ),
-        };
+                databaseName: dbName,
+                databaseUser: dbUser,
+                databaseUrl: this.buildDatabaseUrl(host, port, dbName, dbUser, password),
+            };
+        } catch (error) {
+            this.logger.error(
+                `Provisioning failed for platform "${platformId}".`,
+                error instanceof Error ? error.stack : String(error),
+            );
+
+            // Clean up partial allocations to preserve strict system rollback semantics
+            if (resources.databaseCreated || resources.roleCreated) {
+                await this.cleanupCreatedResources(adminClient, dbName, dbUser, resources);
+            }
+
+            if (error instanceof InternalServerErrorException) throw error;
+            throw new InternalServerErrorException('Failed to provision platform PostgreSQL infrastructure.');
+        } finally {
+            try {
+                await this.releaseLock(adminClient, lockKey);
+            } catch (unlockError) {
+                this.logger.error(
+                    `Failed to release provisioning advisory lock for platform "${platformId}".`,
+                    unlockError instanceof Error ? unlockError.stack : String(unlockError),
+                );
+            }
+            await adminClient.end();
+        }
     }
 
     /**
-     * Retrieves stored database configuration for a tenant and decrypts its credentials 
-     * to reconstruct a valid PostgreSQL connection string URL.
-     * * @param platformId - The unique target platform ID.
-     * @returns Decrypted connection string URL.
+     * Decrypts and compiles full database connection string metadata.
      */
-    async getDecryptedConnectionUrl(
-        platformId: string,
-    ): Promise<string> {
+    async getDecryptedConnectionUrl(platformId: string): Promise<string> {
+        const record = await this.prisma.platformDatabase.findUniqueOrThrow({ where: { platformId } });
+        const encryptionKey = this.configService.getOrThrow<string>('security.encryptionKey');
+        const password = decrypt(record.encryptedPassword, encryptionKey);
 
-        const record =
-            await this.prisma.platformDatabase.findUniqueOrThrow({
-                where: { platformId },
-            });
-
-        const encryptionKey =
-            this.configService.getOrThrow<string>('ENCRYPTION_KEY');
-
-        // Decrypt password stored in database metadata.
-        const password = decrypt(
-            record.encryptedPassword,
-            encryptionKey,
-        );
-
-        return this.buildDatabaseUrl(
-            record.host,
-            record.port,
-            record.databaseName,
-            record.databaseUser,
-            password,
-        );
+        return this.buildDatabaseUrl(record.host, record.port, record.databaseName, record.databaseUser, password);
     }
 
     /**
-     * Deprovisions and permanently deletes a platform tenant database, role, 
-     * and metadata record from BackOS.
-     * * @param platformId - The unique platform identifier to purge.
+     * Deprovisions and drops target database and database role completely.
      */
-    async deprovisionDatabaseForPlatform(
-        platformId: string,
-    ): Promise<void> {
-
-        const record =
-            await this.prisma.platformDatabase.findUnique({
-                where: { platformId },
-            });
-
-        // Exit gracefully if no registered platform database exists.
+    async deprovisionDatabaseForPlatform(platformId: string): Promise<void> {
+        const record = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
         if (!record) return;
 
+        const serverName = this.configService.getOrThrow<string>('app.serverName');
+        const lockKey = `${serverName}:provision:${platformId}`;
         const adminClient = this.getAdminClient();
 
         await adminClient.connect();
 
         try {
-            // Drop target database and role safely.
-            await this.safeCleanup(
-                adminClient,
-                record.databaseName,
-                record.databaseUser,
-            );
+            await this.acquireLock(adminClient, lockKey);
+            const currentRecord = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
+            if (!currentRecord) return;
 
+            await this.dropPlatformResources(adminClient, currentRecord.databaseName, currentRecord.databaseUser);
+            await this.prisma.platformDatabase.delete({ where: { platformId } });
+        } catch (error) {
+            this.logger.error(
+                `Deprovisioning failed for platform "${platformId}".`,
+                error instanceof Error ? error.stack : String(error),
+            );
+            throw new InternalServerErrorException('Failed to completely deprovision PostgreSQL resources.');
         } finally {
+            try {
+                await this.releaseLock(adminClient, lockKey);
+            } catch (unlockError) {
+                this.logger.error(
+                    `Failed to release deprovisioning lock for platform "${platformId}".`,
+                    unlockError instanceof Error ? unlockError.stack : String(unlockError),
+                );
+            }
             await adminClient.end();
         }
-
-        // Remove platform metadata record from BackOS central system.
-        await this.prisma.platformDatabase.delete({
-            where: { platformId },
-        });
     }
 
     /**
-     * Helper method to safely drop a database and role without crashing overall execution.
-     * Terminate active client backends before dropping to prevent "database in use" errors.
-     * * @param adminClient - Active administrative `pg` connection client.
-     * @param dbName - Target database name to drop.
-     * @param dbUser - Target role/user to drop.
+     * Cleans up allocated resources during a failed provision attempt.
+     * Educational Note: Operates strictly on resources marked as created during the current lifecycle,
+     * protecting pre-existing system resources from accidental drop operations.
      */
-    private async safeCleanup(
+    private async cleanupCreatedResources(
         adminClient: Client,
         dbName: string,
         dbUser: string,
+        resources: ProvisioningResources,
     ): Promise<void> {
-
-        const databaseIdentifier = escapeIdentifier(dbName);
-        const roleIdentifier = escapeIdentifier(dbUser);
-
         try {
-
-            /*
-             * Forcefully terminate active backend connections to the target database.
-             * PostgreSQL will reject `DROP DATABASE` statements if any active connections exist.
-             */
-            await adminClient.query(
-                `
-                SELECT pg_terminate_backend(pid)
-                FROM pg_stat_activity
-                WHERE datname = $1
-                  AND pid <> pg_backend_pid()
-                `,
-                [dbName],
-            );
-
-            // Drop database and user role idempotently.
-            await adminClient.query(
-                `DROP DATABASE IF EXISTS ${databaseIdentifier}`,
-            );
-
-            await adminClient.query(
-                `DROP ROLE IF EXISTS ${roleIdentifier}`,
-            );
-
+            if (resources.databaseCreated) await this.dropDatabase(adminClient, dbName);
+            if (resources.roleCreated) await this.dropRole(adminClient, dbUser);
         } catch (cleanupError) {
-
             this.logger.error(
-                `Partial cleanup failed for database "${dbName}" / user "${dbUser}"`,
-                cleanupError instanceof Error
-                    ? cleanupError.stack
-                    : String(cleanupError),
+                `PARTIAL CLEANUP ERROR: Failed to destroy allocated PostgreSQL resources "${dbName}" / "${dbUser}".`,
+                cleanupError instanceof Error ? cleanupError.stack : String(cleanupError),
             );
         }
     }
 
     /**
-     * Formats database parameters into a URL-encoded URI string.
-     * Ensures special characters in passwords and usernames are properly escaped.
+     * Drops database and user role sequentially.
      */
-    private buildDatabaseUrl(
-        host: string,
-        port: number,
-        databaseName: string,
-        databaseUser: string,
-        password: string,
-    ): string {
-
-        return (
-            `postgresql://${encodeURIComponent(databaseUser)}` +
-            `:${encodeURIComponent(password)}` +
-            `@${host}:${port}/${encodeURIComponent(databaseName)}` +
-            `?schema=public`
-        );
+    private async dropPlatformResources(adminClient: Client, dbName: string, dbUser: string): Promise<void> {
+        await this.dropDatabase(adminClient, dbName);
+        await this.dropRole(adminClient, dbUser);
     }
 
     /**
-     * Instantiates a low-level Node-Postgres (`pg`) Client using administrative privileges 
-     * defined in configuration environment variables.
+     * Terminates existing backend client sessions and drops target PostgreSQL database.
+     */
+    private async dropDatabase(adminClient: Client, dbName: string): Promise<void> {
+        const databaseIdentifier = escapeIdentifier(dbName);
+
+        // Force termination of active database client connections
+        await adminClient.query(
+            'SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = $1 AND pid <> pg_backend_pid()',
+            [dbName],
+        );
+        await adminClient.query(`DROP DATABASE IF EXISTS ${databaseIdentifier}`);
+    }
+
+    /**
+     * Removes target PostgreSQL user role.
+     */
+    private async dropRole(adminClient: Client, dbUser: string): Promise<void> {
+        const roleIdentifier = escapeIdentifier(dbUser);
+        await adminClient.query(`DROP ROLE IF EXISTS ${roleIdentifier}`);
+    }
+
+    /**
+     * Session-level PostgreSQL advisory lock helper.
+     */
+    private async acquireLock(adminClient: Client, lockKey: string): Promise<void> {
+        await adminClient.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+    }
+
+    /**
+     * Session-level PostgreSQL advisory unlock helper.
+     */
+    private async releaseLock(adminClient: Client, lockKey: string): Promise<void> {
+        await adminClient.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]);
+    }
+
+    /**
+     * Constructs standard Postgres connection strings, encoding special characters and handling IPv6 hosts.
+     */
+    private buildDatabaseUrl(host: string, port: number, databaseName: string, databaseUser: string, password: string): string {
+        const normalizedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+        return `postgresql://${encodeURIComponent(databaseUser)}:${encodeURIComponent(password)}@${normalizedHost}:${port}/${encodeURIComponent(databaseName)}?schema=public`;
+    }
+
+    /**
+     * Instantiates dedicated PostgreSQL client instance using configured admin URL.
      */
     private getAdminClient(): Client {
-
-        const connectionString =
-            this.configService.getOrThrow<string>(
-                'database.provisioningUrl',
-            );
-
-        return new Client({
-            connectionString,
-        });
+        const connectionString = this.configService.getOrThrow<string>('database.provisioningUrl');
+        return new Client({ connectionString });
     }
 }

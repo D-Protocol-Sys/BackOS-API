@@ -6,9 +6,11 @@ import { buildRelationLinesByEntity } from '../common/utils/relation-schema-buil
 
 @Injectable()
 export class SchemaBuilderService {
-
     constructor(private readonly prisma: PrismaService) {}
 
+    /**
+     * Fetches all non-archived entities and their corresponding non-archived fields.
+     */
     async getActiveEntitiesWithFields(platformId: string) {
         return this.prisma.entity.findMany({
             where: { platformId, isArchived: false },
@@ -17,13 +19,17 @@ export class SchemaBuilderService {
         });
     }
 
+    /**
+     * Dynamically builds a complete Prisma schema string for a specific platform.
+     * Educational Note: We programmatically reconstruct data models, fields, and relations
+     * to enable multi-tenant dynamic schema generation at runtime.
+     */
     async buildSchema(platformId: string, extraPrismaBlocks: string[] = []): Promise<string> {
-
         const entities = await this.getActiveEntitiesWithFields(platformId);
 
         if (entities.length === 0) {
             throw new BadRequestException(
-                'Cette plateforme ne contient aucune entité active. Ajoute au moins une table avant de générer.',
+                'This platform contains no active entities. Add at least one table before generating the schema.',
             );
         }
 
@@ -33,18 +39,18 @@ export class SchemaBuilderService {
             relations,
         );
 
-        const header = `
-            generator client {
-                provider     = "prisma-client"
-                output       = "./generated/prisma"
-                engineType   = "client"
-                moduleFormat = "cjs"
-            }
-
-            datasource db {
-                provider = "postgresql"
-            }
-        `;
+        const header = [
+            'generator client {',
+            '  provider     = "prisma-client"',
+            '  output       = "./generated/prisma"',
+            '  engineType   = "client"',
+            '  moduleFormat = "cjs"',
+            '}',
+            '',
+            'datasource db {',
+            '  provider = "postgresql"',
+            '}',
+        ].join('\n');
 
         const models = entities
             .map((entity) => this.buildModel(entity, relationLinesByEntity.get(entity.id) ?? []))
@@ -52,9 +58,12 @@ export class SchemaBuilderService {
 
         const extra = extraPrismaBlocks.join('\n');
 
-        return `${header}\n${models}\n${extra}\n`;
+        return `${header}\n\n${models}\n${extra}\n`;
     }
 
+    /**
+     * Constructs a single Prisma model block from entity metadata.
+     */
     private buildModel(
         entity: {
             tableName: string;
@@ -69,32 +78,31 @@ export class SchemaBuilderService {
         },
         relationLines: string[],
     ): string {
-
         const modelName = toPascalCase(entity.tableName);
-
         const fieldLines = entity.fields.map((field) => this.buildFieldLine(field));
-
         const schedulableLines = entity.isSchedulable
-            ? [`  publishAt DateTime?`, `  unpublishAt DateTime?`]
+            ? ['  publishAt DateTime?', '  unpublishAt DateTime?']
             : [];
 
         const lines = [
             `model ${modelName} {`,
-            `  id String @id @default(uuid())`,
+            '  id String @id @default(uuid())',
             ...fieldLines,
             ...relationLines,
             ...schedulableLines,
-            `  createdAt DateTime @default(now())`,
-            `  updatedAt DateTime @updatedAt`,
-            ``,
+            '  createdAt DateTime @default(now())',
+            '  updatedAt DateTime @updatedAt',
+            '',
             `  @@map("${entity.tableName}")`,
-            `}`,
+            '}',
         ];
 
         return lines.join('\n');
-
     }
 
+    /**
+     * Maps field attributes to a single line in the Prisma schema definition.
+     */
     private buildFieldLine(field: {
         column: string;
         type: string;
@@ -102,7 +110,6 @@ export class SchemaBuilderService {
         unique: boolean;
         defaultValue: string | null;
     }): string {
-
         const fieldName = toCamelCase(field.column);
         const prismaType = FIELD_TYPE_TO_PRISMA[field.type as keyof typeof FIELD_TYPE_TO_PRISMA];
         const optionalMark = field.required ? '' : '?';
@@ -117,8 +124,12 @@ export class SchemaBuilderService {
         return `  ${fieldName} ${prismaType}${optionalMark}${attrString}`;
     }
 
+    /**
+     * Parses and escapes raw user-defined default values into valid Prisma field decorators.
+     * Educational Note: String inputs are escaped to prevent accidental syntax injection 
+     * when injecting values directly into the schema.
+     */
     private buildDefaultAttribute(type: string, rawDefault: string | null): string | null {
-
         if (rawDefault === null || rawDefault === undefined || rawDefault === '') return null;
 
         switch (type) {

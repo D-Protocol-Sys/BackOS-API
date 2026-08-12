@@ -326,6 +326,7 @@ model Platform {
   channel Conversation?
 
   generatedPort Int?
+  schemaVersion Int @default(0)
 
   ownerId String
   owner   User   @relation("PlatformOwner", fields: [ownerId], references: [id])
@@ -475,6 +476,8 @@ model Generation {
   status   GenerationStatus @default(PENDING)
   logs     String?
   errorMsg String?
+
+  schemaVersion Int?
 
   startedAt  DateTime  @default(now())
   finishedAt DateTime?

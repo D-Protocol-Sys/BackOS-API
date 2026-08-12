@@ -11,7 +11,7 @@ import { runCommand, CommandFailedError } from '../common/utils/command-runner.u
 import { PortAllocatorService } from './port-allocator.service';
 
 /**
- * Data payload interface passed into BullMQ generation jobs.
+ * Interface defining the payload structure for background project generation jobs handled by BullMQ.
  */
 export interface GenerationJobData {
     platformId: string;
@@ -20,14 +20,8 @@ export interface GenerationJobData {
 }
 
 /**
- * BullMQ background processor worker consuming platform build jobs.
- * * Orchestrates the full lifecycle of application generation:
- * 1. Database provisioning/reuse.
- * 2. Source code scaffolding and file writing.
- * 3. Dependency installation (`pnpm install`).
- * 4. Prisma client generation (`prisma generate`).
- * 5. Database migrations (`prisma migrate deploy`).
- * 6. Application compilation (`pnpm run build`).
+ * BullMQ Worker Processor executing the automated platform code generation pipeline asynchronously.
+ * It manages database provisioning, dynamic project scaffolding, package installation, database migrations, and TypeScript compilation.
  */
 @Processor(GENERATION_QUEUE_NAME)
 export class GenerationProcessor extends WorkerHost {
@@ -45,314 +39,123 @@ export class GenerationProcessor extends WorkerHost {
     }
 
     /**
-     * Core processing method invoked automatically whenever a new build job is picked up from BullMQ queue.
-     * * @param job - BullMQ Job container containing `GenerationJobData`.
+     * Main task processing routine. Orchestrates the 7-step automated project build lifecycle.
      */
     async process(job: Job<GenerationJobData>): Promise<void> {
         const { platformId, slug, generationId } = job.data;
+        // Fetch command execution timeout threshold (defaults to 5 minutes / 300,000ms)
+        const timeoutMs = this.configService.get<number>('GENERATION_COMMAND_TIMEOUT_MS', 300_000);
 
-        // Command execution timeout setting (defaults to 5 minutes / 300,000ms)
-        const timeoutMs = this.configService.get<number>(
-            'GENERATION_COMMAND_TIMEOUT_MS',
-            300_000,
-        );
-
-        // Transition generation state to running and platform status to GENERATING
+        // Update the generation task and platform record status to notify the system that processing has started
         await this.generations.markRunning(generationId);
-
         await this.prisma.platform.update({
             where: { id: platformId },
             data: { status: 'GENERATING' },
         });
 
         try {
-            /*
-             * ============================================================
-             * 1. DATABASE PROVISIONING
-             * ============================================================
-             */
+            // STEP 1: DATABASE PROVISIONING
+            // Checks whether a database already exists for this platform or provisions a new isolated PostgreSql database.
+            await this.log(generationId, '→ Checking database configuration...');
+            let databaseUrl: string;
+            const existingDatabase = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
 
-            await this.log( generationId, '→ Checking database connection...' );
-            let dbUrl: string;
-            const existingDb = await this.prisma.platformDatabase.findUnique({
-                where: { platformId },
-            });
-            if (existingDb) {
-                dbUrl = await this.provisioning.getDecryptedConnectionUrl( platformId );
-                await this.log( generationId, `  Existing database reused: ${existingDb.databaseName}` );
+            if (existingDatabase) {
+                databaseUrl = await this.provisioning.getDecryptedConnectionUrl(platformId);
+                await this.log(generationId, `  Reusing existing database: ${existingDatabase.databaseName}`);
             } else {
-                await this.log( generationId, '→ Provisioning database...' );
-                const result = await this.provisioning.provisionDatabaseForPlatform(
-                    platformId,
-                    slug,
-                );
-                dbUrl = result.databaseUrl;
-                await this.log( generationId, `  Database created: ${result.databaseName}` );
+                await this.log(generationId, '→ Provisioning new database...');
+                const result = await this.provisioning.provisionDatabaseForPlatform(platformId, slug);
+                databaseUrl = result.databaseUrl;
+                await this.log(generationId, `  Database successfully created: ${result.databaseName}`);
             }
 
-            /*
-             * ============================================================
-             * 2. PROJECT SCAFFOLDING
-             * ============================================================
-             */
-
-            await this.log( generationId, '→ Generating project files...' );
+            // STEP 2: PROJECT SCAFFOLDING
+            // Allocates a dedicated port and writes out source files, module definitions, and static configurations to disk.
+            await this.log(generationId, '→ Scaffolding project files...');
             const port = await this.portAllocator.getOrAllocatePort(platformId);
-            const { projectPath } = await this.scaffolder.scaffold({
-                platformId,
-                slug,
-                databaseUrl: dbUrl,
-                port,
+            const { projectPath, isFirstGeneration } = await this.scaffolder.scaffold({ platformId, slug, databaseUrl, port });
+
+            await this.log(generationId, `  Project scaffolded at ${projectPath}`);
+            await this.log(generationId, isFirstGeneration ? '  Initial project generation detected.' : '  Re-generation detected: existing migration history preserved.');
+
+            // STEP 3: INSTALL DEPENDENCIES
+            // Runs `pnpm install` using --frozen-lockfile to guarantee deterministic package installation without altering pnpm-lock.yaml.
+            await this.log(generationId, '→ Installing package dependencies...');
+            await this.runStep(generationId, 'pnpm', ['install', '--frozen-lockfile'], projectPath, timeoutMs);
+
+            // STEP 4: GENERATE PRISMA CLIENT
+            // Executes `prisma generate` to construct type-safe TypeScript database client types from the schema.prisma.
+            await this.log(generationId, '→ Generating Prisma client...');
+            await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'generate'], projectPath, timeoutMs);
+
+            // STEP 5: DATABASE MIGRATIONS
+            // Applies database structural changes using `prisma migrate deploy`. This non-interactive command applies pending SQL migrations safely.
+            await this.log(generationId, '→ Applying Prisma database migrations...');
+            await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'migrate', 'deploy'], projectPath, timeoutMs);
+
+            // STEP 6: BUILD PROJECT
+            // Compiles TypeScript source files into executable production JavaScript binaries inside the /dist folder.
+            await this.log(generationId, '→ Compiling NestJS project...');
+            await this.runStep(generationId, 'pnpm', ['run', 'build'], projectPath, timeoutMs);
+
+            // STEP 7: SUCCESS COMPLETION
+            // Updates schema versioning and transitions both the generation task and platform record status to active.
+            const platform = await this.prisma.platform.findUniqueOrThrow({
+                where: { id: platformId },
+                select: { schemaVersion: true },
             });
-            await this.log( generationId, `  Project written to ${projectPath} (port ${port})` );
 
-            /*
-             * ============================================================
-             * 3. INSTALL DEPENDENCIES
-             * ============================================================
-             */
-
-            await this.log( generationId, '→ Installing dependencies (pnpm install)...' );
-            await this.runStep(
-                generationId,
-                'pnpm',
-                ['install', '--frozen-lockfile'],
-                projectPath,
-                timeoutMs,
-            );
-
-            /*
-             * ============================================================
-             * 4. GENERATE PRISMA CLIENT
-             * ============================================================
-             */
-
-            await this.log(
-                generationId,
-                '→ Generating Prisma client...',
-            );
-
-            await this.runStep(
-                generationId,
-                'pnpm',
-                ['exec', 'prisma', 'generate'],
-                projectPath,
-                timeoutMs,
-            );
-
-            /*
-             * ============================================================
-             * 5. APPLY VERSIONED DATABASE MIGRATIONS
-             * ============================================================
-             *
-             * IMPORTANT:
-             *
-             * This intentionally does NOT use:
-             * `prisma db push --accept-data-loss`
-             *
-             * The generated project must contain a valid
-             * prisma/migrations directory.
-             *
-             * `migrate deploy` is non-interactive and applies only
-             * migrations already present in the project.
-             */
-
-            await this.log(
-                generationId,
-                '→ Applying Prisma migrations...',
-            );
-
-            await this.runStep(
-                generationId,
-                'pnpm',
-                ['exec', 'prisma', 'migrate', 'deploy'],
-                projectPath,
-                timeoutMs,
-            );
-
-            /*
-             * ============================================================
-             * 6. BUILD GENERATED PROJECT
-             * ============================================================
-             */
-
-            await this.log(
-                generationId,
-                '→ Compiling project (pnpm run build)...',
-            );
-
-            await this.runStep(
-                generationId,
-                'pnpm',
-                ['run', 'build'],
-                projectPath,
-                timeoutMs,
-            );
-
-            /*
-             * ============================================================
-             * 7. GENERATION SUCCESS
-             * ============================================================
-             */
-
-            await this.log(
-                generationId,
-                '✅ Generation completed successfully.',
-            );
-
-            await this.generations.markSuccess(generationId);
-
+            const nextSchemaVersion = platform.schemaVersion + 1;
+            await this.generations.markSuccess(generationId, nextSchemaVersion);
             await this.prisma.platform.update({
                 where: { id: platformId },
-                data: { status: 'ACTIVE' },
+                data: { status: 'ACTIVE', schemaVersion: nextSchemaVersion },
             });
+
+            await this.log(generationId, `✅ Generation completed successfully. Updated schema version: ${nextSchemaVersion}.`);
         } catch (error: unknown) {
-            const message =
-                error instanceof Error
-                    ? error.message
-                    : String(error);
+            const message = error instanceof Error ? error.message : String(error);
+            this.logger.error(`Generation job ${generationId} failed.`, error instanceof Error ? error.stack : undefined);
 
-            this.logger.error(
-                `Generation ${generationId} failed`,
-                error instanceof Error
-                    ? error.stack
-                    : undefined,
-            );
+            // Failure Recovery: Gracefully log error details and mark generation state as FAILED and platform state as ERROR.
+            try { await this.log(generationId, `❌ Generation failed: ${message}`); } 
+            catch (logError: unknown) { this.logger.error(`Failed to record failure log for generation ${generationId}.`, logError instanceof Error ? logError.stack : String(logError)); }
 
-            /*
-             * Logging failure information should never prevent
-             * the generation from being marked as failed.
-             */
-            try {
-                await this.log(
-                    generationId,
-                    `❌ Failure: ${message}`,
-                );
-            } catch (logError: unknown) {
-                this.logger.error(
-                    `Failed to record log for generation ${generationId}`,
-                    logError instanceof Error
-                        ? logError.stack
-                        : String(logError),
-                );
-            }
+            try { await this.generations.markFailed(generationId, message); } 
+            catch (statusError: unknown) { this.logger.error(`Failed to set status to FAILED for generation ${generationId}.`, statusError instanceof Error ? statusError.stack : String(statusError)); }
 
-            try {
-                await this.generations.markFailed(
-                    generationId,
-                    message,
-                );
-            } catch (statusError: unknown) {
-                this.logger.error(
-                    `Failed to mark generation ${generationId} as FAILED`,
-                    statusError instanceof Error
-                        ? statusError.stack
-                        : String(statusError),
-                );
-            }
-
-            try {
-                await this.prisma.platform.update({
-                    where: { id: platformId },
-                    data: { status: 'ERROR' },
-                });
-            } catch (platformError: unknown) {
-                this.logger.error(
-                    `Failed to set platform ${platformId} to ERROR`,
-                    platformError instanceof Error
-                        ? platformError.stack
-                        : String(platformError),
-                );
-            }
-
-            /*
-             * We intentionally do not rethrow here because the original
-             * architecture treats the generation failure as a handled
-             * business state.
-             */
+            try { await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } }); } 
+            catch (platformError: unknown) { this.logger.error(`Failed to set status to ERROR for platform ${platformId}.`, platformError instanceof Error ? platformError.stack : String(platformError)); }
         }
     }
 
     /**
-     * Helper executing terminal sub-commands asynchronously and capturing standard outputs.
-     * * @param generationId - ID of the generation entity for log stream targeting.
-     * @param command - CLI executable name (`pnpm` or `npx`).
-     * @param args - CLI argument array.
-     * @param cwd - Working directory path where command executes.
-     * @param timeoutMs - Maximum execution duration before timing out.
+     * Safely executes an external shell CLI command (e.g. pnpm) using isolated process execution and streams standard output to logs.
      */
-    private async runStep(
-        generationId: string,
-        command: 'pnpm' | 'npx',
-        args: string[],
-        cwd: string,
-        timeoutMs: number,
-    ): Promise<void> {
+    private async runStep(generationId: string, command: 'pnpm' | 'npx', args: string[], cwd: string, timeoutMs: number): Promise<void> {
         try {
-            const { stdout, stderr } = await runCommand(
-                command,
-                args,
-                cwd,
-                timeoutMs,
-            );
-
-            if (stdout?.trim()) {
-                await this.log(
-                    generationId,
-                    stdout.trim(),
-                );
-            }
-
-            /*
-             * stderr is not automatically treated as a failure.
-             *
-             * Some tools legitimately write warnings or informational
-             * messages to stderr while still exiting successfully.
-             *
-             * We only rely on CommandFailedError to identify an actual
-             * command failure.
-             */
-            if (stderr?.trim()) {
-                await this.log(
-                    generationId,
-                    stderr.trim(),
-                );
-            }
+            const { stdout, stderr } = await runCommand(command, args, cwd, timeoutMs);
+            if (stdout?.trim()) { await this.log(generationId, stdout.trim()); }
+            if (stderr?.trim()) { await this.log(generationId, stderr.trim()); }
         } catch (error: unknown) {
             if (error instanceof CommandFailedError) {
-                const output =
-                    error.stderr?.trim() ||
-                    error.stdout?.trim();
-
+                const output = error.stderr?.trim() || error.stdout?.trim();
                 if (output) {
-                    await this.log(
-                        generationId,
-                        output,
-                    );
+                    try { await this.log(generationId, output); } 
+                    catch (logError: unknown) { this.logger.error(`Failed to log execution output for failed command in generation ${generationId}.`, logError instanceof Error ? logError.stack : String(logError)); }
                 }
             }
-
             throw error;
         }
     }
 
     /**
-     * Appends a log line to the generation session log sequence.
-     * Ignores empty or whitespace-only lines.
+     * Appends a formatted line entry into the database build log history associated with the current generation run.
      */
-    private async log(
-        generationId: string,
-        line: string,
-    ): Promise<void> {
+    private async log(generationId: string, line: string): Promise<void> {
         const normalizedLine = line.trim();
-
-        if (!normalizedLine) {
-            return;
-        }
-
-        await this.generations.appendLog(
-            generationId,
-            normalizedLine,
-        );
+        if (!normalizedLine) return;
+        await this.generations.appendLog(generationId, normalizedLine);
     }
 }
