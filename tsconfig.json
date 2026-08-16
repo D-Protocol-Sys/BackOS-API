@@ -27,5 +27,6 @@
   "include": [
     "src",
     "prisma/generated"
-  ]
+  ],
+  "exclude": ["node_modules", "dist", "generated", "uploads", "test"]
 }

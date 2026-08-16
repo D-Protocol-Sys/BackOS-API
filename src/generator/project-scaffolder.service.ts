@@ -8,7 +8,7 @@ import { PlatformServicesService } from './platform-services.service';
 import { ServiceCatalog } from './service-catalog/service-catalog';
 import { SERVICE_FILE_GENERATORS } from './service-catalog/service-file-generators';
 import { PrismaService } from '../prisma/prisma.service';
-import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate } from './templates/generated-project.templates';
+import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate, healthControllerTemplate, healthModuleTemplate } from './templates/generated-project.templates';
 import { computeRelationFieldsByEntity } from '../common/utils/relation-metadata.util';
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -114,6 +114,8 @@ export class ProjectScaffolderService {
                 fs.writeFile(path.join(projectPath, 'src', 'main.ts'), mainTsTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.service.ts'), prismaServiceTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.module.ts'), prismaModuleTemplate(), 'utf8'),
+                fs.writeFile(path.join(projectPath, 'src', 'health', 'health.controller.ts'), healthControllerTemplate(), 'utf8'),
+                fs.writeFile(path.join(projectPath, 'src', 'health', 'health.module.ts'), healthModuleTemplate(), 'utf8'),
             ]);
 
             // Generate full CRUD controllers/services for each dynamic entity
@@ -163,6 +165,7 @@ export class ProjectScaffolderService {
      */
     private async createProjectDirectories(projectPath: string): Promise<void> {
         await fs.mkdir(path.join(projectPath, 'src', 'prisma'), { recursive: true });
+        await fs.mkdir(path.join(projectPath, 'src', 'health'), { recursive: true }),
         await fs.mkdir(path.join(projectPath, 'prisma'), { recursive: true });
     }
 

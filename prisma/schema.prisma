@@ -292,6 +292,13 @@ enum PlatformStatus {
   ARCHIVED
 }
 
+enum RuntimeStatus {
+  STOPPED
+  STARTING
+  RUNNING
+  CRASHED
+}
+
 enum PlatformRole {
   VIEWER
   EDITOR
@@ -343,6 +350,10 @@ model Platform {
   relations   Relation[]
   
   planningEntries PlanningEntry[]
+
+  runtimeStatus    RuntimeStatus @default(STOPPED)
+  runtimePid       Int?
+  runtimeStartedAt DateTime?
 
   @@index([ownerId])
   @@index([status])

@@ -149,7 +149,7 @@ export class AuthService {
         // 2. Return success status along with basic identity info for UI pre-filling
         return { 
             valid: true, 
-            email: invitation.user.personalEmail 
+            email: invitation.user.workEmail 
         };
     }
 

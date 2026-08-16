@@ -171,6 +171,7 @@ export function prismaModuleTemplate(): string {
  */
 export function mainTsTemplate(): string {
     return `
+        import 'dotenv/config';
         import { NestFactory } from '@nestjs/core';
         import { ValidationPipe } from '@nestjs/common';
         import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -267,4 +268,45 @@ export function envTemplate(
  */
 function toEnvKey(camelKey: string): string {
     return camelKey.replace(/([A-Z])/g, '_$1').toUpperCase();
+}
+
+/**
+ * Generates the source code for a HealthCheck Controller template.
+ * Educational Note: Performs a lightweight `$queryRaw\`SELECT 1\`` database ping
+ * to provide a clear 'ok' or 'degraded' status without heavily loading the database.
+ */
+export function healthControllerTemplate(): string {
+    return `
+        import { Controller, Get } from '@nestjs/common';
+        import { PrismaService } from '../prisma/prisma.service';
+
+        @Controller('health')
+        export class HealthController {
+            constructor(private readonly prisma: PrismaService) {}
+
+            @Get()
+            async check() {
+                let database: 'ok' | 'error' = 'ok';
+                try {
+                    await this.prisma.$queryRaw\`SELECT 1\`;
+                } catch {
+                    database = 'error';
+                }
+                return { status: database === 'ok' ? 'ok' : 'degraded', database, uptime: process.uptime() };
+            }
+        }
+    `;
+}
+
+/**
+ * Generates the source code for a NestJS Health Module template.
+ */
+export function healthModuleTemplate(): string {
+    return `
+        import { Module } from '@nestjs/common';
+        import { HealthController } from './health.controller';
+
+        @Module({ controllers: [HealthController] })
+        export class HealthModule {}
+    `;
 }

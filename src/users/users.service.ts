@@ -87,7 +87,8 @@ export class UsersService {
         // 3. Persist new user entity
         const user = await this.prisma.user.create({
             data: { 
-                workEmail: dto.workEmail, 
+                workEmail: dto.workEmail,
+                personalEmail: dto.personalEmail,
                 firstName: dto.firstName, 
                 lastName: dto.lastName, 
                 username,

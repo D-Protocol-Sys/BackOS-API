@@ -27,6 +27,14 @@ export class CommandFailedError extends Error {
     }
 }
 
+interface CommandExecutionError {
+    name?: string;
+    code?: string | number;
+    stdout?: string;
+    stderr?: string;
+    message?: string;
+}
+
 /**
  * Resolves binary executable names across operating systems.
  * Windows requires appending the `.cmd` extension for Node CLI wrappers like pnpm or npx.
@@ -51,6 +59,8 @@ export async function runCommand(
     args: string[],
     cwd: string,
     timeoutMs: number,
+    envOverrides: Record<string, string> = {},
+    signal?: AbortSignal,
 ): Promise<CommandResult> {
 
     const executable = resolveExecutable(baseCommand);
@@ -62,17 +72,22 @@ export async function runCommand(
             timeout: timeoutMs,              // Prevents hanging processes by enforcing a timeout
             maxBuffer: 10 * 1024 * 1024,     // Caps buffer size to 10MB to avoid out-of-memory errors
             windowsHide: true,               // Hides console window on Windows systems
-            shell: process.platform === 'win32', // Required on Windows to launch batch files (.cmd)
+            env: { ...process.env, ...envOverrides },
+            signal,
+            ...(process.platform === 'win32' && { shell: true }),
         });
         
         return { stdout, stderr };
     } catch (error: unknown) {
 
-        const commandError = error as {
-            stdout?: string;
-            stderr?: string;
-            message?: string;
-        };
+        const commandError = error as CommandExecutionError;
+
+        if (
+            commandError.name === 'AbortError' ||
+            commandError.code === 'ABORT_ERR'
+        ) {
+            throw new CommandCancelledError();
+        }
 
         // Normalizes caught errors into custom CommandFailedError
         throw new CommandFailedError(
@@ -80,5 +95,11 @@ export async function runCommand(
             commandError.stdout ?? '',
             commandError.stderr ?? commandError.message ?? '',
         );
+    }
+}
+
+export class CommandCancelledError extends Error {
+    constructor() {
+        super('Command cancelled.');
     }
 }

@@ -9,6 +9,8 @@ import { GenerationsService } from './generations.service';
 import { ServiceCatalogModule } from './service-catalog.module';
 import { GeneratorController } from './generator.controller';
 import { PortAllocatorService } from './port-allocator.service';
+import { GenerationCancellationRegistry } from './generation-cancellation.registry';
+import { RuntimeManagerService } from './runtime-manager.service';
 
 @Module({
 
@@ -27,6 +29,8 @@ import { PortAllocatorService } from './port-allocator.service';
         GenerationsService,
         PortAllocatorService,
         GenerationProcessor,
+        GenerationCancellationRegistry,
+        RuntimeManagerService,
     ],
     
     exports: [

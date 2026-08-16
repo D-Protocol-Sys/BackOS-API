@@ -45,6 +45,9 @@ export const PERMISSIONS = {
     GENERATOR_EXECUTE: 'generator.execute',
     GENERATION_READ: 'generation.read',
 
+    // Runtime
+    RUNTIME_MANAGE: 'runtime.manage',
+
     // Audit
     AUDIT_READ: 'audit.read',
     
@@ -91,6 +94,8 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 
     [PERMISSIONS.GENERATOR_EXECUTE]: 'Trigger the backend generation process for a platform',
     [PERMISSIONS.GENERATION_READ]: 'View generation history and logs',
+
+    [PERMISSIONS.RUNTIME_MANAGE]: 'Start, stop, or inspect the running process of a generated backend',
 
     [PERMISSIONS.AUDIT_READ]: 'View the audit log of sensitive actions',
 

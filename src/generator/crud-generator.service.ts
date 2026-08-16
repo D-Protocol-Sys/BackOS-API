@@ -111,8 +111,9 @@ export class CrudGeneratorService {
 
                 const decoratorLines = decorators.map((d) => `  ${d}`).join('\n');
                 const questionMark = isOptional ? '?' : '';
+                const definiteAssignment = isOptional ? '' : '!';
 
-                return `${decoratorLines}\n  ${fieldName}${questionMark}: ${spec.tsType};`;
+                return `${decoratorLines}\n  ${fieldName}${questionMark}${definiteAssignment}: ${spec.tsType};`;
             })
             .join('\n\n');
     }
@@ -147,6 +148,10 @@ export class CrudGeneratorService {
             for (const decorator of spec.decorators) {
                 const match = decorator.match(/@(\w+)/);
                 if (match) set.add(match[1]);
+            }
+            // Required string fields receive @IsNotEmpty()
+            if (field.required && spec.tsType === 'string') {
+                set.add('IsNotEmpty');
             }
         }
         set.add('IsOptional');
