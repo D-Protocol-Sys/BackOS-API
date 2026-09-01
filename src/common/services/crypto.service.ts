@@ -4,26 +4,55 @@ import { ConfigService } from '@nestjs/config';
 
 /**
  * Service handling symmetric encryption and decryption using AES-256-GCM.
- * * Used primarily for securing sensitive static data at rest (e.g., TOTP secrets).
+ *
+ * Used for securing sensitive static data at rest: MFA/TOTP secrets (`encrypt`/`decrypt`) and
+ * generated-platform database passwords (`encryptWithRawKey`/`decryptWithRawKey`).
+ *
+ * CONSOLIDATION NOTE: this file used to be two separate, independently-maintained
+ * implementations of the exact same AES-256-GCM primitive - this class (injectable, key
+ * derived via `SHA-256(ENCRYPTION_KEY)`, hex-encoded ciphertext) and a standalone
+ * `common/utils/encryption.util.ts` (plain functions, key parsed directly as raw hex,
+ * base64-encoded ciphertext), used respectively by `MfaService` and by
+ * `ProvisioningService` / `PlatformServicesService`. Neither implementation was wrong -
+ * AES-256-GCM was used correctly in both, with a random IV per call and the authentication tag
+ * verified on decrypt - but maintaining two independent copies of the same cryptographic
+ * primitive is a maintainability and audit risk: any future fix (e.g. a key-rotation scheme)
+ * would need to be applied twice, and the two call sites cannot easily be told apart at a
+ * glance.
+ *
+ * They are now merged into this single class. IMPORTANT: the two encoding/key-derivation
+ * schemes below are intentionally kept behaviourally IDENTICAL to their original
+ * implementations (not unified into one scheme) - TOTP secrets and platform database
+ * passwords already encrypted in production with the old code must remain decryptable without
+ * a data migration. The two schemes are kept as clearly-named, clearly-documented methods on
+ * one class rather than silently merged into a single format.
  */
 @Injectable()
 export class CryptoService {
-    
+
     private readonly algorithm = 'aes-256-gcm';
-    private readonly key: Buffer;
+    private readonly derivedKey: Buffer;
 
     constructor(private readonly configService: ConfigService) {
         // Retrieve master key from config namespace or environment variable
         const secretKey = this.configService.getOrThrow<string>('security.encryptionKey');
 
-        // Derive a deterministic 32-byte (256-bit) key using SHA-256
-        this.key = createHash('sha256')
+        // Derive a deterministic 32-byte (256-bit) key using SHA-256. Used only by
+        // `encrypt`/`decrypt` below (the original `CryptoService` scheme) - kept exactly as it
+        // was so existing encrypted TOTP secrets remain decryptable.
+        this.derivedKey = createHash('sha256')
             .update(secretKey)
             .digest();
     }
 
+    // ------------------------------------------------------------------------------------
+    // SCHEME 1 - hash-derived key, hex-encoded output.
+    // Consumers: MfaService (TOTP secret at rest).
+    // ------------------------------------------------------------------------------------
+
     /**
-     * Encrypts a plain text string using AES-256-GCM.
+     * Encrypts a plain text string using AES-256-GCM, with the key derived by hashing the
+     * configured `ENCRYPTION_KEY`.
      * * * Output Format: `<IV_HEX>:<AUTH_TAG_HEX>:<ENCRYPTED_DATA_HEX>`
      * * @param value - The plain text string to encrypt.
      * @returns A colon-separated string containing the IV, authentication tag, and ciphertext.
@@ -34,7 +63,7 @@ export class CryptoService {
 
         const cipher = createCipheriv(
             this.algorithm,
-            this.key,
+            this.derivedKey,
             iv,
         );
 
@@ -55,7 +84,7 @@ export class CryptoService {
     }
 
     /**
-     * Decrypts an AES-256-GCM encrypted string.
+     * Decrypts a string produced by `encrypt()` above.
      * * @param value - The encrypted string formatted as `<IV_HEX>:<AUTH_TAG_HEX>:<ENCRYPTED_DATA_HEX>`.
      * @returns The original plain text string.
      * @throws BadRequestException if the input string format is invalid.
@@ -71,7 +100,7 @@ export class CryptoService {
 
         const decipher = createDecipheriv(
             this.algorithm,
-            this.key,
+            this.derivedKey,
             Buffer.from(ivHex, 'hex'),
         );
 
@@ -83,6 +112,61 @@ export class CryptoService {
             decipher.final(),
         ]);
 
+        return decrypted.toString('utf8');
+    }
+
+    // ------------------------------------------------------------------------------------
+    // SCHEME 2 - raw 32-byte hex key (as validated by `ENCRYPTION_KEY` in env.validation.ts),
+    // base64-encoded output. Consumers: ProvisioningService (generated database passwords),
+    // PlatformServicesService (third-party service credentials for generated platforms).
+    //
+    // Unlike scheme 1, the caller supplies the raw hex key explicitly on every call instead of
+    // relying on the constructor-derived key - this mirrors the original `encryption.util.ts`
+    // functions exactly, which took `encryptionKeyHex` as a parameter. Kept as a parameter
+    // (rather than always reading `security.encryptionKey` internally) so callers that
+    // deliberately use a different or rotated key for this class of secrets are not forced onto
+    // the same key as scheme 1.
+    // ------------------------------------------------------------------------------------
+
+    /**
+     * Encrypts a plain text string using AES-256-GCM with a raw (non-derived) 32-byte hex key.
+     * * Output Format: `<IV_BASE64>:<AUTH_TAG_BASE64>:<ENCRYPTED_DATA_BASE64>`
+     * * @param plainText - The plain text string to encrypt.
+     * @param encryptionKeyHex - A 64-character hex string decoding to exactly 32 bytes.
+     * @returns A colon-separated string containing the IV, authentication tag, and ciphertext.
+     */
+    encryptWithRawKey(plainText: string, encryptionKeyHex: string): string {
+        const key = Buffer.from(encryptionKeyHex, 'hex');
+        const iv = randomBytes(12);
+        const cipher = createCipheriv(this.algorithm, key, iv);
+
+        const encrypted = Buffer.concat([cipher.update(plainText, 'utf8'), cipher.final()]);
+        const authTag = cipher.getAuthTag();
+
+        return [iv.toString('base64'), authTag.toString('base64'), encrypted.toString('base64')].join(':');
+    }
+
+    /**
+     * Decrypts a string produced by `encryptWithRawKey()` above.
+     * * @param payload - The encrypted string formatted as `<IV_BASE64>:<AUTH_TAG_BASE64>:<ENCRYPTED_DATA_BASE64>`.
+     * @param encryptionKeyHex - The same 64-character hex key used to encrypt.
+     * @returns The original plain text string.
+     * @throws BadRequestException if the input string format is invalid.
+     */
+    decryptWithRawKey(payload: string, encryptionKeyHex: string): string {
+        const key = Buffer.from(encryptionKeyHex, 'hex');
+        const [ivB64, authTagB64, dataB64] = payload.split(':');
+        if (!ivB64 || !authTagB64 || !dataB64) {
+            throw new BadRequestException('Invalid ciphertext format. Expected IV:TAG:DATA (base64).');
+        }
+
+        const decipher = createDecipheriv(this.algorithm, key, Buffer.from(ivB64, 'base64'));
+        decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
+
+        const decrypted = Buffer.concat([
+            decipher.update(Buffer.from(dataB64, 'base64')),
+            decipher.final(),
+        ]);
         return decrypted.toString('utf8');
     }
 }

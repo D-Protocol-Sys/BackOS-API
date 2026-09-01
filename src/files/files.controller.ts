@@ -1,6 +1,7 @@
 import {
-    Controller, Post, Get, Delete, Param, Query, Body, UploadedFile, UseInterceptors, Res, NotFoundException,
+    Controller, Post, Get, Delete, Param, Query, Body, UploadedFile, UseInterceptors, UseGuards, Res, NotFoundException,
 } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Response } from 'express';
 import { FilesService } from './files.service';
@@ -30,7 +31,13 @@ export class FilesController {
      * * @param actor - The authenticated user extracted from token/session.
      * @param file - File object uploaded via multipart form-data ('file' field).
      * @param planningEntryId - Optional body field linking file to a planning entry.
+     *
+     * RATE LIMITING: uploads cost real disk I/O and storage space. `ThrottlerGuard` is no
+     * longer global (see `app.module.ts`), so it is applied here explicitly with its own
+     * budget, scoped to just this route.
      */
+    @UseGuards(ThrottlerGuard)
+    @Throttle({ default: { limit: 20, ttl: 60_000 } })
     @Post()
     @UseInterceptors(FileInterceptor('file', multerOptions))
     upload(

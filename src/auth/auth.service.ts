@@ -11,6 +11,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogService, AuditContext } from '../audit/audit-log.service';
 import { MfaService } from '../common/services/mfa.service';
+import { RoleHierarchyService } from '../common/services/role-hierarchy.service';
 import { ValidateInvitationDto } from './dto/validate-invitation.dto';
 import { ConsumeInvitationDto } from './dto/consume-invitation.dto';
 import { ConfirmMfaDto } from './dto/confirm-mfa.dto';
@@ -34,6 +35,7 @@ export class AuthService {
         private readonly auditLog: AuditLogService,
         private readonly recoveryCode: RecoveryCodeService,
         private readonly mfaService: MfaService,
+        private readonly roleHierarchy: RoleHierarchyService,
     ) {}
 
     // ---- Invitation ----
@@ -332,6 +334,22 @@ export class AuthService {
      * @returns Object containing newly issued access and refresh tokens.
      * @throws UnauthorizedException with generic error message to prevent account enumeration.
      */
+    /**
+     * Authenticates a user via login identifier (work email or username) plus a valid TOTP code.
+     *
+     * SECURITY FIX - per-account brute-force lockout: the previous implementation had no
+     * failed-attempt tracking at all for this endpoint, relying solely on the global,
+     * per-IP request throttle (shared with the entire API) to slow down attackers. That is
+     * not sufficient on its own against a distributed attacker rotating source IPs, or
+     * against an attacker with a very large window to guess a 6-digit TOTP code. We now track
+     * `failedLoginAttempts` / `lockedUntil` on the `User` record itself (independent of source
+     * IP), matching the same defense-in-depth pattern already used for invitation consumption
+     * (`Invitation.attempts` / `maxAttempts`).
+     *
+     * NOTE: this requires two additional columns on the `User` model - see
+     * `failedLoginAttempts Int @default(0)` and `lockedUntil DateTime?` in the accompanying
+     * schema migration notes.
+     */
     async login(dto: LoginDto, context: AuditContext) {
         // 1. Fetch user by work email OR username where status is ACTIVE
         const user = await this.prisma.user.findFirst({
@@ -347,19 +365,36 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 2. Fetch MFA configuration and ensure MFA is fully active
+        // 2. Reject outright if the account is currently locked out from prior failed attempts.
+        // We deliberately return the same generic message as an invalid credential, so an
+        // attacker cannot use response differences to enumerate which accounts are locked.
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+
+        // 3. Fetch MFA configuration and ensure MFA is fully active
         const mfa = await this.prisma.userMfa.findUnique({ where: { userId: user.id } });
         if (!mfa || mfa.status !== MfaStatus.ACTIVE) {
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 3. Verify TOTP code via MfaService
+        // 4. Verify TOTP code via MfaService
         const isValid = await this.mfaService.verify(mfa.secretEncrypted, dto.totpCode);
         if (!isValid) {
+            await this.registerFailedLoginAttempt(user.id, user.failedLoginAttempts, context);
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 4. Record successful login event in security audit log
+        // 5. Successful login: clear any prior failed-attempt counter so a legitimate user is
+        // never inconvenienced by attempts that happened before their own successful login.
+        if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+            await this.prisma.user.update({
+                where: { id: user.id },
+                data: { failedLoginAttempts: 0, lockedUntil: null },
+            });
+        }
+
+        // 6. Record successful login event in security audit log
         await this.auditLog.log({
             action: AUDIT_ACTIONS.LOGIN,
             actorId: user.id,
@@ -368,8 +403,51 @@ export class AuthService {
             context,
         });
 
-        // 5. Issue and return authentication JWT tokens
+        // 7. Issue and return authentication JWT tokens
         return this.issueTokens(user.id, user.workEmail);
+    }
+
+    /**
+     * Increments the failed-login counter for a user and, once the configured threshold is
+     * reached, locks the account for a fixed cool-down window.
+     *
+     * Kept as its own method (rather than inlined in `login()`) so the lockout policy is easy
+     * to locate, audit, and unit-test in isolation.
+     *
+     * @param userId - The user whose failed attempt is being recorded.
+     * @param currentAttempts - The attempt counter value already on the user record, prior to
+     *   this failure, so we can decide here whether the new count crosses the lockout threshold.
+     * @param context - Audit metadata (IP address, user agent) for the security audit trail.
+     */
+    private async registerFailedLoginAttempt(
+        userId: string,
+        currentAttempts: number,
+        context: AuditContext,
+    ): Promise<void> {
+        const maxAttempts = this.configService.get<number>('security.loginLockout.maxAttempts') ?? 5;
+        const lockoutMinutes = this.configService.get<number>('security.loginLockout.lockoutMinutes') ?? 15;
+
+        const nextAttempts = currentAttempts + 1;
+        const shouldLock = nextAttempts >= maxAttempts;
+
+        await this.prisma.user.update({
+            where: { id: userId },
+            data: {
+                failedLoginAttempts: shouldLock ? 0 : nextAttempts,
+                lockedUntil: shouldLock
+                    ? new Date(Date.now() + lockoutMinutes * 60 * 1000)
+                    : undefined,
+            },
+        });
+
+        await this.auditLog.log({
+            action: shouldLock ? AUDIT_ACTIONS.LOGIN_LOCKED : AUDIT_ACTIONS.LOGIN_FAILED,
+            actorId: userId,
+            targetType: AUDIT_TARGETS.USER,
+            targetId: userId,
+            metadata: shouldLock ? { lockoutMinutes } : { attempt: nextAttempts, maxAttempts },
+            context,
+        });
     }
 
     /**
@@ -549,39 +627,19 @@ export class AuthService {
 
     /**
      * Helper method to aggregate all unique permissions granted to a user through their assigned roles.
-     * * Process Flow:
-     * 1. Fetches all user-role mappings for specified user ID.
-     * 2. Nestedly includes associated role permissions and underlying permission entities.
-     * 3. Iterates over roles and permissions, inserting keys into a `Set` to eliminate duplicates.
-     * 4. Converts and returns set as an array of unique permission key strings.
-     * * @param userId - Unique identifier of the user whose permissions are being retrieved.
-     * @returns Promise resolving to an array of unique permission keys (e.g., `['user.read', 'user.write']`).
+     *
+     * NOTE: this now simply delegates to `RoleHierarchyService.getEffectivePermissionKeys`, which is
+     * the single shared implementation also used by the privilege-escalation guard in
+     * `RoleHierarchyService.assertPermissionsAreOwnedByActor`. Having ONE source of truth for
+     * "what permissions does this user actually have" avoids the JWT payload and the authorization
+     * checks silently drifting apart from each other over time.
+     *
+     * @param userId - Unique identifier of the user whose permissions are being retrieved.
+     * @returns Promise resolving to an array of unique permission keys (e.g., `['users.read', 'users.update']`).
      */
     private async getPermissionsForUser(userId: string): Promise<string[]> {
-        // 1. Fetch user roles with full permission tree mapping
-        const userRoles = await this.prisma.userRole.findMany({
-            where: { userId },
-            include: { 
-                role: { 
-                    include: { 
-                        rolePermissions: { 
-                            include: { permission: true } 
-                        } 
-                    } 
-                } 
-            },
-        });
-
-        // 2. Aggregate unique permission keys using a Set to prevent duplicates
-        const set = new Set<string>();
-        for (const ur of userRoles) {
-            for (const rp of ur.role.rolePermissions) {
-                set.add(rp.permission.key);
-            }
-        }
-
-        // 3. Convert Set back into a standard string array
-        return Array.from(set);
+        const permissionKeys = await this.roleHierarchy.getEffectivePermissionKeys(userId);
+        return Array.from(permissionKeys);
     }
 
     /**

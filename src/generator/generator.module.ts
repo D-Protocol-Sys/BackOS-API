@@ -11,6 +11,8 @@ import { GeneratorController } from './generator.controller';
 import { PortAllocatorService } from './port-allocator.service';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
 import { RuntimeManagerService } from './runtime-manager.service';
+import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
+import { ApiManifestService } from './api-manifest.service';
 
 @Module({
 
@@ -31,6 +33,12 @@ import { RuntimeManagerService } from './runtime-manager.service';
         GenerationProcessor,
         GenerationCancellationRegistry,
         RuntimeManagerService,
+        // Registered but NOT injected anywhere yet - opt-in Docker isolation for generated
+        // backends. See the class-level comment on DockerRuntimeManagerService for what it
+        // takes to actually switch GeneratorController over to it (Docker must be available on
+        // the host running this orchestrator).
+        DockerRuntimeManagerService,
+        ApiManifestService,
     ],
     
     exports: [

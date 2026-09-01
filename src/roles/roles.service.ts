@@ -47,10 +47,18 @@ export class RolesService {
     /**
      * Creates a new role with assigned permissions after asserting 
      * that the requesting actor has sufficient hierarchy level privileges.
+     *
+     * SECURITY: two independent checks are required here, not one. Checking only the
+     * numeric `level` (via `assertCanCreateAtLevel`) is NOT enough on its own, because
+     * `level` and `permissionKeys` are unrelated fields - a low-authority actor could
+     * otherwise create a role with a numerically "weak" level but attach every
+     * permission in the system to it. `assertPermissionsAreOwnedByActor` closes that
+     * gap by refusing to let anyone grant a permission they do not already hold.
      */
     async create(actorUserId: string, dto: CreateRoleDto) {
 
         await this.roleHierarchy.assertCanCreateAtLevel(actorUserId, dto.level);
+        await this.roleHierarchy.assertPermissionsAreOwnedByActor(actorUserId, dto.permissionKeys);
 
         const permissions = await this.resolvePermissions(dto.permissionKeys);
 
@@ -71,7 +79,7 @@ export class RolesService {
      * Updates role metadata (name, description).
      * Prevents updates to immutable system roles.
      */
-    async update(id: string, dto: UpdateRoleDto) {
+    async update(actorUserId: string, id: string, dto: UpdateRoleDto) {
         await this.assertNotSystemRole(id, 'modify');
         return this.prisma.role.update({
             where: { id },
@@ -83,9 +91,21 @@ export class RolesService {
     /**
      * Overwrites all permission associations for a given role within a single database transaction.
      * Prevents updates to immutable system roles.
+     *
+     * SECURITY: this endpoint used to be the main privilege-escalation vector in the system -
+     * it let anyone holding `ROLES_UPDATE` attach ANY permission (including ones they did not
+     * personally hold) to ANY non-system role, regardless of that role's numeric level. We now
+     * require the actor's own effective permission set to be a superset of `permissionKeys`
+     * before the replacement is allowed to proceed.
+     *
+     * @param actorUserId - The authenticated user performing the replacement (used to enforce
+     *   the "cannot grant what you do not have" invariant).
+     * @param id - Target role ID whose permission set is being replaced.
+     * @param permissionKeys - The full desired permission set for the role.
      */
-    async replacePermissions(id: string, permissionKeys: string[]) {
+    async replacePermissions(actorUserId: string, id: string, permissionKeys: string[]) {
         await this.assertNotSystemRole(id, 'modify permissions for');
+        await this.roleHierarchy.assertPermissionsAreOwnedByActor(actorUserId, permissionKeys);
         const permissions = await this.resolvePermissions(permissionKeys);
 
         await this.prisma.$transaction([

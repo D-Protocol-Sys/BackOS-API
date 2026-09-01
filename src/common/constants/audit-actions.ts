@@ -14,6 +14,8 @@ import {
 export const SYSTEM_AUDIT_ACTIONS = {
     // Authentication & Session
     LOGIN: 'auth.login',
+    LOGIN_FAILED: 'auth.login.failed',
+    LOGIN_LOCKED: 'auth.login.locked',
     LOGOUT: 'auth.logout',
     MFA_ENABLED: 'auth.mfa.enabled',
     MFA_DISABLED: 'auth.mfa.disabled',
@@ -24,6 +26,16 @@ export const SYSTEM_AUDIT_ACTIONS = {
     USERS_REACTIVATE: 'users.reactivate',
     USERS_DISABLE: 'users.disable',
     USERS_ANONYMIZE: 'users.anonymize',
+
+    // Client Lifecycle Events
+    CLIENT_STATUS_CHANGED: 'client.status_changed',
+    CLIENT_TESTIMONIAL_SUBMITTED: 'client.testimonial.submitted',
+    CLIENT_TESTIMONIAL_TOGGLED: 'client.testimonial.toggled',
+
+    // Contract Events
+    CONTRACT_SIGNED: 'contract.signed',
+    CONTRACT_EXPIRED: 'contract.expired',
+    CONTRACT_TERMINATED: 'contract.terminated',
 
     // INVITATION
     INVITATION_CREATED: 'invitation.created',
@@ -52,6 +64,8 @@ export type SystemAuditAction = (typeof SYSTEM_AUDIT_ACTIONS)[keyof typeof SYSTE
  */
 export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.LOGIN]: 'User successfully authenticated into the system',
+    [SYSTEM_AUDIT_ACTIONS.LOGIN_FAILED]: 'A login attempt failed (invalid credentials or TOTP code)',
+    [SYSTEM_AUDIT_ACTIONS.LOGIN_LOCKED]: 'Account temporarily locked after too many failed login attempts',
     [SYSTEM_AUDIT_ACTIONS.LOGOUT]: 'User logged out or session expired',
     [SYSTEM_AUDIT_ACTIONS.MFA_ENABLED]: 'Multi-Factor Authentication was enabled for an account',
     [SYSTEM_AUDIT_ACTIONS.MFA_DISABLED]: 'Multi-Factor Authentication was disabled for an account',
@@ -61,6 +75,13 @@ export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.USERS_REACTIVATE]: 'Reactivate a user',
     [SYSTEM_AUDIT_ACTIONS.USERS_DISABLE]: 'Disable a user',
     [SYSTEM_AUDIT_ACTIONS.USERS_ANONYMIZE]: 'Anonymize a user',
+
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_STATUS_CHANGED]: 'Client lifecycle status was changed (e.g. Prospect to Active)',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_SUBMITTED]: 'Client submitted a review or testimonial',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_TOGGLED]: 'Client testimonial public visibility was changed',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_SIGNED]: 'Contract was officially marked as signed',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_EXPIRED]: 'Contract reached its expiration date',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_TERMINATED]: 'Contract was terminated prior to expiration',
 
     [SYSTEM_AUDIT_ACTIONS.INVITATION_CREATED]: 'A new user invitation was created',
     [SYSTEM_AUDIT_ACTIONS.INVITATION_SENT]: 'An invitation email was sent to a user',

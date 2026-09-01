@@ -9,7 +9,7 @@ import { Prisma } from '@prismamodels/client';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { ServiceCatalog } from './service-catalog/service-catalog';
-import { encrypt, decrypt } from '../common/utils/encryption.util';
+import { CryptoService } from '../common/services/crypto.service';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 
 type Actor = { userId: string; permissions: string[] };
@@ -21,6 +21,7 @@ export class PlatformServicesService {
         private readonly prisma: PrismaService,
         private readonly catalog: ServiceCatalog,
         private readonly configService: ConfigService,
+        private readonly cryptoService: CryptoService,
     ) {}
 
     /**
@@ -77,7 +78,7 @@ export class PlatformServicesService {
         const { plain, secret } = this.catalog.splitConfig(serviceKey, fullConfig);
         const encryptionKey = this.configService.getOrThrow<string>('ENCRYPTION_KEY');
         const hasSecrets = Object.keys(secret).length > 0;
-        const encryptedConfig = hasSecrets ? encrypt(JSON.stringify(secret), encryptionKey) : null;
+        const encryptedConfig = hasSecrets ? this.cryptoService.encryptWithRawKey(JSON.stringify(secret), encryptionKey) : null;
 
         const service = await this.prisma.platformService.upsert({
             where: { platformId_serviceKey: { platformId, serviceKey } },
@@ -145,7 +146,7 @@ export class PlatformServicesService {
         let decryptedSecret: unknown;
 
         try {
-            const decrypted = decrypt(record.encryptedConfig, encryptionKey);
+            const decrypted = this.cryptoService.decryptWithRawKey(record.encryptedConfig, encryptionKey);
             decryptedSecret = JSON.parse(decrypted);
         } catch (error) {
             // Mask detailed crypto/parsing errors behind generic internal error

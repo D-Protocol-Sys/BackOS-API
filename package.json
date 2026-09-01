@@ -19,7 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand",
     "test:e2e:migrate": "cross-env NODE_ENV=test prisma migrate deploy",
-    "prisma:reset": "prisma migrate reset --force && prisma db seed && prisma generate"
+    "prisma:reset": "prisma migrate reset --force && prisma db seed && prisma generate",
+    "sys:reset": "docker compose down -v && docker compose up -d --wait && pnpm prisma:reset"
   },
   "dependencies": {
     "@nestjs/bullmq": "^11.0.4",
@@ -42,6 +43,7 @@
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "helmet": "^8.3.0",
+    "http-proxy-middleware": "^4.2.0",
     "ioredis": "^6.0.0",
     "joi": "^18.2.3",
     "ms": "^2.1.3",

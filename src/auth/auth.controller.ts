@@ -1,4 +1,5 @@
-import { Body, Controller, HttpCode, HttpStatus, Post, Req } from '@nestjs/common';
+import { Body, Controller, HttpCode, HttpStatus, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiBearerAuth, ApiOkResponse, ApiOperation, ApiTags } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { AuthService } from './auth.service';
@@ -25,6 +26,16 @@ function extractContext(req: Request) {
  * Controller handling user authentication, invitation flows, MFA management, 
  * and session token lifecycles.
  */
+/**
+ * RATE LIMITING: `ThrottlerGuard` is no longer registered globally (see `app.module.ts`), so
+ * it is applied explicitly here, at the controller level, with a moderate default budget
+ * shared by every route in this controller (invitation flow, refresh, logout...). Individual
+ * routes below that accept a secret credential (`login`, `login/recovery`, `mfa/confirm`)
+ * override that default with a tighter, route-specific `@Throttle(...)` - see the comment on
+ * `login()` for the full rationale.
+ */
+@Throttle({ default: { limit: 20, ttl: 60_000 } })
+@UseGuards(ThrottlerGuard)
 @ApiTags('Auth')
 @Controller('auth')
 export class AuthController {
@@ -58,6 +69,7 @@ export class AuthController {
      * Confirms and finalizes Multi-Factor Authentication (MFA) setup.
      */
     @Public()
+    @Throttle({ default: { limit: 8, ttl: 60_000 } })
     @Post('mfa/confirm')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Confirm MFA setup and activate account' })
@@ -68,8 +80,16 @@ export class AuthController {
 
     /**
      * Authenticates a user using their credentials and TOTP code.
+     *
+     * SECURITY: this route carries a tighter, route-specific rate limit than the global
+     * default (20 req/min shared across the whole API). Credential-guessing endpoints
+     * deserve their own, stricter budget regardless of what other traffic is doing. This is
+     * a complement to - not a replacement for - the per-account lockout implemented in
+     * `AuthService.login()`, which is what actually stops a distributed attacker rotating
+     * source IPs.
      */
     @Public()
+    @Throttle({ default: { limit: 8, ttl: 60_000 } })
     @Post('login')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Authenticate user with credentials and TOTP' })
@@ -80,8 +100,13 @@ export class AuthController {
 
     /**
      * Authenticates a user using a emergency recovery code when TOTP is unavailable.
+     *
+     * SECURITY: throttled tighter than the API default, same rationale as `POST /auth/login`
+     * - this endpoint accepts a secret credential and should not share the generic 20 req/min
+     * budget with unrelated, low-risk routes.
      */
     @Public()
+    @Throttle({ default: { limit: 8, ttl: 60_000 } })
     @Post('login/recovery')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Authenticate user using a backup recovery code' })

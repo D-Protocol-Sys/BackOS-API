@@ -11,7 +11,7 @@ datasource db {
 
 
 // ----------------------------------------------------------
-// AUTH (Invitation + TOTP) / RBAC
+// ENUMS
 // ----------------------------------------------------------
 
 enum UserStatus {
@@ -32,257 +32,11 @@ enum StatusChangeReason {
   OTHER
 }
 
-model User {
-  id String @id @default(uuid())
-
-  workEmail     String @unique
-  personalEmail String? @unique
-  username      String @unique
-
-  firstName String
-  lastName  String
-
-  status UserStatus @default(INVITED)
-
-  lastLoginAt DateTime?
-  lastSeenAt  DateTime?
-
-  lastActiveAt DateTime?
-
-  suspendedAt DateTime?
-  disabledAt  DateTime?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  profile          UserProfile?
-  mfa              UserMfa?
-  recoveryCodes    RecoveryCode[]
-  invitations      Invitation[]
-  refreshTokens    RefreshToken[]
-  userRoles        UserRole[]
-  platformOwned    Platform[] @relation("PlatformOwner")
-  generations      Generation[]
-  auditLogs        AuditLog[] @relation("AuditActor")
-
-  statusHistory               UserStatusHistory[]   @relation("UserStatusHistorySubject")
-  performedStatusChanges      UserStatusHistory[]   @relation("UserStatusHistoryPerformedBy")
-  platformMemberships         PlatformMember[]      @relation("PlatformMemberUser")
-  platformRemovalRequestsMade PlatformMember[]      @relation("PlatformMemberRemovalRequestedBy")
-
-  files                   FileAsset[]
-  personalPlanningEntries PlanningEntry[]         @relation("PersonalPlanningOwner")
-  createdPlanningEntries  PlanningEntry[]         @relation("PlanningEntryCreator")
-  planningAssignments     PlanningEntryAssignee[]
-
-  conversationParticipations ConversationParticipant[]
-  conversationReads          ConversationRead[]
-  sentMessages               Message[]
-
-  @@index([status])
-  @@index([username])
-  @@index([workEmail])
-
-  @@map("users")
-}
-
-model UserProfile {
-  id     String @id @default(uuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  bio             String?
-  phone           String?
-  phoneVerifiedAt DateTime?
-  dateOfBirth     DateTime?
-  location        String?
-  country         String?
-  company         String?
-  jobTitle        String?
-  websiteUrl      String?
-  avatarUrl       String?
-  language        String? @default("fr")
-  timezone        String?
-
-  socialLinks Json?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("user_profiles")
-}
-
-model UserStatusHistory {
-  id      String @id @default(uuid())
-  userId  String
-  user    User   @relation("UserStatusHistorySubject", fields: [userId], references: [id], onDelete: Cascade)
-
-  previousStatus UserStatus?
-  newStatus      UserStatus
-
-  reason         StatusChangeReason
-
-  comment        String?
-
-  performedById  String?
-  performedBy    User?      @relation("UserStatusHistoryPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@index([performedById])
-
-  @@map("user_status_history")
-}
-
-model Invitation {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  tokenHash String @unique
-  codeHash  String
-  attempts  Int    @default(0)
-
-  used      Boolean   @default(false)
-  usedAt    DateTime?
-  expiresAt DateTime
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@map("invitations")
-}
-
 enum MfaStatus {
   PENDING
   ACTIVE
   REVOKED
 }
-
-model UserMfa {
-  id     String @id @default(uuid())
-  userId String @unique
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  secretEncrypted String
-  status          MfaStatus @default(PENDING)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("user_mfa")
-}
-
-model RecoveryCode {
-  id     String @id @default(uuid())
-  userId String
-  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  codeHash String
-  usedAt   DateTime?
-
-  createdAt DateTime @default(now())
-
-  @@index([userId])
-  @@map("recovery_codes")
-}
-
-model RefreshToken {
-  id        String    @id @default(uuid())
-  tokenHash String    @unique
-  userId    String
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
-
-  @@index([userId])
-  @@index([expiresAt])
-  @@index([revokedAt])
-  @@map("refresh_tokens")
-}
-
-model AuditLog {
-  id      String  @id @default(uuid())
-  actorId String?
-  actor   User?   @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
-
-  action String
-
-  targetType  String?
-  targetId    String?
-
-  metadata Json?
-
-  ipAddress String?
-  userAgent String?
-
-  requestId String?
-
-  createdAt DateTime @default(now())
-
-  @@index([actorId])
-  @@index([action])
-  @@index([targetType, targetId])
-  @@index([createdAt])
-
-  @@map("audit_logs")
-}
-
-model Role {
-  id          String  @id @default(uuid())
-  name        String  @unique
-  description String?
-  isSystem    Boolean @default(false)
-  level       Int     @default(30)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  userRoles       UserRole[]
-  rolePermissions RolePermission[]
-
-  @@map("roles")
-}
-
-model Permission {
-  id          String  @id @default(uuid())
-  key         String  @unique
-  description String?
-
-  rolePermissions RolePermission[]
-
-  @@map("permissions")
-}
-
-model UserRole {
-  id     String @id @default(uuid())
-  userId String
-  roleId String
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  role Role @relation(fields: [roleId], references: [id], onDelete: Cascade)
-
-  @@unique([userId, roleId])
-  @@map("user_roles")
-}
-
-model RolePermission {
-  id           String @id @default(uuid())
-  roleId       String
-  permissionId String
-
-  role       Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
-  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
-
-  @@unique([roleId, permissionId])
-  @@map("role_permissions")
-}
-
-// ----------------------------------------------------------
-// PLATFORMS
-// ----------------------------------------------------------
 
 enum PlatformStatus {
   DRAFT
@@ -305,129 +59,6 @@ enum PlatformRole {
   ADMIN
 }
 
-model PlatformDatabase {
-  id         String   @id @default(uuid())
-  platformId String   @unique
-  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
-
-  host              String
-  port              Int
-  databaseName      String
-  databaseUser      String
-  encryptedPassword String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("platform_databases")
-}
-
-model Platform {
-  id          String         @id @default(uuid())
-  name        String
-  slug        String         @unique
-  description String?
-  url         String?
-  status      PlatformStatus @default(DRAFT)
-
-  channel Conversation?
-
-  generatedPort Int?
-  schemaVersion Int @default(0)
-
-  ownerId String
-  owner   User   @relation("PlatformOwner", fields: [ownerId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  database    PlatformDatabase?
-  
-  entities    Entity[]
-  generations Generation[]
-  members     PlatformMember[]
-  services    PlatformService[]
-  relations   Relation[]
-  
-  planningEntries PlanningEntry[]
-
-  runtimeStatus    RuntimeStatus @default(STOPPED)
-  runtimePid       Int?
-  runtimeStartedAt DateTime?
-
-  @@index([ownerId])
-  @@index([status])
-  @@map("platforms")
-}
-
-model PlatformMember {
-  id         String       @id @default(uuid())
-  platformId String
-  platform   Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
-  userId     String
-  user       User         @relation("PlatformMemberUser", fields: [userId], references: [id], onDelete: Cascade)
-  role       PlatformRole
-
-  removalRequestedAt   DateTime?
-  removalRequestedById String?
-  removalRequestedBy   User?     @relation("PlatformMemberRemovalRequestedBy", fields: [removalRequestedById], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([platformId, userId])
-  @@index([userId])
-  @@map("platform_members")
-}
-
-model PlatformService {
-  id         String   @id @default(uuid())
-  platformId String
-  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
-  serviceKey String
-
-  config          Json?
-  encryptedConfig String?
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([platformId, serviceKey])
-  @@map("platform_services")
-}
-
-// ----------------------------------------------------------
-// ENTITIES / FIELDS
-// ----------------------------------------------------------
-
-model Entity {
-  id         String  @id @default(uuid())
-  name       String
-  tableName  String
-  platformId String
-  isArchived Boolean @default(false)
-  isSchedulable Boolean @default(false)
-
-  authProtectCreate Boolean @default(false)
-  authProtectRead   Boolean @default(false)
-  authProtectUpdate Boolean @default(false)
-  authProtectDelete Boolean @default(false)
-
-  platform Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  fields Field[]
-  
-  relationsAsA Relation[] @relation("RelationEntityA")
-  relationsAsB Relation[] @relation("RelationEntityB")
-
-  @@unique([platformId, tableName])
-  @@index([platformId, isArchived])
-  @@map("entities")
-}
-
 enum FieldType {
   STRING
   TEXT
@@ -440,35 +71,6 @@ enum FieldType {
   JSON
 }
 
-model Field {
-  id       String    @id @default(uuid())
-  name     String
-  column   String
-  type     FieldType
-  required Boolean   @default(false)
-  unique   Boolean   @default(false)
-
-  defaultValue String?
-  config       Json?
-  isArchived   Boolean @default(false)
-
-  entityId String
-  entity   Entity @relation(fields: [entityId], references: [id], onDelete: Cascade)
-
-  order Int @default(0)
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([entityId, column])
-  @@index([entityId, isArchived])
-  @@map("fields")
-}
-
-// ----------------------------------------------------------
-// GENERATIONS
-// ----------------------------------------------------------
-
 enum GenerationStatus {
   PENDING
   RUNNING
@@ -476,60 +78,11 @@ enum GenerationStatus {
   FAILED
 }
 
-model Generation {
-  id         String   @id @default(uuid())
-  platformId String
-  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
-
-  triggeredById String?
-  triggeredBy   User?   @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
-
-  status   GenerationStatus @default(PENDING)
-  logs     String?
-  errorMsg String?
-
-  schemaVersion Int?
-
-  startedAt  DateTime  @default(now())
-  finishedAt DateTime?
-
-  @@index([platformId])
-  @@map("generations")
-}
-
-// ----------------------------------------------------------
-// RELATIONS
-// ----------------------------------------------------------
-
 enum RelationType {
   ONE_TO_ONE
   ONE_TO_MANY
   MANY_TO_MANY
 }
-
-model Relation {
-  id         String       @id @default(uuid())
-  platformId String
-  platform   Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
-  type       RelationType
-
-  entityAId String
-  entityA   Entity @relation("RelationEntityA", fields: [entityAId], references: [id], onDelete: Cascade)
-  entityBId String
-  entityB   Entity @relation("RelationEntityB", fields: [entityBId], references: [id], onDelete: Cascade)
-
-  fieldNameOnA String
-  fieldNameOnB String
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@map("relations")
-}
-
-// ----------------------------------------------------------
-// FILES & PLANNING
-// ----------------------------------------------------------
 
 enum FileCategory {
   DOCUMENT
@@ -539,33 +92,16 @@ enum FileCategory {
   ARCHIVE
 }
 
-model FileAsset {
-  id         String @id @default(uuid())
-  uploaderId String
-  uploader   User   @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
-
-  originalName String
-  storedName   String       @unique
-  mimeType     String
-  extension    String
-  category     FileCategory
-  sizeBytes    Int
-
-  planningEntryId String?
-  planningEntry   PlanningEntry? @relation(fields: [planningEntryId], references: [id], onDelete: SetNull)
-
-  createdAt DateTime @default(now())
-
-  @@index([uploaderId])
-  @@index([planningEntryId])
-  @@map("file_assets")
-}
-
 enum PlanningItemType {
   EVENT
   TASK
   NOTE
   MILESTONE
+  SHIFT
+  LEAVE
+  ON_CALL
+  MEETING
+  HOLIDAY
 }
 
 enum PlanningItemStatus {
@@ -574,48 +110,595 @@ enum PlanningItemStatus {
   DONE
 }
 
-model PlanningEntry {
-  id   String           @id @default(uuid())
-  type PlanningItemType
+enum PlanningScope {
+  PERSONAL
+  PLATFORM
+  TEAM
+}
 
-  personalUserId String?
-  personalUser   User?     @relation("PersonalPlanningOwner", fields: [personalUserId], references: [id], onDelete: Cascade)
-  platformId     String?
-  platform       Platform? @relation(fields: [platformId], references: [id], onDelete: Cascade)
+enum ConversationType {
+  DIRECT
+  PLATFORM_CHANNEL
+}
 
-  creatorId String
-  creator   User   @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
+enum ClientType {
+  INDIVIDUAL
+  COMPANY
+}
 
-  title       String
+enum ClientStatus {
+  PROSPECT
+  ONBOARDING
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+  ARCHIVED
+}
+
+enum ContractStatus {
+  DRAFT
+  PENDING_SIGNATURE
+  ACTIVE
+  EXPIRED
+  TERMINATED
+  CANCELED
+}
+
+enum ProjectStatus {
+  PLANNED
+  IN_PROGRESS
+  ON_HOLD
+  COMPLETED
+  CANCELLED
+}
+
+// ----------------------------------------------------------
+// AUTH & USERS
+// ----------------------------------------------------------
+
+model User {
+  id                      String                  @id @default(uuid())
+  workEmail               String                  @unique
+  personalEmail           String?                 @unique
+  username                String                  @unique
+  firstName               String
+  lastName                String
+  status                  UserStatus              @default(INVITED)
+
+  lastLoginAt             DateTime?
+  lastSeenAt              DateTime?
+  lastActiveAt            DateTime?
+
+  failedLoginAttempts     Int                     @default(0)
+  lockedUntil             DateTime?
+  suspendedAt             DateTime?
+  disabledAt              DateTime?
+
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+
+  profile                 UserProfile?
+  mfa                     UserMfa?
+  recoveryCodes           RecoveryCode[]
+  invitations             Invitation[]
+  refreshTokens           RefreshToken[]
+  userRoles               UserRole[]
+  platformOwned           Platform[]              @relation("PlatformOwner")
+  generations             Generation[]
+  auditLogs               AuditLog[]              @relation("AuditActor")
+  managedProjects         Project[]               @relation("ProjectManager")
+  statusHistory           UserStatusHistory[]     @relation("UserStatusHistorySubject")
+  performedStatusChanges  UserStatusHistory[]     @relation("UserStatusHistoryPerformedBy")
+  platformMemberships     PlatformMember[]        @relation("PlatformMemberUser")
+  platformRemovalRequests PlatformMember[]        @relation("PlatformMemberRemovalRequestedBy")
+  files                   FileAsset[]
+  plannings               Planning[]              @relation("PlanningResponsible")
+  planningMemberships     PlanningMember[]
+  createdPlanningEntries  PlanningEntry[]         @relation("PlanningEntryCreator")
+  planningAssignments     PlanningEntryAssignee[]
+  conversationParticipants ConversationParticipant[]
+  conversationReads       ConversationRead[]
+  sentMessages            Message[]
+
+  @@index([status])
+  @@index([username])
+  @@index([workEmail])
+  @@map("users")
+}
+
+model UserProfile {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  bio             String?
+  phone           String?
+  phoneVerifiedAt DateTime?
+  dateOfBirth     DateTime?
+  location        String?
+  country         String?
+  company         String?
+  jobTitle        String?
+  websiteUrl      String?
+  avatarUrl       String?
+  language        String?   @default("fr")
+  timezone        String?
+  socialLinks     Json?
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("user_profiles")
+}
+
+model UserStatusHistory {
+  id             String             @id @default(uuid())
+  userId         String
+  user           User               @relation("UserStatusHistorySubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  previousStatus UserStatus?
+  newStatus      UserStatus
+  reason         StatusChangeReason
+  comment        String?
+
+  performedById  String?
+  performedBy    User?              @relation("UserStatusHistoryPerformedBy", fields: [performedById], references: [id], onDelete: SetNull)
+
+  createdAt      DateTime           @default(now())
+
+  @@index([userId])
+  @@index([performedById])
+  @@map("user_status_history")
+}
+
+model Invitation {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  tokenHash String    @unique
+  codeHash  String
+  attempts  Int       @default(0)
+  used      Boolean   @default(false)
+
+  usedAt    DateTime?
+  expiresAt DateTime
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("invitations")
+}
+
+model UserMfa {
+  id              String    @id @default(uuid())
+  userId          String    @unique
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  secretEncrypted String
+  status          MfaStatus @default(PENDING)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@map("user_mfa")
+}
+
+model RecoveryCode {
+  id        String    @id @default(uuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  codeHash  String
+  usedAt    DateTime?
+
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@map("recovery_codes")
+}
+
+model RefreshToken {
+  id        String    @id @default(uuid())
+  tokenHash String    @unique
+
+  userId    String
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([revokedAt])
+  @@map("refresh_tokens")
+}
+
+// ----------------------------------------------------------
+// RBAC & AUDIT
+// ----------------------------------------------------------
+
+model Role {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  isSystem    Boolean  @default(false)
+  level       Int      @default(30)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  userRoles       UserRole[]
+  rolePermissions RolePermission[]
+
+  @@map("roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  key         String  @unique
   description String?
 
-  startAt    DateTime?
-  endAt      DateTime?
-  dueDate    DateTime?
-  targetDate DateTime?
-  status     PlanningItemStatus?
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model UserRole {
+  id     String @id @default(uuid())
+  userId String
+  roleId String
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role   Role   @relation(fields: [roleId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, roleId])
+  @@map("user_roles")
+}
+
+model RolePermission {
+  id           String     @id @default(uuid())
+  roleId       String
+  permissionId String
+
+  role         Role       @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([roleId, permissionId])
+  @@map("role_permissions")
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  actor      User?    @relation("AuditActor", fields: [actorId], references: [id], onDelete: SetNull)
+
+  action     String
+  targetType String?
+  targetId   String?
+  metadata   Json?
+
+  ipAddress  String?
+  userAgent  String?
+  requestId  String?
+
+  createdAt  DateTime @default(now())
+
+  @@index([actorId])
+  @@index([action])
+  @@index([targetType, targetId])
+  @@index([createdAt])
+  @@map("audit_logs")
+}
+
+// ----------------------------------------------------------
+// PLATFORMS
+// ----------------------------------------------------------
+
+model Platform {
+  id               String            @id @default(uuid())
+  name             String
+  slug             String            @unique
+  description      String?
+  url              String?
+  status           PlatformStatus    @default(DRAFT)
+
+  generatedPort    Int?
+  schemaVersion    Int               @default(0)
+
+  runtimeStatus    RuntimeStatus     @default(STOPPED)
+  runtimePid       Int?
+  runtimeStartedAt DateTime?
+
+  ownerId          String
+  owner            User              @relation("PlatformOwner", fields: [ownerId], references: [id])
+
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  database         PlatformDatabase?
+  channel          Conversation?
+  planning         Planning?         @relation("PlatformPlanning")
+  entities         Entity[]
+  generations      Generation[]
+  members          PlatformMember[]
+  services         PlatformService[]
+  relations        Relation[]
+  clients          Client[]          @relation("PlatformClients")
+  projects         Project[]
+
+  @@index([ownerId])
+  @@index([status])
+  @@map("platforms")
+}
+
+model PlatformDatabase {
+  id                String   @id @default(uuid())
+  platformId        String   @unique
+  platform          Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  host              String
+  port              Int
+  databaseName      String
+  databaseUser      String
+  encryptedPassword String
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@map("platform_databases")
+}
+
+model PlatformMember {
+  id                   String       @id @default(uuid())
+  platformId           String
+  platform             Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  userId               String
+  user                 User         @relation("PlatformMemberUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  role                 PlatformRole
+  removalRequestedAt   DateTime?
+  removalRequestedById String?
+  removalRequestedBy   User?        @relation("PlatformMemberRemovalRequestedBy", fields: [removalRequestedById], references: [id], onDelete: SetNull)
+
+  createdAt            DateTime     @default(now())
+  updatedAt            DateTime     @updatedAt
+
+  @@unique([platformId, userId])
+  @@index([userId])
+  @@map("platform_members")
+}
+
+model PlatformService {
+  id              String   @id @default(uuid())
+  platformId      String
+  platform        Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  serviceKey      String
+  config          Json?
+  encryptedConfig String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([platformId, serviceKey])
+  @@map("platform_services")
+}
+
+// ----------------------------------------------------------
+// ENTITIES & FIELDS
+// ----------------------------------------------------------
+
+model Entity {
+  id                String   @id @default(uuid())
+  name              String
+  tableName         String
+  isArchived        Boolean  @default(false)
+  isSchedulable     Boolean  @default(false)
+
+  authProtectCreate Boolean  @default(false)
+  authProtectRead   Boolean  @default(false)
+  authProtectUpdate Boolean  @default(false)
+  authProtectDelete Boolean  @default(false)
+
+  platformId        String
+  platform          Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  fields            Field[]
+  relationsAsA      Relation[] @relation("RelationEntityA")
+  relationsAsB      Relation[] @relation("RelationEntityB")
+
+  @@unique([platformId, tableName])
+  @@index([platformId, isArchived])
+  @@map("entities")
+}
+
+model Field {
+  id           String    @id @default(uuid())
+  name         String
+  column       String
+  type         FieldType
+  required     Boolean   @default(false)
+  unique       Boolean   @default(false)
+  defaultValue String?
+  config       Json?
+  isArchived   Boolean   @default(false)
+  order        Int       @default(0)
+
+  entityId     String
+  entity       Entity    @relation(fields: [entityId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  @@unique([entityId, column])
+  @@index([entityId, isArchived])
+  @@map("fields")
+}
+
+model Relation {
+  id           String       @id @default(uuid())
+  type         RelationType
+
+  platformId   String
+  platform     Platform     @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  entityAId    String
+  entityA      Entity       @relation("RelationEntityA", fields: [entityAId], references: [id], onDelete: Cascade)
+
+  entityBId    String
+  entityB      Entity       @relation("RelationEntityB", fields: [entityBId], references: [id], onDelete: Cascade)
+
+  fieldNameOnA String
+  fieldNameOnB String
+
+  createdAt    DateTime     @default(now())
+  updatedAt    DateTime     @updatedAt
+
+  @@map("relations")
+}
+
+// ----------------------------------------------------------
+// GENERATIONS
+// ----------------------------------------------------------
+
+model Generation {
+  id            String           @id @default(uuid())
+  status        GenerationStatus @default(PENDING)
+  logs          String?
+  errorMsg      String?
+  schemaVersion Int?
+
+  platformId    String
+  platform      Platform         @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  triggeredById String?
+  triggeredBy   User?            @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  startedAt     DateTime         @default(now())
+  finishedAt    DateTime?
+
+  @@index([platformId])
+  @@map("generations")
+}
+
+// ----------------------------------------------------------
+// FILES & PLANNING
+// ----------------------------------------------------------
+
+model FileAsset {
+  id              String        @id @default(uuid())
+  originalName    String
+  storedName      String        @unique
+  mimeType        String
+  extension       String
+  category        FileCategory
+  sizeBytes       Int
+
+  uploaderId      String
+  uploader        User          @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  planningEntryId String?
+  planningEntry   PlanningEntry? @relation(fields: [planningEntryId], references: [id], onDelete: SetNull)
+
+  createdAt       DateTime      @default(now())
+
+  @@index([uploaderId])
+  @@index([planningEntryId])
+  @@map("file_assets")
+}
+
+model Planning {
+  id            String         @id @default(uuid())
+  name          String
+  scope         PlanningScope
+  description   String?
+  timezone      String         @default("Europe/Paris")
+
+  responsibleId String?
+  responsible   User?          @relation("PlanningResponsible", fields: [responsibleId], references: [id], onDelete: Cascade)
+
+  platformId    String?        @unique
+  platform      Platform?      @relation("PlatformPlanning", fields: [platformId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  entries       PlanningEntry[]
+  members       PlanningMember[]
+
+  @@index([responsibleId])
+  @@index([scope])
+  @@map("plannings")
+}
+
+model PlanningMember {
+  id         String   @id @default(uuid())
+  planningId String
+  planning   Planning @relation(fields: [planningId], references: [id], onDelete: Cascade)
+
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([planningId, userId])
+  @@index([userId])
+  @@map("planning_members")
+}
+
+model PlanningEntry {
+  id          String              @id @default(uuid())
+  type        PlanningItemType
+  title       String
+  description String?
+  status      PlanningItemStatus?
+
+  startAt     DateTime?
+  endAt       DateTime?
+  dueDate     DateTime?
+  targetDate  DateTime?
+
+  planningId  String
+  planning    Planning            @relation(fields: [planningId], references: [id], onDelete: Cascade)
+
+  projectId   String?
+  project     Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  creatorId   String
+  creator     User                @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
+
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
 
   assignees   PlanningEntryAssignee[]
   attachments FileAsset[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([personalUserId])
-  @@index([platformId])
+  @@index([planningId])
+  @@index([creatorId])
+  @@index([projectId])
+  @@index([startAt])
+  @@index([endAt])
   @@map("planning_entries")
 }
 
 model PlanningEntryAssignee {
-  id      String        @id @default(uuid())
-  entryId String
-  entry   PlanningEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
-  userId  String
-  user    User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        String        @id @default(uuid())
+  entryId   String
+  entry     PlanningEntry @relation(fields: [entryId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
+  userId    String
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime      @default(now())
 
   @@unique([entryId, userId])
+  @@index([userId])
   @@map("planning_entry_assignees")
 }
 
@@ -623,22 +706,18 @@ model PlanningEntryAssignee {
 // MESSAGING
 // ----------------------------------------------------------
 
-enum ConversationType {
-  DIRECT
-  PLATFORM_CHANNEL
-}
-
 model Conversation {
-  id         String           @id @default(uuid())
-  type       ConversationType
-  platformId String?          @unique
-  platform   Platform?        @relation(fields: [platformId], references: [id], onDelete: Cascade)
+  id           String                  @id @default(uuid())
+  type         ConversationType
+
+  platformId   String?                 @unique
+  platform     Platform?               @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  createdAt    DateTime                @default(now())
 
   participants ConversationParticipant[]
   messages     Message[]
   reads        ConversationRead[]
-
-  createdAt DateTime @default(now())
 
   @@map("conversations")
 }
@@ -647,24 +726,25 @@ model ConversationParticipant {
   id             String       @id @default(uuid())
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
   userId         String
   user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  createdAt DateTime @default(now())
+  createdAt      DateTime     @default(now())
 
   @@unique([conversationId, userId])
   @@map("conversation_participants")
 }
 
 model ConversationRead {
-  id             String       @id @default(uuid())
-  conversationId String
-  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  userId         String
-  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id                  String       @id @default(uuid())
+  conversationId      String
+  conversation        Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
 
-  lastReadAt         DateTime  @default(now())
+  userId              String
+  user                User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  lastReadAt          DateTime     @default(now())
   lastEmailNotifiedAt DateTime?
 
   @@unique([conversationId, userId])
@@ -673,15 +753,128 @@ model ConversationRead {
 
 model Message {
   id             String       @id @default(uuid())
+  content        String
+
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
   senderId       String
   sender         User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
 
-  content String
+  replyToId      String?
+  replyTo        Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies        Message[]    @relation("MessageReplies")
 
-  createdAt DateTime @default(now())
+  createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+// ----------------------------------------------------------
+// CLIENTS & CONTRACTS
+// ----------------------------------------------------------
+
+model Client {
+  id                        String          @id @default(uuid())
+  type                      ClientType      @default(COMPANY)
+  status                    ClientStatus    @default(PROSPECT)
+
+  companyName               String?
+  vatNumber                 String?
+  registrationNumber        String?
+
+  firstName                 String
+  lastName                  String
+  email                     String          @unique
+  phone                     String?
+
+  streetAddress             String?
+  city                      String?
+  postalCode                String?
+  country                   String?         @default("FR")
+
+  notes                     String?
+  testimonialText           String?
+  testimonialRating         Int?
+  testimonialGivenAt        DateTime?
+  isTestimonialPublic       Boolean         @default(false)
+  testimonialToken          String?         @unique
+  testimonialTokenExpiresAt DateTime?
+
+  customServiceScope        String?
+
+  platformId                String?
+  platform                  Platform?       @relation("PlatformClients", fields: [platformId], references: [id], onDelete: SetNull)
+
+  createdAt                 DateTime        @default(now())
+  updatedAt                 DateTime        @updatedAt
+
+  contracts                 ClientContract[]
+
+  @@index([platformId])
+  @@index([status])
+  @@index([email])
+  @@index([isTestimonialPublic])
+  @@map("clients")
+}
+
+model ClientContract {
+  id             String         @id @default(uuid())
+  contractNumber String         @unique
+  title          String
+  description    String?
+  status         ContractStatus @default(DRAFT)
+
+  billingAmount  Float?
+  currency       String         @default("EUR")
+  serviceKey     String?
+  documentUrl    String?
+
+  clientId       String
+  client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  signedAt       DateTime?
+  startedAt      DateTime?
+  expiresAt      DateTime?
+
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  @@index([clientId])
+  @@index([status])
+  @@map("client_contracts")
+}
+
+// ----------------------------------------------------------
+// PROJECTS
+// ----------------------------------------------------------
+
+model Project {
+  id          String        @id @default(uuid())
+  name        String
+  slug        String?
+  description String?
+  status      ProjectStatus @default(PLANNED)
+  priority    Int           @default(0)
+
+  platformId  String?
+  platform    Platform?     @relation(fields: [platformId], references: [id], onDelete: SetNull)
+
+  managerId   String?
+  manager     User?         @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
+
+  startAt     DateTime?
+  targetEndAt DateTime?
+  completedAt DateTime?
+
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+
+  entries     PlanningEntry[]
+
+  @@index([platformId])
+  @@index([managerId])
+  @@index([status])
+  @@map("projects")
 }

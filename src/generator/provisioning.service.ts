@@ -2,7 +2,7 @@ import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common
 import { ConfigService } from '@nestjs/config';
 import { Client, escapeIdentifier, escapeLiteral } from 'pg';
 import { PrismaService } from '../prisma/prisma.service';
-import { encrypt, decrypt } from '../common/utils/encryption.util';
+import { CryptoService } from '../common/services/crypto.service';
 import { platformSlugToDbName, platformSlugToDbUser, generateSecurePassword } from '../common/utils/db-identifier.util';
 
 interface ProvisionResult {
@@ -26,6 +26,7 @@ export class ProvisioningService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
+        private readonly cryptoService: CryptoService,
     ) {}
 
     /**
@@ -140,7 +141,7 @@ export class ProvisioningService {
                         port,
                         databaseName: dbName,
                         databaseUser: dbUser,
-                        encryptedPassword: encrypt(password, encryptionKey),
+                        encryptedPassword: this.cryptoService.encryptWithRawKey(password, encryptionKey),
                     },
                 });
             } catch (metadataError) {
@@ -192,7 +193,7 @@ export class ProvisioningService {
     async getDecryptedConnectionUrl(platformId: string): Promise<string> {
         const record = await this.prisma.platformDatabase.findUniqueOrThrow({ where: { platformId } });
         const encryptionKey = this.configService.getOrThrow<string>('security.encryptionKey');
-        const password = decrypt(record.encryptedPassword, encryptionKey);
+        const password = this.cryptoService.decryptWithRawKey(record.encryptedPassword, encryptionKey);
 
         return this.buildDatabaseUrl(record.host, record.port, record.databaseName, record.databaseUser, password);
     }
@@ -248,7 +249,7 @@ export class ProvisioningService {
         resources: ProvisioningResources,
     ): Promise<void> {
         try {
-            if (resources.databaseCreated) await this.dropDatabase(adminClient, dbName);
+            if (resources.databaseCreated) await this.dropDatabase(adminClient, dbName, dbUser);
             if (resources.roleCreated) await this.dropRole(adminClient, dbUser);
         } catch (cleanupError) {
             this.logger.error(
@@ -262,15 +263,30 @@ export class ProvisioningService {
      * Drops database and user role sequentially.
      */
     private async dropPlatformResources(adminClient: Client, dbName: string, dbUser: string): Promise<void> {
-        await this.dropDatabase(adminClient, dbName);
+        await this.dropDatabase(adminClient, dbName, dbUser);
         await this.dropRole(adminClient, dbUser);
     }
 
     /**
      * Terminates existing backend client sessions and drops target PostgreSQL database.
      */
-    private async dropDatabase(adminClient: Client, dbName: string): Promise<void> {
+    private async dropDatabase(adminClient: Client, dbName: string, dbUser?: string): Promise<void> {
         const databaseIdentifier = escapeIdentifier(dbName);
+
+        // The provisioning role's temporary membership in the target owner role is revoked
+        // right after CREATE DATABASE (see provisionDatabaseForPlatform). Dropping a database
+        // requires being its owner, so that membership must be re-granted first, or this fails
+        // with "must be owner of database". Skipped when the role no longer exists (dbUser
+        // omitted, or already dropped) since GRANT would itself fail in that case.
+        if (dbUser) {
+            const roleExists = await adminClient.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [dbUser]);
+            if (roleExists.rowCount === 1) {
+                const provisionRoleName = this.configService.getOrThrow<string>('database.provisioningRole');
+                await adminClient.query(
+                    `GRANT ${escapeIdentifier(dbUser)} TO ${escapeIdentifier(provisionRoleName)}`,
+                );
+            }
+        }
 
         // Force termination of active database client connections
         await adminClient.query(
@@ -308,6 +324,74 @@ export class ProvisioningService {
     private buildDatabaseUrl(host: string, port: number, databaseName: string, databaseUser: string, password: string): string {
         const normalizedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
         return `postgresql://${encodeURIComponent(databaseUser)}:${encodeURIComponent(password)}@${normalizedHost}:${port}/${encodeURIComponent(databaseName)}?schema=public`;
+    }
+
+    private shadowDatabaseUrlCache: string | null = null;
+
+    /**
+     * Ensures a single, persistent PostgreSQL database exists purely as Prisma's scratch space
+     * for `prisma migrate diff --from-migrations ...`, and returns its connection URL.
+     *
+     * WHY THIS EXISTS: `migrate diff` can't compute "what does this migration history result
+     * in" by statically parsing arbitrary SQL files - it actually REPLAYS them against a real,
+     * empty database (a "shadow" database) to find out, then diffs the result against the
+     * target schema. Without one configured, it fails outright with "You must set
+     * `datasource.shadowDatabaseUrl`...".
+     *
+     * WHY NOT `migrate dev` (which creates/drops its own shadow database automatically): that
+     * requires the CONNECTING role to have `CREATEDB`, which the per-platform role from
+     * `provisionDatabaseForPlatform()` deliberately does NOT have (see that method - it's
+     * least-privilege by design, and that role is also what a generated backend runs with at
+     * runtime). Granting CREATEDB there just to make migrations work would hand every generated
+     * backend's runtime credentials the ability to create arbitrary new databases on this
+     * Postgres instance - a meaningfully bigger blast radius than a schema-diffing tool needs.
+     *
+     * WHY ONE SHARED DATABASE (not one per platform, or one per generation): `GenerationProcessor`
+     * is a BullMQ `@Processor` with no explicit `concurrency` option set, which means BullMQ
+     * runs it at its default of 1 - generation jobs are processed strictly one at a time, system-
+     * wide. A single shadow database can never be used by two `migrate diff` invocations at once,
+     * so reusing one avoids provisioning (and leaving behind) a throwaway database per
+     * generation. If that concurrency setting is ever raised, this method - and the
+     * single-shared-database assumption behind it - needs revisiting first.
+     *
+     * Uses the SAME administrative credentials already used for `provisionDatabaseForPlatform()`
+     * - the provisioning role owns this database outright, so no additional grant is needed and
+     * no new credential has to be managed.
+     */
+    async ensureShadowDatabaseUrl(): Promise<string> {
+        if (this.shadowDatabaseUrlCache) return this.shadowDatabaseUrlCache;
+
+        const shadowDbName = this.configService.get<string>('database.shadowDatabaseName', 'backos_migration_shadow');
+        const provisionRoleName = this.configService.getOrThrow<string>('database.provisioningRole');
+        const serverName = this.configService.getOrThrow<string>('app.serverName');
+
+        const adminClient = this.getAdminClient();
+        await adminClient.connect();
+        const lockKey = `${serverName}:shadow-database`;
+
+        try {
+            // Same advisory-lock pattern as provisionDatabaseForPlatform() - protects against
+            // two orchestrator instances racing to create this database concurrently on startup.
+            await this.acquireLock(adminClient, lockKey);
+
+            const existing = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [shadowDbName]);
+            if (existing.rowCount === 0) {
+                const databaseIdentifier = escapeIdentifier(shadowDbName);
+                const provisionRoleIdentifier = escapeIdentifier(provisionRoleName);
+                // Note: CREATE DATABASE cannot run inside an explicit transaction block (same
+                // constraint noted in provisionDatabaseForPlatform() above).
+                await adminClient.query(`CREATE DATABASE ${databaseIdentifier} OWNER ${provisionRoleIdentifier}`);
+                this.logger.log(`Base de données shadow créée pour les diffs de migration : "${shadowDbName}".`);
+            }
+        } finally {
+            await this.releaseLock(adminClient, lockKey);
+            await adminClient.end();
+        }
+
+        const shadowUrl = new URL(this.configService.getOrThrow<string>('database.provisioningUrl'));
+        shadowUrl.pathname = `/${encodeURIComponent(shadowDbName)}`;
+        this.shadowDatabaseUrlCache = shadowUrl.toString();
+        return this.shadowDatabaseUrlCache;
     }
 
     /**

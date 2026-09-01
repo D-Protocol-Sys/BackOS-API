@@ -1,0 +1,170 @@
+networks:
+  # Reverse-proxy <-> orchestrator only. Nothing else is ever on this network.
+  edge:
+  # Orchestrator <-> Postgres/Redis/docker-proxy. NOT reachable by any generated backend
+  # container - those each get their OWN dedicated network, created at runtime by
+  # DockerRuntimeManagerService.ensurePlatformNetwork() (see that file's doc comment for why).
+  internal:
+
+volumes:
+  postgres_data:
+  traefik_certs:
+
+services:
+  # ------------------------------------------------------------------------------------------
+  # REVERSE PROXY - single public entry point (one TLS cert, one open port), matching the
+  # "front door" design already documented in gateway/platform-gateway.service.ts. Terminates
+  # TLS and forwards everything to the orchestrator, which internally decides (via
+  # generated-backend-proxy.middleware.ts) what's a BackOS API call vs a /generated/<slug> call.
+  # ------------------------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    restart: unless-stopped
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      # HTTP -> HTTPS redirect
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge=true
+      - --certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+      - --api.dashboard=false
+      - --log.level=WARN
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - traefik_certs:/letsencrypt
+      # Traefik itself needs the Docker API only to discover container labels - give it the
+      # SAME least-privilege proxy the orchestrator uses, never the raw socket either.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - edge
+
+  # ------------------------------------------------------------------------------------------
+  # DOCKER SOCKET PROXY - the orchestrator NEVER mounts /var/run/docker.sock directly. That
+  # socket is root-equivalent host access (a container with it can trivially escape to the host).
+  # DockerRuntimeManagerService only ever needs to build images, run/stop/inspect containers,
+  # read logs, and manage networks - tecnativa/docker-socket-proxy exposes exactly that slice of
+  # the Docker API over plain TCP on the internal network, with everything else (swarm, secrets,
+  # plugins, host-level system info, volumes) switched off below.
+  # ------------------------------------------------------------------------------------------
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    restart: unless-stopped
+    environment:
+      - CONTAINERS=1
+      - IMAGES=1
+      - BUILD=1
+      - NETWORKS=1
+      - INFO=1
+      - PING=1
+      - POST=1
+      # Everything else defaults to 0 (disabled) in this image unless explicitly set to 1:
+      # no SWARM, no SERVICES, no NODES, no SECRETS, no PLUGINS, no VOLUMES, no SYSTEM,
+      # no EXEC. DockerRuntimeManagerService never calls any of those.
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - internal
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: backos-prod-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+      # Same two vars as docker-compose.yml (dev) - the init script below relies on them to
+      # create the POSTGRES_PROVISIONING_ROLE role ProvisioningService.buildDatabaseUrl() /
+      # provisioning.service.ts CREATE DATABASE/CREATE ROLE calls authenticate as. Without this,
+      # prod Postgres never gets that role and every platform generation fails on its first
+      # CREATE DATABASE.
+      - POSTGRES_PROVISIONING_ROLE=${POSTGRES_PROVISIONING_ROLE}
+      - POSTGRES_PROVISIONING_PASSWORD=${POSTGRES_PROVISIONING_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      # Identical init script as docker-compose.yml (dev) - only runs once, on first init of an
+      # empty data directory, so both environments provision the same role the same way.
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
+    # No `ports:` published to the host - only reachable from the internal network (and from
+    # each generated platform's dedicated network, attached dynamically by
+    # DockerRuntimeManagerService.ensureDatabaseReachableOnNetwork()).
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - postgres
+      - redis
+      - docker-proxy
+    env_file:
+      - .env.production
+    environment:
+      # Points the `docker` CLI (installed in deploy/Dockerfile) at the socket proxy instead of
+      # a mounted socket - this is the only Docker-related config the orchestrator container
+      # needs; DockerRuntimeManagerService's own runDockerCommand() code is unchanged.
+      - DOCKER_HOST=tcp://docker-proxy:2375
+      # Postgres/Redis reachable by their Compose service names on the internal network.
+      - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      - POSTGRES_PROVISIONING_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      - PROVISION_HOST=postgres
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      # See dockerReachableDatabaseUrl(): each generated backend reaches Postgres by this same
+      # service name once its dedicated network has Postgres attached.
+      - GENERATED_BACKEND_DOCKER_DB_HOST=postgres
+      # Matches the explicit container_name above - relying on Compose's DEFAULT naming
+      # (`<project>-postgres-1`) is fragile: it changes if COMPOSE_PROJECT_NAME or the folder
+      # name changes, silently breaking ensureDatabaseReachableOnNetwork()'s `docker network
+      # connect` calls (fails quietly, ignoreFailure: true - platforms would then get
+      # unreachable-database errors with no obvious cause).
+      - GENERATED_BACKEND_DB_CONTAINER_NAME=backos-prod-postgres
+      # DooD (Docker-outside-of-Docker) constraint: DockerRuntimeManagerService/
+      # ProjectScaffolderService resolve project paths via GENERATED_PROJECTS_ROOT and pass them
+      # straight to `docker build <path>` / `docker run -v <path>:...` - but those commands are
+      # executed by the REAL dockerd on the HOST (via docker-proxy), which knows nothing about
+      # this container's filesystem. The path must therefore be IDENTICAL inside the orchestrator
+      # container and on the host - hence the identity bind mount below (same path on both sides)
+      # instead of the usual "host:container" remap.
+      - GENERATED_PROJECTS_ROOT=${GENERATED_PROJECTS_HOST_PATH}
+    volumes:
+      - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
+    networks:
+      - edge
+      - internal
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.orchestrator.rule=Host(`${PUBLIC_DOMAIN}`)
+      - traefik.http.routers.orchestrator.entrypoints=websecure
+      - traefik.http.routers.orchestrator.tls.certresolver=letsencrypt
+      - traefik.http.services.orchestrator.loadbalancer.server.port=4803
+    # Hardening for the orchestrator's OWN container (separate from the --read-only /
+    # --cap-drop / non-root treatment DockerRuntimeManagerService already applies to EACH
+    # generated backend it spawns - this is the same idea one level up).
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: false # needs to write into GENERATED_PROJECTS_ROOT during scaffolding/builds

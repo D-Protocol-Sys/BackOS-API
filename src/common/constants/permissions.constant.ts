@@ -41,6 +41,23 @@ export const PERMISSIONS = {
     PLANNING_READ: 'planning.read',
     PLANNING_MANAGE: 'planning.manage',
 
+    // Clients & Contracts
+    CLIENT_CREATE: 'client.create',
+    CLIENT_READ: 'client.read',
+    CLIENT_UPDATE: 'client.update',
+    CLIENT_DELETE: 'client.delete',
+    CLIENT_MANAGE_TESTIMONIALS: 'client.manage-testimonials',
+    CONTRACT_CREATE: 'contract.create',
+    CONTRACT_READ: 'contract.read',
+    CONTRACT_UPDATE: 'contract.update',
+    CONTRACT_DELETE: 'contract.delete',
+
+    // Projects
+    PROJECT_CREATE: 'project.create',
+    PROJECT_READ: 'project.read',
+    PROJECT_UPDATE: 'project.update',
+    PROJECT_DELETE: 'project.delete',
+
     // Generator
     GENERATOR_EXECUTE: 'generator.execute',
     GENERATION_READ: 'generation.read',
@@ -50,7 +67,10 @@ export const PERMISSIONS = {
 
     // Audit
     AUDIT_READ: 'audit.read',
-    
+
+    // Backups
+    BACKUP_MANAGE: 'backup.manage',
+
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
@@ -92,11 +112,29 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
     [PERMISSIONS.PLANNING_READ]: 'View any platform planning, regardless of membership',
     [PERMISSIONS.PLANNING_MANAGE]: 'Create, edit, or delete any platform planning entry',
 
+    [PERMISSIONS.CLIENT_CREATE]: 'Create a new client profile',
+    [PERMISSIONS.CLIENT_READ]: 'View client profile details and contact information',
+    [PERMISSIONS.CLIENT_UPDATE]: "Update client profile details, status, or internal notes",
+    [PERMISSIONS.CLIENT_DELETE]: 'Permanently delete a client profile',
+    [PERMISSIONS.CLIENT_MANAGE_TESTIMONIALS]: 'Approve, edit, or toggle public visibility of client reviews and testimonials',
+
+    [PERMISSIONS.CONTRACT_CREATE]: 'Draft and create a new contract for a client',
+    [PERMISSIONS.CONTRACT_READ]: 'View contract details, status, and financial information',
+    [PERMISSIONS.CONTRACT_UPDATE]: 'Update contract parameters, upload signed documents, or change contract status',
+    [PERMISSIONS.CONTRACT_DELETE]: 'Delete a contract record',
+
+    [PERMISSIONS.PROJECT_CREATE]: 'Create a new project (product/feature idea)',
+    [PERMISSIONS.PROJECT_READ]: "View any project's details, regardless of who manages it",
+    [PERMISSIONS.PROJECT_UPDATE]: "Update any project's details, status, or manager",
+    [PERMISSIONS.PROJECT_DELETE]: 'Delete a project',
+
     [PERMISSIONS.GENERATOR_EXECUTE]: 'Trigger the backend generation process for a platform',
     [PERMISSIONS.GENERATION_READ]: 'View generation history and logs',
 
     [PERMISSIONS.RUNTIME_MANAGE]: 'Start, stop, or inspect the running process of a generated backend',
 
     [PERMISSIONS.AUDIT_READ]: 'View the audit log of sensitive actions',
+
+    [PERMISSIONS.BACKUP_MANAGE]: 'Export (dump) the orchestrator database or any platform database for backup/infra-migration purposes',
 
 };

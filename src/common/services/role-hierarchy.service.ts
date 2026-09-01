@@ -3,8 +3,24 @@ import { PrismaService } from '../../prisma/prisma.service';
 
 /**
  * Service managing hierarchical permission security guards.
- * Enforces business rules where lower numerical values represent higher authority levels 
- * (e.g., Level 1 = SuperAdmin, Level 10 = Admin, Level 100 = User).
+ *
+ * Enforces two independent, and equally important, authorization rules across the
+ * entire RBAC (Role-Based Access Control) system:
+ *
+ * 1. HIERARCHY (numeric "level"): lower numerical values represent higher authority
+ *    (e.g., Level 1 = SuperAdmin, Level 10 = Admin, Level 100 = User). This controls
+ *    *who can manage whom* (e.g. "can I suspend this user?", "can I create a role at
+ *    this rank?").
+ *
+ * 2. PERMISSION CONTAINMENT ("you cannot grant what you do not have"): no actor should
+ *    ever be able to hand out a permission key they do not themselves currently hold.
+ *    This is what actually prevents privilege escalation - the numeric level alone is
+ *    NOT sufficient, because level and permissions are stored as two independent
+ *    concepts on the `Role` model. A user could otherwise create a brand new role with
+ *    a numerically "weak" level (which passes the hierarchy check), silently attach
+ *    every permission in the system to it, and then assign that role to themselves.
+ *    Rule #2 closes that gap by validating the *actual permission set*, not just the
+ *    label attached to it.
  */
 @Injectable()
 export class RoleHierarchyService {
@@ -31,6 +47,45 @@ export class RoleHierarchyService {
 
         // Math.min finds the lowest numeric value (highest hierarchical authority)
         return Math.min(...userRoles.map((ur) => ur.role.level));
+    }
+
+    /**
+     * Computes the full, de-duplicated set of permission keys a user effectively holds,
+     * aggregated across every role assigned to them.
+     *
+     * This is the single source of truth for "what can this user actually do?" and is
+     * intentionally shared between:
+     *   - JWT issuance (`AuthService`), so tokens embed the real permission set;
+     *   - the privilege-escalation guard below (`assertPermissionsAreOwnedByActor`),
+     *     so nobody can hand out a permission they do not personally have.
+     *
+     * Keeping a single implementation avoids the two call sites silently drifting apart
+     * over time (a common source of authorization bugs).
+     *
+     * @param userId - Unique identifier of the user whose effective permissions are computed.
+     * @returns A Set of unique permission key strings (e.g. `Set{'users.read', 'users.update'}`).
+     */
+    async getEffectivePermissionKeys(userId: string): Promise<Set<string>> {
+        const userRoles = await this.prisma.userRole.findMany({
+            where: { userId },
+            include: {
+                role: {
+                    include: {
+                        rolePermissions: {
+                            include: { permission: true },
+                        },
+                    },
+                },
+            },
+        });
+
+        const permissionKeys = new Set<string>();
+        for (const userRole of userRoles) {
+            for (const rolePermission of userRole.role.rolePermissions) {
+                permissionKeys.add(rolePermission.permission.key);
+            }
+        }
+        return permissionKeys;
     }
 
     /**
@@ -67,23 +122,40 @@ export class RoleHierarchyService {
 
     /**
      * Asserts that an acting user has sufficient authority to grant a specific role to someone else.
+     *
+     * SECURITY FIX: this now checks two independent conditions instead of one. The original
+     * implementation only compared the numeric `level` field, which is not a reliable signal
+     * of how powerful a role actually is (level and permissions are independent attributes on
+     * the `Role` model). We now ALSO verify that every permission carried by the target role is
+     * already held by the actor - otherwise an actor could grant themselves a role that happens
+     * to have a "weak" level but was loaded with every permission in the system.
+     *
      * * @param actorUserId - User attempting to assign the role.
      * @param roleId - ID of the role to be granted.
      * @throws `NotFoundException` if the target role does not exist.
-     * @throws `ForbiddenException` if actor tries to grant a role equal or superior to their own rank.
+     * @throws `ForbiddenException` if actor tries to grant a role equal or superior to their own
+     *         rank, OR a role that carries a permission the actor does not themselves hold.
      */
     async assertCanGrantRole(actorUserId: string, roleId: string) {
         const actorLevel = await this.getBestLevel(actorUserId);
-        const role = await this.prisma.role.findUnique({ where: { id: roleId } });
-        
+        const role = await this.prisma.role.findUnique({
+            where: { id: roleId },
+            include: { rolePermissions: { include: { permission: true } } },
+        });
+
         if (!role) throw new NotFoundException('Role not found.');
 
-        // Rejects execution if actor has no role or tries to assign a role with level <= actor's level
+        // Rule #1 (hierarchy): actor must have a role, and cannot assign a role at level <= their own
         if (actorLevel === null || actorLevel >= role.level) {
             throw new ForbiddenException(
                 'Cannot assign a role of equal or higher rank than yourself.',
             );
         }
+
+        // Rule #2 (permission containment): the role being granted must not carry any permission
+        // the actor does not already personally hold - this is what actually blocks escalation.
+        const rolePermissionKeys = role.rolePermissions.map((rp) => rp.permission.key);
+        await this.assertPermissionsAreOwnedByActor(actorUserId, rolePermissionKeys);
     }
 
     /**
@@ -99,6 +171,38 @@ export class RoleHierarchyService {
         if (actorLevel === null || level <= actorLevel) {
             throw new ForbiddenException(
                 'Cannot create a role of equal or higher rank than yourself.',
+            );
+        }
+    }
+
+    /**
+     * SECURITY FIX (core of the privilege-escalation patch): asserts that every permission key
+     * in `requestedKeys` is already held by the acting user.
+     *
+     * This is the "you cannot delegate what you do not have" invariant. It must be enforced
+     * anywhere permissions are attached to a role - both when a role is first created
+     * (`RolesService.create`) and whenever a role's permission set is replaced
+     * (`RolesService.replacePermissions`). Without this check, the numeric `level` field was
+     * the only guard, and level/permissions being independent fields made it possible to build
+     * a nominally "weak" role that was in fact all-powerful.
+     *
+     * Users holding every permission in the system (e.g. the seeded `owner` role) will always
+     * pass this check trivially, since their effective permission set is a superset of any
+     * requested set.
+     *
+     * * @param actorUserId - User attempting to grant the listed permissions to a role.
+     * @param requestedKeys - Permission keys the actor is trying to attach to a role.
+     * @throws `ForbiddenException` listing the specific permission keys the actor does not hold.
+     */
+    async assertPermissionsAreOwnedByActor(actorUserId: string, requestedKeys: string[]): Promise<void> {
+        if (requestedKeys.length === 0) return;
+
+        const actorPermissionKeys = await this.getEffectivePermissionKeys(actorUserId);
+        const disallowedKeys = requestedKeys.filter((key) => !actorPermissionKeys.has(key));
+
+        if (disallowedKeys.length > 0) {
+            throw new ForbiddenException(
+                `Cannot grant permissions you do not hold yourself: ${disallowedKeys.join(', ')}.`,
             );
         }
     }

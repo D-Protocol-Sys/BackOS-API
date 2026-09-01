@@ -59,22 +59,32 @@ export class RolesController {
      */
     @RequirePermissions(PERMISSIONS.ROLES_UPDATE)
     @Patch(':id')
-    update(@Param('id') id: string, @Body() dto: UpdateRoleDto) {
-        return this.rolesService.update(id, dto);
+    update(
+        @CurrentUser() actor: { userId: string },
+        @Param('id') id: string,
+        @Body() dto: UpdateRoleDto,
+    ) {
+        return this.rolesService.update(actor.userId, id, dto);
     }
 
     /**
      * Replaces the complete set of permissions assigned to a role.
      * Requires `ROLES_UPDATE` permission.
+     *
+     * SECURITY: the acting user must already hold every permission key being assigned
+     * (enforced in `RolesService.replacePermissions`) - this is what prevents a
+     * ROLES_UPDATE holder from silently granting themselves permissions they never had.
+     *
      * @route PUT /roles/:id/permissions
      */
     @RequirePermissions(PERMISSIONS.ROLES_UPDATE)
     @Put(':id/permissions')
     replacePermissions(
+        @CurrentUser() actor: { userId: string },
         @Param('id') id: string,
         @Body() dto: ReplaceRolePermissionsDto,
     ) {
-        return this.rolesService.replacePermissions(id, dto.permissionKeys);
+        return this.rolesService.replacePermissions(actor.userId, id, dto.permissionKeys);
     }
 
     /**

@@ -265,18 +265,30 @@ export class CrudGeneratorService {
 
         const transformMethods = needsTransform
             ? `
-                private toPrismaCreateData<T extends Record<string, unknown>>(dto: T): T {
-                    const data = { ...dto };
+                // T is deliberately unconstrained (just "object", not "Record<string, unknown>"):
+                // the generated DTO classes (CreateXxxDto/UpdateXxxDto) have no string index
+                // signature, and a type without one is NOT assignable to Record<string, unknown>
+                // under TypeScript's structural typing - so callers passing a concrete DTO would
+                // fail to type-check against that constraint. "data" is where the index signature
+                // actually lives, as an explicit local annotation, which is what allows the
+                // dynamic "data.<field> = ..." assignments below without touching T itself.
+                private toPrismaCreateData<T extends object>(dto: T): T {
+                    // "as unknown as Record<string, unknown>": a plain "as Record<string, unknown>"
+                    // is rejected by TS here too - spreading a generic T keeps T's own (index-
+                    // signature-less) shape, and neither direction of that assertion is considered
+                    // a "sufficient overlap" on its own. Going through unknown first is the
+                    // standard, always-legal escape hatch for exactly this situation.
+                    const data = { ...dto } as unknown as Record<string, unknown>;
                     ${dateLines}
                     ${m2mCreateLines}
-                    return data;
+                    return data as T;
                 }
 
-                private toPrismaUpdateData<T extends Record<string, unknown>>(dto: T): T {
-                    const data = { ...dto };
+                private toPrismaUpdateData<T extends object>(dto: T): T {
+                    const data = { ...dto } as unknown as Record<string, unknown>;
                     ${dateLines}
                     ${m2mUpdateLines}
-                    return data;
+                    return data as T;
                 }
             `
             : '';

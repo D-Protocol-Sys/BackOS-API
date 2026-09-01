@@ -34,6 +34,16 @@ export const AUDIT_TARGETS = {
     FIELD: 'Field',
 
     /**
+     * Target type for actions affecting Client records or testimonials.
+     */
+    CLIENT: 'Client',
+
+    /**
+     * Target type for actions affecting Client Contracts or billing agreements.
+     */
+    CLIENT_CONTRACT: 'ClientContract',
+
+    /**
      * Target type for actions affecting onboarding or system Invitations.
      */
     INVITATION: 'Invitation',

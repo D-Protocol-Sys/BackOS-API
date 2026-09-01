@@ -90,6 +90,24 @@ export class GenerationsService {
     }
 
     /**
+     * Whether a generation is currently in flight for this platform (queued or actively
+     * running). Used as the concurrency guard in `GeneratorController.triggerGeneration()`/
+     * `cancelGeneration()` INSTEAD of `platform.status === 'GENERATING'` - as of the
+     * zero-downtime regeneration change in `generation.processor.ts`, a regeneration of an
+     * already-ACTIVE platform deliberately leaves `platform.status` untouched (still 'ACTIVE',
+     * so the gateway keeps routing to the old, still-running version), so that field can no
+     * longer be used to detect "is something already generating for this platform" - this
+     * queries the actual source of truth (the Generation records themselves) instead.
+     */
+    async hasActiveGeneration(platformId: string): Promise<boolean> {
+        const inFlight = await this.prisma.generation.findFirst({
+            where: { platformId, status: { in: ['PENDING', 'RUNNING'] } },
+            select: { id: true },
+        });
+        return !!inFlight;
+    }
+
+    /**
      * Fetches all generation task records associated with a specific platform,
      * sorted chronologically in descending order (most recent first).
      * * @param platformId - Target platform identifier.

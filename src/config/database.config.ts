@@ -47,6 +47,17 @@ export default registerAs('database', () => ({
      * * Defines the target PostgreSQL port for dynamic connection string assembly.
      * * @example 5432
      */
-    provisioningPort: process.env.PROVISION_PORT,
+    provisioningPort: process.env.PROVISION_PORT ? parseInt(process.env.PROVISION_PORT, 10) : undefined,
+
+    /**
+     * Shared Shadow Database Name (see `ProvisioningService.ensureShadowDatabaseUrl()`).
+     * * A single, persistent database used exclusively as Prisma's scratch space for
+     * `prisma migrate diff --from-migrations ...` (see `GenerationProcessor.
+     * generateMigrationIfNeeded()`) - required by Prisma to replay a migration history and
+     * compute what it results in, entirely separate from any platform's own real database.
+     * Owned by `provisioningRole`, never granted to any per-platform database role.
+     * * @example "backos_migration_shadow"
+     */
+    shadowDatabaseName: process.env.POSTGRES_SHADOW_DATABASE_NAME ?? 'migration_shadow',
 
 }));

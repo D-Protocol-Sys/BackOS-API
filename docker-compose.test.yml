@@ -1,0 +1,50 @@
+networks:
+  test:
+
+services:
+  # Separate container name/port from docker-compose.yml (dev) and docker-compose.prod.yml so
+  # all three can run on the same machine at once without colliding - this one is disposable:
+  # tests should be able to `docker compose -f docker-compose.test.yml down -v` freely.
+  postgres-test:
+    image: postgres:16-alpine
+    container_name: backos-test-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-backos_test}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-backos_test}
+      - POSTGRES_DB=${POSTGRES_DB:-backos_test}
+      # Same init script as dev/prod (see docker-compose.yml, docker-compose.prod.yml) - keeps
+      # the provisioning role identical across all three environments, so
+      # ProvisioningService/GenerationProcessor behave the same way in tests as in prod.
+      - POSTGRES_PROVISIONING_ROLE=${POSTGRES_PROVISIONING_ROLE:-backos_provisioner}
+      - POSTGRES_PROVISIONING_PASSWORD=${POSTGRES_PROVISIONING_PASSWORD:-backos_provisioner_test}
+    ports:
+      # Different host port than dev's 5432 so both can be up simultaneously.
+      - "${POSTGRES_TEST_PORT:-5433}:5432"
+    volumes:
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
+      # Deliberately NOT a named volume like dev/prod - tests want a throwaway database that's
+      # trivial to nuke and recreate (`docker compose -f docker-compose.test.yml down -v`).
+    tmpfs:
+      - /var/lib/postgresql/data
+    networks:
+      - test
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-backos_test}"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  redis-test:
+    image: redis:7-alpine
+    container_name: backos-test-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_TEST_PORT:-6380}:6379"
+    networks:
+      - test
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10

@@ -1,4 +1,5 @@
 import { toPascalCase } from "../../common/utils/case.util";
+import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from "../generated-backend.constants";
 
 /**
  * Builds the `package.json` object structure for a generated NestJS application.
@@ -18,7 +19,10 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             'build': 'nest build',
             'start': 'nest start',
             'start:dev': 'nest start --watch',
-            'start:prod': 'node dist/main',
+            // NOTE: matches the actual tsc/nest-cli output layout (outDir './dist', sourceRoot
+            // 'src' -> dist/src/main.js), and RuntimeManagerService.start() spawns this exact
+            // path directly. Was previously 'node dist/main', which does not exist on disk.
+            'start:prod': 'node dist/src/main.js',
             'prisma:generate': 'prisma generate',
             'prisma:migrate': 'prisma migrate deploy',
         },
@@ -35,6 +39,15 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             'reflect-metadata': '^0.2.2',
             'rxjs': '^7.8.1',
             'dotenv': '^16.4.5',
+            // Added alongside the loopback-binding / Swagger-in-prod security fix in
+            // `mainTsTemplate()`, which now calls `app.use(helmet())` on every generated backend.
+            'helmet': '^8.0.0',
+            // Backs UploadsController (see uploadsMulterConfigTemplate()). Declared explicitly
+            // rather than relying on it as a transitive dependency of `@nestjs/platform-express`
+            // - pnpm's default strict, non-hoisted node_modules layout does NOT expose
+            // transitive packages to `require()`, so omitting this would fail at runtime with
+            // "Cannot find module 'multer'" the first time an upload is attempted.
+            'multer': '^1.4.5-lts.1',
             ...extraDependencies,
         },
         devDependencies: {
@@ -42,6 +55,7 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             '@nestjs/schematics': '^11.0.0',
             '@types/node': '^24.0.0',
             '@types/express': '^5.0.0',
+            '@types/multer': '^1.4.12',
             'prisma': '^7.9.0',
             'tsx': '^4.19.0',
             'typescript': '^5.7.3',
@@ -107,7 +121,7 @@ export function prismaConfigTemplate(): string {
         export default defineConfig({
             schema: "prisma/schema.prisma",
             migrations: { path: "prisma/migrations" },
-            datasource: { url: env("DATABASE_URL") },
+            datasource: { url: env("DATABASE_URL"), shadowDatabaseUrl: env("SHADOW_DATABASE_URL") },
         });
     `;
 }
@@ -168,33 +182,121 @@ export function prismaModuleTemplate(): string {
  * Generates the `main.ts` application bootstrap entrypoint for target generated apps.
  * Configures global pipes (`ValidationPipe`), global API route prefix (`/api`), 
  * and Swagger OpenAPI documentation served at `/api/docs`.
+ *
+ * SECURITY FIX (bind address): `app.listen(port)` with no host argument binds Node's HTTP
+ * server to `0.0.0.0` (every network interface) by default. Combined with the fact that
+ * generated backends previously had no reverse proxy in front of them, this meant every
+ * platform's dynamically-allocated port (see `GENERATION_PORT_RANGE_START/END`) was a
+ * directly-reachable, unauthenticated-by-default entry point on any network path that could
+ * reach the host - a much larger attack surface than intended, and dependent entirely on
+ * external firewall configuration to stay safe.
+ *
+ * Generated backends now bind ONLY to `127.0.0.1` (loopback) unless explicitly overridden via
+ * `HOST`. The parent BackOS process is the sole component allowed to reach them, through the
+ * gateway reverse proxy in `src/gateway/` (see `GATEWAY_README.md`), which is what actually
+ * exposes `https://<your-domain>/generated/<slug>/...` to the public internet. A generated
+ * backend can no longer be reached directly by an external client, regardless of firewall
+ * configuration - this is "secure by default" rather than "secure if the network is configured
+ * correctly".
+ *
+ * SECURITY FIX (Swagger in production): the interactive API documentation, which lists every
+ * route and DTO shape, is now only mounted outside of `production` - publishing a full API
+ * surface map to unauthenticated users is unnecessary reconnaissance information in a
+ * production deployment.
+ *
+ * CORS: a generated backend is meant to be called from a browser running on a DIFFERENT origin
+ * than the backend itself (e.g. a "portfolio" platform's own public frontend, plus the BackOS
+ * "backoffice" frontend used to fill its database) - so without CORS configured, every one of
+ * those calls would be silently blocked by the browser. `CORS_ORIGINS` is written to this
+ * project's `.env` at generation time (see `envTemplate()` and
+ * `ProjectScaffolderService.scaffold()`) from two sources: the platform's own `url` field
+ * (its public frontend) and BackOS's own `FRONTEND_URL` (the backoffice used to manage this
+ * platform's data). Origins are comma-separated; unset/blank entries are dropped automatically
+ * by `ProjectScaffolderService`, so this list only ever contains real, usable origins - if it
+ * ends up empty, CORS is left OFF (default Nest behaviour: same-origin only) rather than wide
+ * open, so a platform with no known frontend never accidentally allows every origin.
+ *
+ * PORT / ENV PRECEDENCE (bugfix): this used to be `import 'dotenv/config'`, which uses the
+ * `dotenv` package's DEFAULT behaviour of *not* overriding a variable that is already present
+ * in `process.env` when the process starts. That is the wrong default for a generated backend:
+ * whatever process launches this one (`RuntimeManagerService`, a container runtime, systemd,
+ * a developer's shell, ...) may already have its OWN unrelated `PORT` (or `HOST`, `DATABASE_URL`,
+ * etc.) set in its environment, and if that leaks into this process's environment before
+ * `dotenv` runs, this backend would silently bind to THAT value instead of the one written to
+ * its own \`.env\` file at generation time (\`envTemplate()\`) - which is exactly how a generated
+ * backend could end up listening on the ORCHESTRATOR's own port instead of its assigned one.
+ * Loading with \`{ override: true }\` makes this project's own \`.env\` file authoritative for
+ * its own process, no matter what it happened to inherit. See also the explicit \`PORT\`/\`HOST\`
+ * passed by \`RuntimeManagerService.start()\`, which is the other half of this fix.
  */
 export function mainTsTemplate(): string {
     return `
-        import 'dotenv/config';
+        import * as dotenv from 'dotenv';
+        // See the module-level comment on mainTsTemplate(): this project's own .env is always
+        // authoritative for THIS process, regardless of whatever it may have inherited.
+        dotenv.config({ override: true });
+
         import { NestFactory } from '@nestjs/core';
         import { ValidationPipe } from '@nestjs/common';
         import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+        import helmet from 'helmet';
         import { AppModule } from './app.module';
+
+        const API_PREFIX = '${GENERATED_BACKEND_API_PREFIX}';
 
         async function bootstrap() {
             const app = await NestFactory.create(AppModule);
+
+            // Baseline HTTP security headers (same defaults used by the parent BackOS API).
+            app.use(helmet());
+
+            // CORS: see the module-level comment above for where CORS_ORIGINS comes from.
+            const corsOrigins = (process.env.CORS_ORIGINS || '')
+                .split(',')
+                .map((origin) => origin.trim())
+                .filter(Boolean);
+
+            if (corsOrigins.length > 0) {
+                app.enableCors({ origin: corsOrigins, credentials: true });
+                console.log(\`CORS enabled for: \${corsOrigins.join(', ')}\`);
+            } else {
+                console.log('CORS_ORIGINS is empty - CORS stays disabled (same-origin only).');
+            }
+
             app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-            app.setGlobalPrefix('api');
+            // Deliberately distinct from the orchestrator's own '/api' prefix - see
+            // GENERATED_BACKEND_API_PREFIX for why - and shared with the gateway's pathRewrite
+            // so the two can never silently drift apart.
+            app.setGlobalPrefix(API_PREFIX);
 
-            const swaggerConfig = new DocumentBuilder()
-                .setTitle('Generated API by BPG')
-                .setDescription('Automatically generated documentation based on platform definitions.')
-                .setVersion('1.0')
-                .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
-                .build();
-            const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
-            SwaggerModule.setup('api/docs', app, swaggerDocument);
+            const isProduction = process.env.NODE_ENV === 'production';
 
-            const port = process.env.PORT || 4000;
-            await app.listen(port);
-            console.log(\`Generated API running on port \${port}\`);
-            console.log(\`Documentation available at http://localhost:\${port}/api/docs\`);
+            if (!isProduction) {
+                const swaggerConfig = new DocumentBuilder()
+                    .setTitle('Generated API by BPG')
+                    .setDescription('Automatically generated documentation based on platform definitions.')
+                    .setVersion('1.0')
+                    .addBearerAuth({ type: 'http', scheme: 'bearer', bearerFormat: 'JWT' }, 'access-token')
+                    .build();
+                const swaggerDocument = SwaggerModule.createDocument(app, swaggerConfig);
+                SwaggerModule.setup(\`\${API_PREFIX}/docs\`, app, swaggerDocument);
+            }
+
+            // process.env.PORT/HOST are now guaranteed correct for THIS process: either sourced
+            // from this project's own .env (via the override:true load above), or explicitly
+            // set by RuntimeManagerService.start() at spawn time - see that file's comments.
+            const port = process.env.PORT || ${GENERATED_BACKEND_CONTAINER_PORT};
+
+            // SECURITY: loopback-only by default - see the module-level comment above. This
+            // backend is reached from the outside world exclusively through the BackOS
+            // gateway reverse proxy, never directly.
+            const host = process.env.HOST || '127.0.0.1';
+
+            await app.listen(port, host);
+            console.log(\`Generated API listening on \${host}:\${port} (internal only)\`);
+            if (!isProduction) {
+                console.log(\`Documentation available at http://\${host}:\${port}/\${API_PREFIX}/docs\`);
+            }
         }
         bootstrap();
     `;
@@ -246,14 +348,29 @@ export function appModuleTemplate(
  * * @param databaseUrl - Target database connection string.
  * @param port - HTTP port assignment.
  * @param extraVars - Dictionary of additional service blueprint settings.
+ * @param host - Bind address for the generated backend's HTTP server. Defaults to the
+ *   loopback interface (`127.0.0.1`) so the process is only reachable from other processes
+ *   on the same machine (i.e. the BackOS gateway reverse proxy) - never directly from the
+ *   public internet. See the security note on `mainTsTemplate()` for the full rationale.
+ * @param corsOrigins - Frontend origins allowed to call this generated backend directly in the
+ *   browser (e.g. the platform's own public site, plus the BackOS backoffice). Written as a
+ *   single comma-separated `CORS_ORIGINS` variable and read back by `mainTsTemplate()`. See the
+ *   CORS note on `mainTsTemplate()` for the full rationale.
  */
 export function envTemplate(
     databaseUrl: string,
     port: number,
     extraVars: Record<string, unknown> = {},
+    host: string = '127.0.0.1',
+    corsOrigins: string[] = [],
 ): string {
 
-    const lines = [`DATABASE_URL="${databaseUrl}"`, `PORT=${port}`];
+    const lines = [
+        `DATABASE_URL="${databaseUrl}"`,
+        `PORT=${port}`,
+        `HOST=${host}`,
+        `CORS_ORIGINS="${corsOrigins.join(',')}"`,
+    ];
 
     for (const [key, value] of Object.entries(extraVars)) {
         lines.push(`${toEnvKey(key)}=${JSON.stringify(String(value))}`);
@@ -309,4 +426,330 @@ export function healthModuleTemplate(): string {
         @Module({ controllers: [HealthController] })
         export class HealthModule {}
     `;
+}
+
+/**
+ * Generates the Multer configuration for a generated backend's `UploadsController` - the
+ * counterpart to the frontend's `uploadToGeneratedBackend()` (`lib/api/generated-records.ts`),
+ * which every `IMAGE`/`FILE` entity field (see `schema-builder.service.ts`) ultimately calls.
+ *
+ * Mirrors the orchestrator's OWN `files/multer.config.ts` conventions on purpose (random
+ * `crypto.randomUUID()` filenames - never the client-supplied name, which eliminates path
+ * traversal and collisions - plus a strict MIME allowlist and a hard size cap enforced at the
+ * Multer layer, not just client-side): a generated backend runs arbitrary end-users' uploads
+ * with no additional sandboxing beyond what this file provides, so it deserves the same
+ * discipline as the orchestrator's own upload path, not a lighter-weight version of it.
+ *
+ * Allowlist and size cap intentionally match the client-side check already in
+ * `uploadToGeneratedBackend()` (`ALLOWED_UPLOAD_TYPES` / `MAX_UPLOAD_BYTES`) - that check is
+ * documented there as "a UX nicety only", and this is the enforcement it was always assuming
+ * existed server-side.
+ */
+export function uploadsMulterConfigTemplate(): string {
+    return `
+        import { diskStorage } from 'multer';
+        import * as crypto from 'crypto';
+        import * as path from 'path';
+        import * as fs from 'fs';
+        import { BadRequestException } from '@nestjs/common';
+
+        // Resolves relative to this process's cwd (the project root - see RuntimeManagerService
+        // / DockerRuntimeManagerService, both of which spawn/run from there), unless overridden.
+        // DockerRuntimeManagerService explicitly sets this to a bind-mounted, writable path when
+        // Docker isolation is active, since the rest of the container's filesystem is read-only.
+        const uploadDir = process.env.UPLOADS_DIR ?? './uploads';
+        fs.mkdirSync(uploadDir, { recursive: true });
+
+        /** MIME type -> file extension. Matches the frontend's own ALLOWED_UPLOAD_TYPES exactly. */
+        export const ALLOWED_UPLOAD_MIME_TYPES: Record<string, string> = {
+            'image/jpeg': 'jpg',
+            'image/png': 'png',
+            'image/gif': 'gif',
+            'image/webp': 'webp',
+            'application/pdf': 'pdf',
+        };
+
+        // Matches the frontend's own MAX_UPLOAD_BYTES exactly (see generated-records.ts).
+        export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+
+        export const uploadsMulterOptions = {
+            storage: diskStorage({
+                destination: uploadDir,
+                filename: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, filename: string) => void) => {
+                    const extension = ALLOWED_UPLOAD_MIME_TYPES[file.mimetype] ?? 'bin';
+                    callback(null, \`\${crypto.randomUUID()}.\${extension}\`);
+                },
+            }),
+            fileFilter: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+                if (!ALLOWED_UPLOAD_MIME_TYPES[file.mimetype]) {
+                    return callback(new BadRequestException(\`Unsupported file type: \${file.mimetype}\`), false);
+                }
+                callback(null, true);
+            },
+            limits: { fileSize: MAX_UPLOAD_BYTES },
+        };
+
+        export function resolveUploadsDir(): string {
+            return path.resolve(uploadDir);
+        }
+
+        /** Inverse of ALLOWED_UPLOAD_MIME_TYPES - used by UploadsController to set a correct
+         * Content-Type when serving a file back, since nothing else records it (this backend
+         * has no database table for uploads - they're served straight off disk by filename). */
+        export function mimeTypeForExtension(extension: string): string {
+            const entry = Object.entries(ALLOWED_UPLOAD_MIME_TYPES).find(([, ext]) => ext === extension);
+            return entry?.[0] ?? 'application/octet-stream';
+        }
+    `;
+}
+
+/**
+ * Generates the `UploadsController` for a generated backend: accepts a single multipart file
+ * upload and serves it back by filename. Deliberately PUBLIC/unauthenticated (no
+ * `@ApiBearerAuth`, no guard) - matching `uploadToGeneratedBackend()`'s own documented
+ * assumption that it "sends no BackOS credentials at all", and consistent with every other
+ * unprotected entity route on a generated backend (see `crud-generator.service.ts`). If a
+ * platform needs uploads gated behind its own "Auth & User" service instead, that is a bigger,
+ * separate design decision (per-field auth requirements for uploads specifically) - out of
+ * scope for making the existing frontend upload flow actually work end-to-end.
+ */
+export function uploadsControllerTemplate(): string {
+    return `
+        import { Controller, Post, Get, Param, UseInterceptors, UploadedFile, BadRequestException, NotFoundException, Res } from '@nestjs/common';
+        import { FileInterceptor } from '@nestjs/platform-express';
+        import type { Response } from 'express';
+        import * as fs from 'fs';
+        import * as path from 'path';
+        import { uploadsMulterOptions, resolveUploadsDir, mimeTypeForExtension } from './uploads.multer-config';
+
+        // Matches exactly what multer's own \`diskStorage.filename()\` produces
+        // (crypto.randomUUID() + '.' + extension) - used to reject any hand-crafted filename
+        // before it ever reaches the filesystem, as defense in depth alongside path.resolve()
+        // + a containment check below (belt and suspenders: either one alone would already
+        // prevent path traversal here, since multer never generates a name outside this shape).
+        const SAFE_FILENAME_PATTERN = /^[0-9a-f-]{36}\\.[a-zA-Z0-9]+$/;
+
+        @Controller('uploads')
+        export class UploadsController {
+            @Post()
+            @UseInterceptors(FileInterceptor('file', uploadsMulterOptions))
+            upload(@UploadedFile() file: Express.Multer.File) {
+                if (!file) {
+                    throw new BadRequestException('No file was provided (expected multipart field "file").');
+                }
+                // Relative path only - this backend doesn't know its own public gateway URL
+                // (BackOS's \`GENERATED_BACKEND_GATEWAY_PREFIX\`); the frontend combines this
+                // with that base itself. See uploadToGeneratedBackend() in generated-records.ts.
+                return { url: \`/uploads/\${file.filename}\` };
+            }
+
+            @Get(':filename')
+            download(@Param('filename') filename: string, @Res() res: Response) {
+                if (!SAFE_FILENAME_PATTERN.test(filename)) {
+                    throw new NotFoundException('File not found.');
+                }
+
+                const uploadsDir = resolveUploadsDir();
+                const diskPath = path.join(uploadsDir, filename);
+                // Defense in depth: confirms the resolved path is still inside uploadsDir even
+                // after the regex check above, in case that pattern is ever loosened later.
+                if (!diskPath.startsWith(uploadsDir + path.sep) || !fs.existsSync(diskPath)) {
+                    throw new NotFoundException('File not found.');
+                }
+
+                res.set({
+                    'Content-Type': mimeTypeForExtension(path.extname(filename).slice(1)),
+                    'X-Content-Type-Options': 'nosniff',
+                    // Safe to cache aggressively and immutably - filenames are random UUIDs,
+                    // never reused or overwritten once uploaded.
+                    'Cache-Control': 'public, max-age=31536000, immutable',
+                });
+                fs.createReadStream(diskPath).pipe(res);
+            }
+        }
+    `;
+}
+
+export function uploadsModuleTemplate(): string {
+    return `
+        import { Module } from '@nestjs/common';
+        import { UploadsController } from './uploads.controller';
+
+        @Module({ controllers: [UploadsController] })
+        export class UploadsModule {}
+    `;
+}
+
+/**
+ * Generates a multi-stage `Dockerfile` for a generated backend, used by
+ * `DockerRuntimeManagerService` to run each platform in its own isolated container instead of
+ * as a bare `node` child process on the host.
+ *
+ * WHY IN-IMAGE `prisma generate` (not the host-generated client from the build pipeline):
+ * Prisma's query engine binary is architecture/libc-specific (e.g. glibc on a typical dev
+ * host vs musl on `node:*-alpine`). Regenerating the client INSIDE the builder stage guarantees
+ * the engine binary always matches the container it will actually run in, regardless of what
+ * host OS built the image. Only `schema.prisma` and `migrations/` are copied in - never the
+ * host's own `prisma/generated` output.
+ *
+ * WHY MIGRATIONS ARE NOT RUN HERE: `prisma migrate deploy` still runs once on the host as part
+ * of the existing generation pipeline (`GenerationProcessor`, STEP 5), before this image is
+ * even built. Baking migration execution into container start would mean every container start
+ * (including simple restarts) re-runs migrations, and would need real DB credentials available
+ * at container-start time for a step that should only ever happen once per schema change.
+ *
+ * ISOLATION properties this gives each generated backend, beyond the plain-process model:
+ *   - Its own filesystem and process namespace (a runaway/compromised generated backend cannot
+ *     see or signal-kill other platforms' processes, or the orchestrator's own process, the way
+ *     a bare `child_process.spawn` on the shared host can).
+ *   - Hard resource limits (CPU/memory) enforced by the container runtime, so one platform's
+ *     bug/abuse cannot starve the host or other platforms - not achievable with a bare `spawn`.
+ *   - Runs as a dedicated non-root `app` user, with the runtime filesystem read-only except for
+ *     an explicit `/tmp` tmpfs (see `DockerRuntimeManagerService`).
+ *   - Still loopback-only from the outside: `DockerRuntimeManagerService` publishes the
+ *     container's fixed internal port ONLY to `127.0.0.1:<allocatedPort>` on the host, so the
+ *     "only reachable through the BackOS gateway" security property from `mainTsTemplate()` is
+ *     preserved unchanged.
+ */
+export function dockerfileTemplate(): string {
+    return `# syntax=docker/dockerfile:1.7
+# Auto-generated by ProjectScaffolderService - do not edit by hand, it will be overwritten on
+# the next generation.
+
+FROM node:22-alpine AS builder
+WORKDIR /app
+RUN corepack enable
+COPY package.json ./
+COPY pnpm-lock.yaml* ./
+COPY .npmrc pnpm-workspace.yaml ./
+RUN pnpm install --no-frozen-lockfile
+COPY tsconfig.json nest-cli.json prisma.config.ts ./
+COPY prisma/schema.prisma ./prisma/schema.prisma
+COPY prisma/migrations ./prisma/migrations
+# prisma.config.ts (see prismaConfigTemplate()) eagerly resolves env("DATABASE_URL") AND
+# env("SHADOW_DATABASE_URL") just to load the config, even though \`prisma generate\` itself
+# never connects to a database - it only reads prisma/schema.prisma. Neither real value exists
+# yet at build time (the real ones are supplied via --env-file at container start - see
+# DockerRuntimeManagerService.start() - which always overrides these build-time defaults), so
+# syntactically-valid placeholders are enough to get past PrismaConfigEnvError here without
+# needing real database connectivity in the builder stage.
+ENV DATABASE_URL="postgresql://user:password@localhost:5432/db?schema=public"
+ENV SHADOW_DATABASE_URL="postgresql://user:password@localhost:5432/db_shadow?schema=public"
+# Regenerated here (not copied from the host) so the query engine binary always matches this
+# image's platform/libc - see the module-level comment on dockerfileTemplate().
+RUN pnpm exec prisma generate
+COPY src ./src
+RUN pnpm run build
+
+FROM node:22-alpine AS runtime
+WORKDIR /app
+RUN corepack enable \\
+    && addgroup -S app && adduser -S app -G app
+ENV NODE_ENV=production
+COPY package.json ./
+COPY pnpm-lock.yaml* ./
+COPY .npmrc pnpm-workspace.yaml ./
+RUN pnpm install --prod --no-frozen-lockfile \\
+    && rm -rf "$(pnpm store path)"
+COPY --from=builder /app/dist ./dist
+COPY --from=builder /app/prisma ./prisma
+USER app
+EXPOSE ${GENERATED_BACKEND_CONTAINER_PORT}
+HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \\
+    CMD node -e "fetch('http://127.0.0.1:${GENERATED_BACKEND_CONTAINER_PORT}/${GENERATED_BACKEND_API_PREFIX}/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+CMD ["node", "dist/src/main.js"]
+`;
+}
+
+/**
+ * Generates the `.npmrc` paired with `dockerfileTemplate()`.
+ *
+ * WHY THIS EXISTS: pnpm 11 turned on a supply-chain-protection default,
+ * `minimumReleaseAge` (1440 minutes / 24h - see https://pnpm.io/supply-chain-security),
+ * which refuses to resolve/install ANY lockfile entry published less than 24h ago. This is a
+ * sane default for hand-maintained apps, but it actively breaks reproducible builds here:
+ * `pnpm-lock.yaml` is generated fresh at scaffold time from whatever the registry's "latest"
+ * resolution is at that moment, and fast-moving transitive deps pulled in by NestJS/webpack
+ * tooling (`browserslist` -> `caniuse-lite` / `electron-to-chromium`, which both publish
+ * new versions roughly daily) are frequently younger than 24h. Since `buildImage()` in
+ * `DockerRuntimeManagerService` rebuilds the image on every `start()` (not just once at
+ * generation time), a lockfile entry that was old enough yesterday can violate the policy
+ * again the next time someone (re)starts the container, without ANY dependency change on the
+ * user's part - surfacing as an opaque `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` deep inside
+ * `docker build` output.
+ *
+ * Setting it to 0 here restores the old (pre-v11) pnpm behavior of trusting whatever the
+ * lockfile / registry resolution says, which is the right tradeoff for a backend whose
+ * dependency set was already deterministically resolved and committed by
+ * `ProjectScaffolderService` - re-litigating "is this transitive dep too new" on every
+ * container (re)build adds no real security benefit here and only produces flaky, host-clock
+ * -dependent build failures. Copied into BOTH Docker stages (see `dockerfileTemplate()`)
+ * since each stage runs its own independent `pnpm install`.
+ */
+export function npmrcTemplate(): string {
+    return `# Auto-generated by ProjectScaffolderService - do not edit by hand, it will be overwritten on
+# the next generation. See the comment on npmrcTemplate() for why this is needed.
+minimum-release-age=0
+`;
+}
+
+/**
+ * Generates the `pnpm-workspace.yaml` paired with `dockerfileTemplate()` / `npmrcTemplate()`.
+ *
+ * WHY THIS EXISTS (on top of the .npmrc above): as of pnpm 11, `.npmrc` is INI-parsed for
+ * auth/registry settings ONLY - every other pnpm setting, including `minimumReleaseAge`, is
+ * silently ignored there and must live in this YAML file instead (or the global
+ * `~/.config/pnpm/config.yaml`). Since `package.json` has no pinned `packageManager` field,
+ * `corepack enable` fetches whatever the latest pnpm release is at build time (currently
+ * 11.x), so relying on the `.npmrc` form alone works for pnpm <11 but is a silent no-op on
+ * 11+ - which is exactly what caused the build to still fail with
+ * `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` even after `.npmrc` was added. Shipping BOTH files
+ * covers pnpm <11 (reads `.npmrc`) and pnpm 11+ (reads this file) without needing to know or
+ * pin the exact pnpm version the build happens to resolve.
+ *
+ * Also carries `allowBuilds` (pnpm 11's replacement for the old `onlyBuiltDependencies` /
+ * `.npmrc` `enable-pre-post-scripts`): pnpm 11 made `strictDepBuilds` true by default, so any
+ * dependency's `postinstall`/`install`/`preinstall` script is skipped UNLESS the package is
+ * explicitly allowed here - failing the whole `pnpm install` with `ERR_PNPM_IGNORED_BUILDS`
+ * rather than silently skipping it. The four packages below all need their build script to
+ * actually run for the generated backend to work, not just to satisfy pnpm:
+ *   - `prisma` / `@prisma/engines` - download the Prisma query-engine binary for this platform;
+ *     without it, `pnpm exec prisma generate` (see `dockerfileTemplate()`) and every Prisma
+ *     query at runtime fail.
+ *   - `esbuild` - downloads the correct native `esbuild` binary for the build platform; NestJS's
+ *     CLI build (`pnpm run build`) shells out to it.
+ *   - `@scarf/scarf` - a transitive dep of Prisma tooling that no-ops without its install script,
+ *     but pnpm still refuses the whole install over it while it's unlisted.
+ */
+export function pnpmWorkspaceYamlTemplate(): string {
+    return `# Auto-generated by ProjectScaffolderService - do not edit by hand, it will be overwritten on
+# the next generation. See the comment on pnpmWorkspaceYamlTemplate() for why this is needed.
+minimumReleaseAge: 0
+allowBuilds:
+  prisma: true
+  '@prisma/engines': true
+  esbuild: true
+  '@scarf/scarf': true
+`;
+}
+
+/**
+ * Generates the `.dockerignore` paired with `dockerfileTemplate()` - keeps the host's
+ * `node_modules`, build output, logs, and secrets out of the Docker build context entirely
+ * (defense in depth alongside the `--prod`/allowlisted env work in `DockerRuntimeManagerService`;
+ * a build context is a broader leak surface than a spawned process's env would ever be).
+ */
+export function dockerignoreTemplate(): string {
+    return [
+        'node_modules',
+        'dist',
+        '.env',
+        '.env.*',
+        'run.log',
+        '.git',
+        '*.log',
+        // Runtime data, bind-mounted read-write by DockerRuntimeManagerService.start() - never
+        // baked into the image (see the '-v ...:/app/uploads:rw' mount and its comment there).
+        'uploads',
+    ].join('\n') + '\n';
 }

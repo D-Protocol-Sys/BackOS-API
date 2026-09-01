@@ -10,7 +10,11 @@ import { RecoveryCodeService } from '../common/utils/recovery-code.service';
 import { MfaService } from '../common/services/mfa.service';
 import { TotpService } from '../common/utils/totp.service';
 import { QrCodeService } from '../common/utils/qr-code.service';
-import { CryptoService } from '../common/services/crypto.service';
+// NOTE: CryptoService is no longer listed as a provider here - it now lives in the global
+// `CommonModule` (see that module's header comment), since `ProvisioningService` and
+// `PlatformServicesService` need it too and neither imports `AuthModule`. `MfaService` below
+// still receives it via the same dependency-injection token, just resolved from the global
+// module instead of this one - no behavioural change for anything in this module.
 
 @Module({
 
@@ -38,7 +42,6 @@ import { CryptoService } from '../common/services/crypto.service';
         MfaService,
         TotpService,
         QrCodeService,
-        CryptoService
     ],
 
     exports: [AuthService],

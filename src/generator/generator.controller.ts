@@ -1,4 +1,6 @@
-import { Controller, Post, Get, Param, ForbiddenException, NotFoundException, BadRequestException, Query } from '@nestjs/common';
+import { Controller, Post, Get, Param, ForbiddenException, NotFoundException, BadRequestException, Query, UseGuards, Res } from '@nestjs/common';
+import type { Response } from 'express';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { GENERATION_QUEUE_NAME } from './generator-queue.module';
@@ -10,6 +12,8 @@ import type { GenerationJobData } from './generation.processor';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
 import { RuntimeManagerService } from './runtime-manager.service';
+import { ApiManifestService, type ApiManifest, } from './api-manifest.service';
+import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 
 /**
  * Type representing the authenticated user context (actor) triggering or viewing generations.
@@ -29,7 +33,8 @@ export class GeneratorController {
         private readonly generations: GenerationsService,
         private readonly prisma: PrismaService,
         private readonly cancellationRegistry: GenerationCancellationRegistry,
-        private readonly runtimeManager: RuntimeManagerService,
+        private readonly runtimeManager: DockerRuntimeManagerService,
+        private readonly apiManifest: ApiManifestService,
     ) {}
 
     /**
@@ -37,9 +42,17 @@ export class GeneratorController {
      * Verifies permissions, prevents concurrent generation runs, creates the database record,
      * and enqueues the task in BullMQ.
      *
+     * RATE LIMITING: this spawns a real background job (schema build + `npm install` +
+     * `prisma migrate` inside a child process - see `generation.processor.ts`), which is
+     * expensive in CPU/disk/time. `ThrottlerGuard` is no longer global (see `app.module.ts`),
+     * so it is applied here explicitly with a tight, route-specific budget to stop someone
+     * from queueing many overlapping generations by mistake or by script.
+     *
      * @param actor - The authenticated user triggering the operation.
      * @param platformId - Target platform unique identifier.
      */
+    @UseGuards(ThrottlerGuard)
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Post('generate')
     async triggerGeneration(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
@@ -48,8 +61,10 @@ export class GeneratorController {
         // Enforce authorization rules before triggering a new build
         await this.assertCanGenerate(actor, platform);
 
-        // Prevent race conditions or overlapping jobs on the same platform
-        if (platform.status === 'GENERATING') {
+        // Prevent race conditions or overlapping jobs on the same platform. Deliberately NOT
+        // `platform.status === 'GENERATING'` anymore - see GenerationsService.hasActiveGeneration()'s
+        // doc comment for why that field can no longer be trusted for this check.
+        if (await this.generations.hasActiveGeneration(platformId)) {
             throw new ForbiddenException('A generation process is already running for this platform.');
         }
 
@@ -85,9 +100,17 @@ export class GeneratorController {
         if (generation.status === 'PENDING') {
             const job = await this.queue.getJob(generationId);
             if (job) await job.remove();
-            
+
             await this.generations.markFailed(generationId, 'Cancelled by user before execution.');
-            await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } });
+            // ZERO-DOWNTIME REGENERATION: only demote the platform to 'ERROR' (un-routable via
+            // the gateway - see PlatformGatewayService.resolveTarget()) if it wasn't already
+            // ACTIVE. Cancelling a queued REGENERATION of an already-working platform must not
+            // cut off the still-running old version, which never has anything to do with this
+            // cancelled job in the first place - same reasoning as generation.processor.ts's
+            // own failure handling for a running job.
+            if (platform.status !== 'ACTIVE') {
+                await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } });
+            }
             return { message: 'Generation cancelled.' };
         }
 
@@ -143,7 +166,12 @@ export class GeneratorController {
     
     /**
      * Triggers the start of a platform's isolated runtime container or process.
+     *
+     * RATE LIMITING: spawns a real OS child process (see `RuntimeManagerService.start()`).
+     * Throttled explicitly for the same reason as `POST .../generate` above.
      */
+    @UseGuards(ThrottlerGuard)
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Post('runtime/start')
     async startRuntime(
         @CurrentUser() actor: Actor,
@@ -157,7 +185,11 @@ export class GeneratorController {
     
     /**
      * Halts an actively running platform runtime instance.
+     *
+     * RATE LIMITING: same rationale as `runtime/start` above.
      */
+    @UseGuards(ThrottlerGuard)
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Post('runtime/stop')
     async stopRuntime(
         @CurrentUser() actor: Actor,
@@ -196,6 +228,49 @@ export class GeneratorController {
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanView(actor, platform);
         return this.runtimeManager.getLogs(platformId, lines ? Number(lines) : undefined);
+    }
+
+    /**
+     * Lists every REST endpoint the generated backend exposes for this platform - one entry
+     * per active entity's standard CRUD routes (create/list/get/update/delete) - along with
+     * the request body shape each endpoint expects and the response shape it returns.
+     *
+     * Educational note: this is computed directly from the platform's live entity/field/
+     * relation definitions (the same source of truth `CrudGeneratorService` reads from to
+     * write the generated controllers), so it stays accurate even for platforms that have not
+     * been generated yet, and does not require the generated backend to be running.
+     */
+    @Get('api-manifest')
+    async getApiManifest(@CurrentUser() actor: Actor, @Param('platformId') platformId: string): Promise<ApiManifest> {
+        const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
+        if (!platform) throw new NotFoundException('Platform not found.');
+        await this.assertCanView(actor, platform);
+        return this.apiManifest.buildManifest(platform);
+    }
+
+    /**
+     * Same content as `GET .../api-manifest`, served as a downloadable JSON file so it can be
+     * shared with a frontend team, imported into an API client, or archived alongside the
+     * project's documentation.
+     */
+    @Get('api-manifest/export')
+    async exportApiManifest(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Res() res: Response,
+    ) {
+        const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
+        if (!platform) throw new NotFoundException('Platform not found.');
+        await this.assertCanView(actor, platform);
+
+        const manifest = await this.apiManifest.buildManifest(platform);
+
+        res.set({
+            'Content-Type': 'application/json',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(platform.slug)}-api-manifest.json"`,
+            'X-Content-Type-Options': 'nosniff',
+        });
+        res.send(JSON.stringify(manifest, null, 2));
     }
 
     /**
