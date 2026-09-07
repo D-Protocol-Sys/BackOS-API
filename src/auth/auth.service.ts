@@ -6,7 +6,7 @@ import {
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
-import { randomInt } from 'crypto';
+import { randomInt, timingSafeEqual } from 'crypto';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
 import { AuditLogService, AuditContext } from '../audit/audit-log.service';
@@ -487,8 +487,22 @@ export class AuthService {
         });
 
         // 3. Normalize input to uppercase and hash for lookup
+        //
+        // SECURITY FIX (audit #9 - medium): previously compared with strict `===`, which is not
+        // constant-time. Real-world exploitability was low here (both sides are SHA-256 hashes
+        // of unpredictable values, not a secret compared directly), but `crypto.timingSafeEqual`
+        // is cheap defense-in-depth and keeps this consistent with best practice for any secret
+        // comparison. `timingSafeEqual` requires equal-length buffers, so length is checked
+        // first (a length mismatch is not itself a hash and is safely rejected as no match).
         const codeHash = this.recoveryCode.hashRecoveryCode(dto.recoveryCode.toUpperCase());
-        const match = candidates.find((c) => c.codeHash === codeHash);
+        const codeHashBuffer = Buffer.from(codeHash, 'hex');
+        const match = candidates.find((c) => {
+            const candidateBuffer = Buffer.from(c.codeHash, 'hex');
+            return (
+                candidateBuffer.length === codeHashBuffer.length &&
+                timingSafeEqual(candidateBuffer, codeHashBuffer)
+            );
+        });
 
         // 4. Handle invalid or already consumed recovery code
         if (!match) {
@@ -512,6 +526,55 @@ export class AuthService {
 
         // 7. Issue and return authentication JWT tokens
         return this.issueTokens(user.id, user.workEmail);
+    }
+
+    // ---- Step-up re-authentication ----
+
+    /**
+     * SECURITY FIX (audit #3 - elevated): re-verifies a fresh TOTP code for an already
+     * authenticated user, for use as "step-up" authentication before destructive,
+     * irreversible, self-service actions (currently: `DELETE /users/me`).
+     *
+     * Why this is needed: this system is passwordless (identifier + TOTP only, see the
+     * dedicated design note on `login()`), so a 15-minute access token is the only thing an
+     * attacker needs to trigger a self-service action once issued - e.g. an intercepted token
+     * (XSS, a compromised device, a proxy log) could otherwise permanently delete the victim's
+     * account with no further proof of possession of their TOTP device. Requiring a fresh code
+     * here closes that window without reintroducing a password.
+     *
+     * Deliberately mirrors the same generic-failure-message pattern as `login()` - the caller
+     * receives no information distinguishing "wrong code" from any other failure mode, to avoid
+     * turning this into an oracle for anything about the account's MFA state.
+     *
+     * @param userId - The already-authenticated user being asked to re-prove possession of
+     *   their TOTP device.
+     * @param totpCode - The fresh 6-digit code supplied for this specific action.
+     * @param context - Audit metadata (IP address, user agent) for the security audit trail.
+     * @throws UnauthorizedException if the user, their MFA configuration, or the supplied code
+     *   is not currently valid.
+     */
+    async verifyStepUpTotp(userId: string, totpCode: string, context: AuditContext): Promise<void> {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.status !== UserStatus.ACTIVE) {
+            throw new UnauthorizedException('Re-authentication failed.');
+        }
+
+        const mfa = await this.prisma.userMfa.findUnique({ where: { userId: user.id } });
+        if (!mfa || mfa.status !== MfaStatus.ACTIVE) {
+            throw new UnauthorizedException('Re-authentication failed.');
+        }
+
+        const isValid = await this.mfaService.verify(mfa.secretEncrypted, totpCode);
+        if (!isValid) {
+            await this.auditLog.log({
+                action: AUDIT_ACTIONS.STEP_UP_FAILED,
+                actorId: user.id,
+                targetType: AUDIT_TARGETS.USER,
+                targetId: user.id,
+                context,
+            });
+            throw new UnauthorizedException('Re-authentication failed.');
+        }
     }
 
     // ---- Refresh / Logout ----

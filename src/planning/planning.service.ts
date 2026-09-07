@@ -5,10 +5,12 @@ import {
     NotFoundException,
 } from '@nestjs/common';
 import { PlanningItemType, PlanningScope } from '@prismamodels/client';
+import { UserStatus } from '@prismamodels/enums';
 import { PrismaService } from '../prisma/prisma.service';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { CreatePlanningEntryDto } from './dto/create-planning-entry.dto';
 import { UpdatePlanningEntryDto } from './dto/update-planning-entry.dto';
+import { ReassignResponsibleDto } from './dto/reassign-responsible.dto';
 
 /**
  * Represents the authenticated actor (user) executing an operation.
@@ -324,6 +326,45 @@ export class PlanningService {
         });
 
         return { message: 'Item deleted successfully.' };
+    }
+
+    /**
+     * SECURITY FIX (audit #1/#5 follow-up): reassigns a platform Planning's "responsible" user
+     * to a different active user.
+     *
+     * This is the missing counterpart to `Planning.responsible`'s `onDelete: SetNull` fix in
+     * `schema.prisma` (see that field's comment) and to the pre-check in
+     * `UsersService.hardDeleteUser()`: previously there was no way at all, via the API, to
+     * change who is responsible for a platform's planning once created, which would have made
+     * that pre-check a dead end for anyone actually holding the role. Mirrors
+     * `PlatformsService.transferOwnership()`'s shape and validation.
+     *
+     * @param actor - Requesting user; must satisfy `assertCanEditPlatformPlanning` (platform
+     *   owner, global `PLANNING_MANAGE`, or platform ADMIN member).
+     * @param platformId - Target platform ID whose planning is being reassigned.
+     * @param dto - Contains the new responsible user's ID.
+     * @throws NotFoundException if the platform (or its planning) does not exist.
+     * @throws BadRequestException if the new responsible user is invalid or inactive.
+     */
+    async reassignResponsible(actor: Actor, platformId: string, dto: ReassignResponsibleDto) {
+        await this.assertCanEditPlatformPlanning(actor, platformId);
+
+        const planning = await this.findPlatformPlanning(platformId);
+        if (!planning) {
+            throw new NotFoundException('This platform has no planning yet.');
+        }
+
+        const newResponsible = await this.prisma.user.findUnique({
+            where: { id: dto.newResponsibleId },
+        });
+        if (!newResponsible || newResponsible.status !== UserStatus.ACTIVE) {
+            throw new BadRequestException('The new responsible user is invalid or inactive.');
+        }
+
+        return this.prisma.planning.update({
+            where: { id: planning.id },
+            data: { responsibleId: dto.newResponsibleId },
+        });
     }
 
     // =========================================================================

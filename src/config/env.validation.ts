@@ -15,6 +15,10 @@ export const validationSchema = Joi.object({
     PORT: Joi.number().default(4803),
     CORS_ORIGIN: Joi.string(),
     FRONTEND_URL: Joi.string(),
+    // SECURITY FIX (audit #4): number of trusted reverse-proxy hops in front of this app (see
+    // `main.ts`'s `app.set('trust proxy', ...)`). Defaults to 1 - a single Traefik hop, matching
+    // `deploy/docker-compose.prod.yml`. Raise it only if another trusted hop is added in front.
+    TRUST_PROXY_HOPS: Joi.number().default(1),
 
     // --- DATABASES (POSTGRES & REDIS) ---
     DATABASE_URL: Joi.string().required(),
@@ -99,6 +103,12 @@ export const validationSchema = Joi.object({
     // --- DATABASE BACKUPS (see src/backup/) ---
     BACKUP_OUTPUT_DIR: Joi.string().default('backups'),
     BACKUP_TIMEOUT_MS: Joi.number().default(600000),
+    // SECURITY FIX (audit #6 - elevated): dumps produced by `POST /backup/platforms` that are
+    // never downloaded (no route existed at all to download them before this fix - see
+    // `BackupController.download()`) used to accumulate on disk forever. `CleanupService` now
+    // purges any `.sql.gz` dump older than this many hours as a backstop, regardless of whether
+    // it was ever claimed - see `CleanupService.cleanupBackupDumps()`.
+    BACKUP_DUMP_RETENTION_HOURS: Joi.number().default(48),
 
     // --- SEED / SYSTEM OWNER IDENTITY ---
     OWNER_WORKEMAIL: Joi.string().email().required(),

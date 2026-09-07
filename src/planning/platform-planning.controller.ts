@@ -3,6 +3,7 @@ import { PlanningService } from './planning.service';
 import { CreatePlanningEntryDto } from './dto/create-planning-entry.dto';
 import { UpdatePlanningEntryDto } from './dto/update-planning-entry.dto';
 import { AddAssigneeDto } from './dto/add-assignee.dto';
+import { ReassignResponsibleDto } from './dto/reassign-responsible.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
@@ -52,6 +53,27 @@ export class PlatformPlanningController {
     ) {
         // Coerce the optional query string to a boolean value expected by the service layer
         return this.planningService.listPlatformEntries(actor, platformId, assignedToMe === 'true');
+    }
+
+    /**
+     * SECURITY FIX (audit #1/#5 follow-up): reassigns the platform planning's "responsible"
+     * user to someone else. See `PlanningService.reassignResponsible()` for the full rationale -
+     * this is what lets an admin resolve `UsersService.hardDeleteUser()`'s pre-check when the
+     * account being deleted is still a planning's responsible party.
+     *
+     * IMPORTANT: this literal route MUST be registered before `@Patch(':id')` below - Nest
+     * (via Express) matches routes in registration order, so if `:id` came first, a request to
+     * `.../planning/responsible` would incorrectly be captured by `update()` with `id`
+     * literally set to the string `"responsible"`.
+     * * @route PATCH /platforms/:platformId/planning/responsible
+     */
+    @Patch('responsible')
+    reassignResponsible(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Body() dto: ReassignResponsibleDto,
+    ) {
+        return this.planningService.reassignResponsible(actor, platformId, dto);
     }
 
     /**

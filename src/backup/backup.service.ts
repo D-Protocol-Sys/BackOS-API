@@ -1,4 +1,4 @@
-import { Injectable, Logger, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
@@ -113,6 +113,56 @@ export class BackupService {
         }
 
         return { succeeded, failed };
+    }
+
+    /**
+     * SECURITY FIX (audit #6 - elevated): resolves a bare dump filename (as returned by
+     * `dumpAllPlatformDatabases()`) to its absolute path on disk, for use by the new
+     * `GET /backup/download` route.
+     *
+     * `dumpAllPlatformDatabases()` deliberately returns only `fileName` in its JSON response
+     * now (not the absolute server-side `filePath`) - not just to avoid leaking the server's
+     * filesystem layout, but because it lets this method safely re-derive and validate the path
+     * itself instead of trusting a client-supplied absolute path. The resolved path is checked
+     * to stay strictly inside `BACKUP_OUTPUT_DIR` (defeats `../` traversal or an absolute-path
+     * override smuggled into `fileName`), and to look like a dump this service would actually
+     * have produced (`.sql.gz` suffix) - so this can't be turned into an arbitrary-file-read
+     * primitive off the back of the download route.
+     *
+     * @param fileName - Bare filename (no directory components), e.g. as returned by
+     *   `dumpAllPlatformDatabases()`.
+     * @throws BadRequestException if `fileName` is not a plausible dump filename.
+     * @throws NotFoundException if the resolved file does not exist on disk.
+     */
+    resolveDumpPath(fileName: string): string {
+        // Reject anything containing a path separator outright - a bare filename should never
+        // need one, and this is the cheapest way to stop `../../etc/passwd`-style traversal
+        // before path.join/resolve ever gets a chance to normalize it away.
+        if (
+            !fileName ||
+            fileName.includes('/') ||
+            fileName.includes('\\') ||
+            !/^[a-zA-Z0-9-_]+\.sql\.gz$/.test(fileName)
+        ) {
+            throw new BadRequestException('Invalid dump file name.');
+        }
+
+        const outputDir = this.resolveOutputDir();
+        const resolvedPath = path.resolve(outputDir, fileName);
+
+        // Defense in depth: even though the filename pattern above already rules out
+        // traversal, re-verify the resolved absolute path is still contained within the
+        // configured output directory before ever touching the filesystem with it.
+        const relative = path.relative(outputDir, resolvedPath);
+        if (relative.startsWith('..') || path.isAbsolute(relative)) {
+            throw new BadRequestException('Invalid dump file name.');
+        }
+
+        if (!fs.existsSync(resolvedPath)) {
+            throw new NotFoundException('Dump file not found (it may have already been downloaded, or purged by retention cleanup).');
+        }
+
+        return resolvedPath;
     }
 
     /**

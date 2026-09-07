@@ -159,6 +159,36 @@ export class RoleHierarchyService {
     }
 
     /**
+     * SECURITY FIX (audit #13 - medium): asserts that an acting user has sufficient hierarchy
+     * level to delete a given role.
+     *
+     * `RolesService.delete()` previously checked only that the role was non-system and had no
+     * remaining user assignments - unlike `create`, `update`'s implicit checks, and
+     * `assignRole`/`replacePermissions`, it never verified the actor's own rank against the
+     * role being deleted. That meant a holder of `ROLES_DELETE` with a numerically weaker
+     * (higher) level than a role could still delete that role's *definition*, as long as no one
+     * currently held it - a narrow but real inconsistency in an otherwise carefully-guarded
+     * hierarchy model. This mirrors the same Rule #1 check already used by `assertCanGrantRole`.
+     *
+     * @param actorUserId - User attempting to delete the role.
+     * @param roleId - Target role ID.
+     * @throws NotFoundException if the role does not exist.
+     * @throws ForbiddenException if the actor's rank is not strictly senior to the role's.
+     */
+    async assertCanDeleteRole(actorUserId: string, roleId: string): Promise<void> {
+        const actorLevel = await this.getBestLevel(actorUserId);
+        const role = await this.prisma.role.findUnique({ where: { id: roleId } });
+
+        if (!role) throw new NotFoundException('Role not found.');
+
+        if (actorLevel === null || actorLevel >= role.level) {
+            throw new ForbiddenException(
+                'Cannot delete a role of equal or higher rank than yourself.',
+            );
+        }
+    }
+
+    /**
      * Asserts that an acting user has sufficient authority to create a new system role at a specified level.
      * * @param actorUserId - User creating the new role.
      * @param level - Numerical rank assigned to the new role being created.

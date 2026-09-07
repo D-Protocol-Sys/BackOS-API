@@ -1,4 +1,4 @@
-import { Controller, Post, Param, Res, NotFoundException, UseGuards } from '@nestjs/common';
+import { Controller, Post, Get, Param, Query, Res, NotFoundException, UseGuards } from '@nestjs/common';
 import type { Response } from 'express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
@@ -6,6 +6,7 @@ import * as fs from 'fs';
 import { BackupService } from './backup.service';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
+import { buildContentDisposition } from '../common/utils/content-disposition.util';
 
 /**
  * Admin-only endpoints to export ("dump") a database to a downloadable, gzip-compressed SQL
@@ -59,15 +60,38 @@ export class BackupController {
      * summary (what succeeded, what failed and why, and the size of each dump) so a script or
      * an admin can decide what to do next, rather than tying up the HTTP response streaming an
      * arbitrarily large multi-file payload.
+     *
+     * SECURITY FIX (audit #6 - elevated): previously returned each dump's absolute server-side
+     * `filePath`, with NO route anywhere that accepted it to actually download (or clean up)
+     * the file - `streamAndCleanup()` was only ever wired to the single-platform/orchestrator
+     * routes. That meant every call here left N `.sql.gz` files (each a full, unfiltered export
+     * of a platform's database) accumulating on disk indefinitely, discoverable only by
+     * directly accessing the server's filesystem. This now returns just `fileName` (see
+     * `download()` below, and `BackupService.resolveDumpPath()` for why a bare name rather than
+     * a path), and `CleanupService` now purges any dump left unclaimed past a retention window
+     * (see `cleanup.service.ts`) as a backstop for dumps nobody ever downloads.
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Post('platforms')
     async dumpAllPlatforms() {
         const { succeeded, failed } = await this.backupService.dumpAllPlatformDatabases();
         return {
-            dumps: succeeded.map((d) => ({ fileName: d.fileName, filePath: d.filePath, sizeBytes: d.sizeBytes, createdAt: d.createdAt })),
+            dumps: succeeded.map((d) => ({ fileName: d.fileName, sizeBytes: d.sizeBytes, createdAt: d.createdAt })),
             failures: failed,
         };
+    }
+
+    /**
+     * Downloads (and then deletes) a dump file previously produced by `dumpAllPlatforms()`.
+     * SECURITY FIX (audit #6): this is the missing route referenced above - `fileName` is
+     * strictly validated and re-resolved server-side by `BackupService.resolveDumpPath()`
+     * (never trusted as a raw path), so this cannot be used to read arbitrary files off disk.
+     */
+    @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
+    @Get('download')
+    async download(@Query('fileName') fileName: string, @Res() res: Response) {
+        const filePath = this.backupService.resolveDumpPath(fileName);
+        await this.streamAndCleanup(filePath, fileName, res);
     }
 
     /**
@@ -82,7 +106,9 @@ export class BackupController {
 
         res.set({
             'Content-Type': 'application/gzip',
-            'Content-Disposition': `attachment; filename="${encodeURIComponent(fileName)}"`,
+            // SECURITY/CORRECTNESS FIX (audit #16): RFC 5987-compliant filename encoding -
+            // see `buildContentDisposition()`'s doc comment.
+            'Content-Disposition': buildContentDisposition(fileName),
             'X-Content-Type-Options': 'nosniff',
         });
 

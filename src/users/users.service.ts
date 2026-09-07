@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import type { AuditContext } from '../audit/audit-log.service';
 import { RoleHierarchyService } from '../common/services/role-hierarchy.service';
 import { CreateUserDto } from './dto/create-user.dto';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
@@ -791,7 +792,8 @@ export class UsersService {
      * * @param actorUserId - ID of the actor initiating deletion.
      * @param userId - Target user ID to permanently erase.
      * @returns Confirmation payload upon successful deletion.
-     * @throws ConflictException if the target user still owns active platforms.
+     * @throws ConflictException if the target user still owns active platforms, is still the
+     *   responsible party of a Planning, or has created PlanningEntry records.
      * @throws ForbiddenException if attempting to hard delete the last owner.
      */
     async hardDeleteUser(actorUserId: string, userId: string) {
@@ -812,6 +814,35 @@ export class UsersService {
             );
         }
 
+        // SECURITY FIX (audit #1 follow-up - critical): `Planning.responsible` is now
+        // `onDelete: SetNull` (see `schema.prisma`), so this is no longer a data-destruction
+        // risk - but silently orphaning a team's planning (no one responsible for it) on
+        // account deletion is still a bad outcome worth preventing up front. Mirrors the
+        // `platformOwned` check above; resolved via `PlanningService.reassignResponsible()`
+        // (`PATCH /platforms/:platformId/planning/responsible`).
+        const responsibleForCount = await this.prisma.planning.count({
+            where: { responsibleId: userId },
+        });
+        if (responsibleForCount > 0) {
+            throw new ConflictException(
+                'Please reassign responsibility for your team planning(s) before deleting this account.',
+            );
+        }
+
+        // SECURITY FIX (audit #5 - elevated): `PlanningEntry.creatorId` is required with no
+        // explicit `onDelete` (defaults to `Restrict`), so deletion used to fail deep inside
+        // Prisma with an opaque, generic 409 from `AllExceptionsFilter` - the caller had no way
+        // to know *why*. This replicates the same explicit, actionable pre-check already used
+        // for `platformOwned` above, for the exact same class of problem.
+        const createdEntriesCount = await this.prisma.planningEntry.count({
+            where: { creatorId: userId },
+        });
+        if (createdEntriesCount > 0) {
+            throw new ConflictException(
+                'This account has created planning items (tasks/events) that must be reassigned or removed before it can be deleted.',
+            );
+        }
+
         await this.assertNotProtectedOwner(userId, 'delete');
 
         await this.auditLog.log({
@@ -824,6 +855,29 @@ export class UsersService {
         await this.prisma.user.delete({ where: { id: userId } });
 
         return { message: 'Account permanently deleted.' };
+    }
+
+    /**
+     * SECURITY FIX (audit #3 - elevated): self-service account deletion entry point, now
+     * requiring a fresh "step-up" TOTP code before the irreversible `hardDeleteUser()` call.
+     *
+     * Previously `DELETE /users/me` called `hardDeleteUser()` directly off the strength of the
+     * caller's access token alone. Since this system is passwordless (identifier + TOTP only),
+     * that token is the ONLY thing standing between an attacker and permanently destroying the
+     * victim's account for up to 15 minutes after it was issued - e.g. if intercepted via XSS,
+     * a compromised device, or a proxy log. Requiring a fresh TOTP code here (delegated to
+     * `AuthService.verifyStepUpTotp()`) closes that window without introducing a password.
+     *
+     * @param userId - The authenticated user requesting to delete their own account.
+     * @param totpCode - Fresh 6-digit TOTP code proving current possession of the MFA device.
+     * @param context - Audit metadata (IP address, user agent) for the security audit trail.
+     * @throws UnauthorizedException if the supplied TOTP code is invalid (via
+     *   `AuthService.verifyStepUpTotp()`).
+     * @throws ConflictException / ForbiddenException - see `hardDeleteUser()`.
+     */
+    async deleteOwnAccount(userId: string, totpCode: string, context: AuditContext) {
+        await this.authService.verifyStepUpTotp(userId, totpCode, context);
+        return this.hardDeleteUser(userId, userId);
     }
 
     // ---- Private Helpers ----

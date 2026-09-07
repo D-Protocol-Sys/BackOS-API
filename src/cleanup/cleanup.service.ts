@@ -2,6 +2,8 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
 import { GenerationStatus, Prisma } from '@prismamodels/client';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -35,11 +37,12 @@ export class CleanupService {
         totalDeleted += await this.cleanupRefreshTokens();
         totalDeleted += await this.cleanupRecoveryCodes();
         totalDeleted += await this.cleanupGenerations();
+        totalDeleted += await this.cleanupBackupDumps();
 
         const durationMs = Date.now() - startedAt;
         this.logger.log(
             `Daily cleanup completed successfully. ` +
-            `${totalDeleted} record(s) deleted in ${durationMs}ms.`,
+            `${totalDeleted} record(s)/file(s) deleted in ${durationMs}ms.`,
         );
     }
 
@@ -227,6 +230,97 @@ export class CleanupService {
             this.logCleanupError('generations', error);
             return 0;
         }
+    }
+
+    /**
+     * SECURITY FIX (audit #6 - elevated): purges stale database dump files (`.sql.gz`) left on
+     * disk under `BACKUP_OUTPUT_DIR` by `POST /backup/platforms`.
+     *
+     * Before this fix, `BackupController.dumpAllPlatforms()` had no download route at all -
+     * every dump it produced stayed on disk forever, with no application-level inventory or
+     * limit (see `BackupService`/`BackupController` for the accompanying fix that added
+     * `GET /backup/download`). This method is the backstop for the case a dump is produced but
+     * never actually downloaded (script failure, admin forgets, etc.) - it is a disk-space and
+     * data-retention safety net, not the primary cleanup path (a successful download already
+     * deletes its own file immediately via `BackupController`'s `streamAndCleanup()`).
+     *
+     * Deliberately scans the filesystem rather than a database table, since dumps are files,
+     * not rows - there is no `BackupDump` model to query. Only files matching the exact naming
+     * pattern this service produces (`<label>_<timestamp>.sql.gz`) are ever touched, so this
+     * can't accidentally delete an unrelated file that happens to live in the same directory.
+     * * @returns The count of deleted dump files.
+     */
+    private async cleanupBackupDumps(): Promise<number> {
+        try {
+            const retentionHours = this.getPositiveIntegerConfig(
+                'BACKUP_DUMP_RETENTION_HOURS',
+                48,
+            );
+            const outputDir = this.resolveBackupOutputDir();
+            const cutoffMs = Date.now() - retentionHours * 60 * 60 * 1000;
+
+            let entries: string[];
+            try {
+                entries = await fs.readdir(outputDir);
+            } catch (error) {
+                // Directory not existing yet (no dump has ever been produced) is normal, not
+                // an error - nothing to clean up.
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+                    return 0;
+                }
+                throw error;
+            }
+
+            let deletedCount = 0;
+
+            for (const entry of entries) {
+                // Only ever touch files this service itself could have produced - see
+                // `BackupService.sanitizeLabel()` / `resolveDumpPath()` for the matching
+                // filename contract on the write/download side.
+                if (!/^[a-zA-Z0-9-_]+\.sql\.gz$/.test(entry)) {
+                    continue;
+                }
+
+                const fullPath = path.join(outputDir, entry);
+
+                try {
+                    const stats = await fs.stat(fullPath);
+                    if (stats.birthtimeMs < cutoffMs) {
+                        await fs.unlink(fullPath);
+                        deletedCount++;
+                    }
+                } catch (error) {
+                    // A file disappearing between readdir and stat/unlink (e.g. concurrently
+                    // downloaded and self-cleaned by BackupController) is not a failure.
+                    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+                        throw error;
+                    }
+                }
+            }
+
+            if (deletedCount > 0) {
+                this.logger.log(
+                    `Backup dump cleanup: ${deletedCount} unclaimed dump file(s) deleted.`,
+                );
+            } else {
+                this.logger.debug('Backup dump cleanup: nothing to delete.');
+            }
+
+            return deletedCount;
+        } catch (error) {
+            this.logCleanupError('backup dumps', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Resolves `BACKUP_OUTPUT_DIR` the same way `BackupService.resolveOutputDir()` does
+     * (relative paths are resolved against the process working directory), so this cleans up
+     * exactly the directory dumps are actually written to.
+     */
+    private resolveBackupOutputDir(): string {
+        const configured = this.configService.get<string>('BACKUP_OUTPUT_DIR', 'backups');
+        return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
     }
 
     /**

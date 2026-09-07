@@ -9,6 +9,7 @@ import { multerOptions } from './multer.config';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as fs from 'fs';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { buildContentDisposition } from '../common/utils/content-disposition.util';
 
 /**
  * Type representing the authenticated user extracted from request context.
@@ -80,12 +81,15 @@ export class FilesController {
         /*
          * 3. Set Security & Content HTTP Headers:
          * - Content-Type: Serves the file with its native MIME type.
-         * - Content-Disposition: Forces browser download ("attachment") and escapes original filename.
+         * - Content-Disposition: Forces browser download ("attachment").
+         *   SECURITY/CORRECTNESS FIX (audit #16): now built via `buildContentDisposition()`,
+         *   which emits the RFC 5987-compliant `filename*=UTF-8''...` form alongside a plain
+         *   ASCII fallback, instead of relying solely on a bare `encodeURIComponent()`d name.
          * - X-Content-Type-Options: "nosniff" stops browsers from executing non-JS files as code.
          */
         res.set({
             'Content-Type': file.mimeType,
-            'Content-Disposition': `attachment; filename="${encodeURIComponent(file.originalName)}"`,
+            'Content-Disposition': buildContentDisposition(file.originalName),
             'X-Content-Type-Options': 'nosniff',
         });
 

@@ -30,6 +30,16 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
 
     /**
      * Callback invoked automatically by Passport once the JWT signature and expiration are verified.
+     *
+     * KNOWN LIMITATION (audit #14 - minor, documented rather than "fixed"): this trusts the
+     * JWT's signature and expiration alone - it does not re-check in the database that the user
+     * is still `ACTIVE`. Suspending a user therefore does not revoke their already-issued access
+     * token; it remains usable for up to its 15-minute lifetime. This is a common, reasonable
+     * tradeoff for a stateless-JWT design given that short expiry, but is recorded here
+     * explicitly as a conscious tradeoff rather than an oversight. If a stronger guarantee is
+     * ever needed for specific highly sensitive actions, add a targeted DB status check at the
+     * point of use (as `AuthService.verifyStepUpTotp()` already does for account deletion)
+     * rather than paying that DB round-trip cost on every single authenticated request.
      * * @param payload - The decoded JSON payload contained within the JWT.
      * @returns An object representing the authenticated user context, which NestJS automatically attaches to `req.user`.
      */

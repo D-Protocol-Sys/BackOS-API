@@ -6,8 +6,15 @@
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   },
+  "transformIgnorePatterns": [
+    "node_modules[\\\\/]\\.pnpm[\\\\/](?!(otplib|@otplib\\+[^@]+|@scure\\+[^@]+|@noble\\+[^@]+)@)"
+  ],
   "setupFiles": ["<rootDir>/env-e2e.ts"],
   "globalSetup": "<rootDir>/global-setup-e2e.ts",
   "globalTeardown": "<rootDir>/global-teardown-e2e.ts",
-  "testTimeout": 120000
+  "testTimeout": 120000,
+  "moduleNameMapper": {
+    "^@prismamodels/(.*)$": "<rootDir>/../prisma/generated/prisma/$1",
+    "^(\\.{1,2}/.*)\\.js$": "$1"
+  }
 }

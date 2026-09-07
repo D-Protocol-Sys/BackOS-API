@@ -32,6 +32,26 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
             });
         }
 
+        // SECURITY FIX (audit #12 - medium): this used to only ever `upsert`, never removing a
+        // permission that had been deleted from the `PERMISSIONS` constant during a refactor.
+        // Those "ghost" rows had no direct authorization impact (nothing looks them up
+        // dynamically by key outside this sync), but they accumulate silently and make a future
+        // manual audit of the `permissions` table misleading - a stale row can look like a live,
+        // grantable permission. `RolePermission.permissionId` cascades on delete (see
+        // `schema.prisma`), so removing a stale `Permission` also cleanly retracts it from any
+        // role that still (incorrectly) referenced it - which is the correct outcome for a
+        // permission key that no longer exists in code.
+        const deleted = await this.prisma.permission.deleteMany({
+            where: { key: { notIn: keys } },
+        });
+
+        if (deleted.count > 0) {
+            this.logger.warn(
+                `Permission catalog purge: removed ${deleted.count} stale permission(s) no ` +
+                `longer defined in code (and revoked them from any role that still held them).`,
+            );
+        }
+
         this.logger.log(`Permission catalog successfully synchronized (${keys.length} permissions).`);
     
     }

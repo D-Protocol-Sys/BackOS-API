@@ -120,10 +120,12 @@ export class RolesService {
 
     /**
      * Deletes a custom role by ID.
-     * Prevents deletion of system roles or roles currently assigned to active users.
+     * Prevents deletion of system roles, roles currently assigned to active users, or
+     * (SECURITY FIX - audit #13) roles of equal or higher hierarchy rank than the actor.
      */
-    async delete(id: string) {
+    async delete(actorUserId: string, id: string) {
         await this.assertNotSystemRole(id, 'delete');
+        await this.roleHierarchy.assertCanDeleteRole(actorUserId, id);
 
         const assignedCount = await this.prisma.userRole.count({
             where: { roleId: id },

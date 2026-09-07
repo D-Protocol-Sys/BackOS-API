@@ -5,8 +5,10 @@ import {
     Get, 
     Param, 
     Patch, 
-    Post 
+    Post,
+    Req,
 } from '@nestjs/common';
+import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiOkResponse } from '@nestjs/swagger';
 
 import { UsersService } from './users.service';
@@ -16,10 +18,20 @@ import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 import { AssignRoleDto } from './dto/assign-role.dto';
 import { ChangeUserStatusDto } from './dto/change-status.dto';
 import { ProcessDisabledUserDto } from './dto/process-disabled-user.dto';
+import { DeleteOwnAccountDto } from './dto/delete-own-account.dto';
 
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
+
+/**
+ * Extracts request metadata (IP address and User-Agent) for security auditing - mirrors
+ * `auth.controller.ts`'s identical helper, kept local here to avoid a cross-module import for
+ * a two-line utility.
+ */
+function extractContext(req: Request) {
+    return { ipAddress: req.ip, userAgent: req.headers['user-agent'] };
+}
 
 /**
  * Controller handling self-service user profile management, administrative user lifecycle operations,
@@ -93,12 +105,21 @@ export class UsersController {
 
     /**
      * Permanently deletes the authenticated user's own account.
+     *
+     * SECURITY FIX (audit #3 - elevated): now requires a fresh TOTP "step-up" code in the
+     * request body - see `UsersService.deleteOwnAccount()` / `AuthService.verifyStepUpTotp()`
+     * for the full rationale. A bare, valid access token is no longer sufficient on its own to
+     * trigger this irreversible action.
      */
-    @ApiOperation({ summary: 'Delete own user account permanently' })
+    @ApiOperation({ summary: 'Delete own user account permanently (requires fresh TOTP code)' })
     @ApiOkResponse({ description: 'User account deleted successfully.' })
     @Delete('me')
-    deleteMe(@CurrentUser() user: { userId: string }) {
-        return this.usersService.hardDeleteUser(user.userId, user.userId);
+    deleteMe(
+        @CurrentUser() user: { userId: string },
+        @Body() dto: DeleteOwnAccountDto,
+        @Req() req: Request,
+    ) {
+        return this.usersService.deleteOwnAccount(user.userId, dto.totpCode, extractContext(req));
     }
 
     // ==========================================

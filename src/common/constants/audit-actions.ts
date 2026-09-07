@@ -21,6 +21,9 @@ export const SYSTEM_AUDIT_ACTIONS = {
     MFA_DISABLED: 'auth.mfa.disabled',
     REFRESH_TOKEN_CREATED: 'auth.refresh-token.created',
     REFRESH_TOKEN_REVOKED: 'auth.refresh-token.revoked',
+    // SECURITY FIX (audit #3): step-up re-authentication failure, e.g. a wrong TOTP code
+    // supplied when confirming a destructive self-service action such as `DELETE /users/me`.
+    STEP_UP_FAILED: 'auth.step-up.failed',
 
     // User
     USERS_REACTIVATE: 'users.reactivate',
@@ -71,6 +74,7 @@ export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.MFA_DISABLED]: 'Multi-Factor Authentication was disabled for an account',
     [SYSTEM_AUDIT_ACTIONS.REFRESH_TOKEN_CREATED]: 'A new refresh token was issued',
     [SYSTEM_AUDIT_ACTIONS.REFRESH_TOKEN_REVOKED]: 'A refresh token was explicitly revoked',
+    [SYSTEM_AUDIT_ACTIONS.STEP_UP_FAILED]: 'A step-up re-authentication attempt for a destructive action failed',
 
     [SYSTEM_AUDIT_ACTIONS.USERS_REACTIVATE]: 'Reactivate a user',
     [SYSTEM_AUDIT_ACTIONS.USERS_DISABLE]: 'Disable a user',

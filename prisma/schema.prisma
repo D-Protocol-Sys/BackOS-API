@@ -233,8 +233,9 @@ model UserProfile {
 
 model UserStatusHistory {
   id             String             @id @default(uuid())
-  userId         String
-  user           User               @relation("UserStatusHistorySubject", fields: [userId], references: [id], onDelete: Cascade)
+
+  userId         String?
+  user           User?              @relation("UserStatusHistorySubject", fields: [userId], references: [id], onDelete: SetNull)
 
   previousStatus UserStatus?
   newStatus      UserStatus
@@ -620,7 +621,16 @@ model Planning {
   timezone      String         @default("Europe/Paris")
 
   responsibleId String?
-  responsible   User?          @relation("PlanningResponsible", fields: [responsibleId], references: [id], onDelete: Cascade)
+  // SECURITY FIX (audit #1 - critical): this was previously `onDelete: Cascade`, which meant
+  // deleting the "responsible" user - including via the self-service `DELETE /users/me` route,
+  // available to any authenticated user with no special permission - silently destroyed the
+  // ENTIRE Planning (and, by further cascade, every PlanningEntry and PlanningMember belonging
+  // to OTHER users on that team). `responsibleId` is optional, so `SetNull` is both safe and
+  // consistent with the field's own nullability: the planning and its history now survive,
+  // simply losing its responsible assignment, which `PlanningService.reassignResponsible()`
+  // (or `UsersService.hardDeleteUser()`'s pre-check, see that method's comment) is expected to
+  // resolve going forward.
+  responsible   User?          @relation("PlanningResponsible", fields: [responsibleId], references: [id], onDelete: SetNull)
 
   platformId    String?        @unique
   platform      Platform?      @relation("PlatformPlanning", fields: [platformId], references: [id], onDelete: Cascade)
@@ -670,6 +680,12 @@ model PlanningEntry {
   projectId   String?
   project     Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
+  // SECURITY FIX (audit #5 - elevated): `creatorId` is required with no explicit `onDelete`,
+  // so Prisma defaults to `Restrict` - deleting a user who has created even one PlanningEntry
+  // used to fail with an opaque, generic 409 (`AllExceptionsFilter` swallowing Prisma's `P2003`
+  // into a message that gave the caller no idea why). `UsersService.hardDeleteUser()` now
+  // pre-checks this explicitly - the same pattern already used for `platformOwned` - and raises
+  // a clear, actionable error instead of relying on the database constraint to surface it.
   creatorId   String
   creator     User                @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
 

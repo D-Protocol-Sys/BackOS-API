@@ -25,6 +25,25 @@ async function bootstrap() {
 
     const configService = app.get(ConfigService);
 
+    // SECURITY FIX (audit #4 - elevated): `deploy/docker-compose.prod.yml` places this
+    // application behind Traefik, but Express (underlying Nest's HTTP layer) does not trust
+    // `X-Forwarded-For` by default. Without this, `req.ip` resolves to Traefik's own container
+    // IP for every single request, which silently breaks two security-relevant systems that
+    // depend on the real client IP:
+    //   1. `ThrottlerGuard` (per-IP rate limiting on /auth/login, /auth/mfa/confirm, file
+    //      uploads, backups, ...) - all traffic would appear to share one IP, so the entire
+    //      user base would share a single quota instead of each client being limited
+    //      individually.
+    //   2. `AuditLogService` - every login/failed-login/lockout audit entry would record the
+    //      same internal proxy IP, making the log useless for investigating a real brute-force
+    //      source after the fact.
+    // `TRUST_PROXY_HOPS` lets the exact number of trusted reverse-proxy hops be tuned per
+    // deployment (Express's `trust proxy` setting - see http://expressjs.com/en/guide/behind-proxies.html);
+    // it defaults to `1`, matching the single-Traefik-hop topology in `docker-compose.prod.yml`.
+    // Traefik forwards `X-Forwarded-For` by default, so no Traefik-side change is required.
+    const trustProxyHops = configService.get<number>('TRUST_PROXY_HOPS', 1);
+    app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
+
     app.use(helmet());
 
     app.enableCors({

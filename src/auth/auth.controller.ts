@@ -55,8 +55,15 @@ export class AuthController {
 
     /**
      * Consumes an invitation token and initial verification code to begin onboarding.
+     *
+     * SECURITY FIX (audit #15 - minor): previously inherited the controller-wide default
+     * throttle (20 req/min). This accepts a 6-digit code exactly like `mfa/confirm`/`login`,
+     * so it now shares their tighter, 8 req/min budget - the per-attempt lockout
+     * (`maxAttempts: 5` on `Invitation`) already limited real risk, but the rate-limit policy
+     * itself should be consistent across routes of comparable sensitivity.
      */
     @Public()
+    @Throttle({ default: { limit: 8, ttl: 60_000 } })
     @Post('invitation/consume')
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Consume an invitation link and verification code' })
