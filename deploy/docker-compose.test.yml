@@ -1,0 +1,98 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: EPHEMERAL E2E TEST ENVIRONMENT
+# Purpose: Ultra-fast, isolated infrastructure dedicated exclusively to automated 
+#          end-to-end test execution (e.g., via Playwright/Jest global setup).
+# Key Features:
+#   - In-memory database storage (tmpfs) for maximum I/O performance and auto-cleanup.
+#   - Loopback interface binding (127.0.0.1) preventing network port exposure.
+#   - Fast-polling healthchecks optimized for rapid automated pipeline startup.
+#   - Lightweight setup running strictly required data/cache layers.
+# ==============================================================================
+
+version: "3.8"
+
+# ------------------------------------------------------------------------------
+# NETWORKS
+# Dedicated network isolating testing containers from other Docker stacks.
+# ------------------------------------------------------------------------------
+networks:
+  # Ephemeral isolated bridge network for test service instances
+  test:
+    name: ${PROJECT_NAME}-test
+    driver: bridge              # Software bridge local to the host
+
+# ------------------------------------------------------------------------------
+# SERVICES
+# ------------------------------------------------------------------------------
+services:
+
+  # ----------------------------------------------------------------------------
+  # Test Database Service: PostgreSQL 16
+  # ----------------------------------------------------------------------------
+  postgres-test:
+    image: postgres:16-alpine    # Lightweight distribution for fast pull and startup
+    container_name: ${PROJECT_NAME}-test-postgres
+    restart: unless-stopped
+    environment:
+      # Default fallback credentials tailored for local development & test execution
+      POSTGRES_USER: ${POSTGRES_USER:-app_test}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-app_test}
+      POSTGRES_DB: ${POSTGRES_DB:-app_test}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE:-app_provisioner}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD:-app_provisioner_test}
+      
+    # Binds port exclusively to local localhost interface (127.0.0.1) to avoid public exposure
+    ports:
+      - "127.0.0.1:${POSTGRES_TEST_PORT:-5433}:5432"
+      
+    volumes:
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro # Mounts initialization scripts read-only
+      
+    # High-Performance Feature: Mounts PostgreSQL data directly into host RAM
+    tmpfs:
+      - /var/lib/postgresql/data # Bypasses disk write latencies; automatically wiped on shutdown
+      
+    networks:
+      - test
+      
+    healthcheck:
+      # Aggressive polling interval (3s) to allow test suites to start as quickly as possible
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-app_test}"]
+      interval: 3s               # Checks readiness every 3 seconds
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+  # ----------------------------------------------------------------------------
+  # Test Cache & In-Memory Store: Redis 7
+  # ----------------------------------------------------------------------------
+  redis-test:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-test-redis
+    restart: unless-stopped
+    
+    # Binds custom Redis test port strictly to loopback interface
+    ports:
+      - "127.0.0.1:${REDIS_TEST_PORT:-6380}:6379"
+      
+    networks:
+      - test
+      
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+      start_period: 3s
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M

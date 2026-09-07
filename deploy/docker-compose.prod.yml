@@ -1,0 +1,168 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: PRODUCTION ENVIRONMENT
+# Purpose: Core live production stack running mission-critical application logic
+#          and persisting real-world user data.
+# Key Features:
+#   - High availability guarantees via strict container health dependencies.
+#   - Dynamic reverse proxy routing through Traefik with TLS termination.
+#   - Hardened security profile (capability drop, no privilege escalation).
+#   - Scaled hardware resources and extended log retention policies.
+# ==============================================================================
+
+version: "3.8"
+
+# ------------------------------------------------------------------------------
+# NETWORKS
+# Enforces strict isolation between public ingress and backend persistence layers.
+# ------------------------------------------------------------------------------
+networks:
+  # Shared public-facing network managed by Traefik edge proxy
+  edge:
+    name: ${PROJECT_NAME}-edge
+    external: true              # Connects to pre-existing edge network
+
+  # Private internal network isolated from external access
+  internal:
+    name: ${PROJECT_NAME}-prod-internal
+    driver: bridge              # Private Linux bridge network on the host
+
+# ------------------------------------------------------------------------------
+# VOLUMES
+# Storage definitions for production database persistence.
+# ------------------------------------------------------------------------------
+volumes:
+  # Named volume storing primary production database files securely on the host
+  postgres_data:
+    name: ${PROJECT_NAME}-prod-postgres-data
+
+# ------------------------------------------------------------------------------
+# SERVICES
+# Main stack components for the production runtime.
+# ------------------------------------------------------------------------------
+services:
+
+  # ----------------------------------------------------------------------------
+  # Database Service: PostgreSQL 16
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine    # Alpine-based image for minimal vulnerability footprint
+    container_name: ${PROJECT_NAME}-prod-postgres
+    restart: unless-stopped      # Ensures persistence across host reboots
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data            # Mounts persistent volume
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro # Mounts read-only init scripts
+    networks:
+      - internal                 # Internal network only (No exposed database ports)
+    healthcheck:
+      # Verifies PostgreSQL socket readiness before allowing dependent services to start
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"           # Allocated CPU allocation for production workloads
+          memory: 1G             # Guaranteed memory limit for production query execution
+
+  # ----------------------------------------------------------------------------
+  # Cache & In-Memory Store: Redis 7
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-prod-redis
+    restart: unless-stopped
+    # Enables Append-Only File (AOF) logging to prevent data loss on container restarts
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+
+  # ----------------------------------------------------------------------------
+  # Core Service: Application Orchestrator
+  # ----------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime            # Uses optimized production build stage
+    image: ${PROJECT_NAME}-orchestrator:${IMAGE_TAG:-latest}
+    container_name: ${PROJECT_NAME}-prod-orchestrator
+    restart: unless-stopped
+    
+    # Ensures database and cache pass healthchecks prior to launching orchestrator
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        
+    env_file:
+      - ../.env.production        # Production-specific environment configuration
+    environment:
+      DOCKER_HOST: tcp://${PROJECT_NAME}-edge-docker-proxy:2375
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PROVISION_HOST: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GENERATED_BACKEND_DOCKER_DB_HOST: postgres
+      GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-prod-postgres
+      GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-prod-gen-net
+      GENERATED_PROJECTS_ROOT: ${GENERATED_PROJECTS_HOST_PATH}
+    volumes:
+      - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
+    networks:
+      - edge                     # Public routing access via Traefik
+      - internal                 # Private communication with database and cache
+    labels:
+      # Dynamic HTTP/HTTPS Routing Configuration via Traefik
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROJECT_NAME}-edge"
+      - "traefik.http.routers.${PROJECT_NAME}-prod.rule=Host(`${PROD_DOMAIN}`)"
+      - "traefik.http.routers.${PROJECT_NAME}-prod.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT_NAME}-prod.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${PROJECT_NAME}-prod.loadbalancer.server.port=4803"
+      
+    # Security Hardening Protocol
+    security_opt:
+      - "no-new-privileges:true" # Prevents processes inside container from gaining host root rights
+    cap_drop:
+      - ALL                      # Drops all Linux kernel capabilities to minimize exploit scope
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "2.00"           # Scaled CPU capacity for production traffic
+          memory: 2G             # Scaled RAM memory allocation
+          
+    healthcheck:
+      # Internal application status validation endpoint call via Node fetch API
+      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+      
+    logging:
+      # Application log rotation settings
+      driver: json-file
+      options:
+        max-size: "10m"          # Maximum log file size before rotation
+        max-file: "5"            # Preserves up to 5 historical log files for audit trails

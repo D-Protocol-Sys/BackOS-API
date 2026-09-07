@@ -1,0 +1,167 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: DEMO / PRESENTATION ENVIRONMENT
+# Purpose: Isolated, production-grade infrastructure for external product demos.
+# Key Features:
+#   - Functional parity with production using identical runtime images.
+#   - Automatic population of read-only demo seed data (RUN_DEMO_SEED=1).
+#   - Dynamic HTTP/TLS ingress routing via Traefik reverse proxy.
+# ==============================================================================
+
+version: "3.8"
+
+# ------------------------------------------------------------------------------
+# NETWORKS
+# Isolates external public entry points from internal container communication.
+# ------------------------------------------------------------------------------
+networks:
+  # External network managed by reverse proxy (Traefik) for public ingress
+  edge:
+    name: ${PROJECT_NAME}-edge
+    external: true              # Connects to an existing Traefik proxy network
+
+  # Private bridge network dedicated strictly to database and cache access
+  internal:
+    name: ${PROJECT_NAME}-demo-internal
+    driver: bridge              # Creates an isolated software bridge on the host
+
+# ------------------------------------------------------------------------------
+# VOLUMES
+# Manages persistent storage independent of container lifecycles.
+# ------------------------------------------------------------------------------
+volumes:
+  # Named volume ensuring PostgreSQL database data survives container restarts
+  postgres_data:
+    name: ${PROJECT_NAME}-demo-postgres-data
+
+# ------------------------------------------------------------------------------
+# SERVICES
+# Defines containerized components composing the demo application stack.
+# ------------------------------------------------------------------------------
+services:
+
+  # ----------------------------------------------------------------------------
+  # Database Service: PostgreSQL 16
+  # ----------------------------------------------------------------------------
+  postgres:
+    image: postgres:16-alpine    # Lightweight Linux distribution reducing image footprint
+    container_name: ${PROJECT_NAME}-demo-postgres
+    restart: unless-stopped      # Automatically restarts container unless explicitly stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data            # Mounts persistent data directory
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro # Mounts read-only initialization scripts
+    networks:
+      - internal                 # Restricts network traffic to the private internal bridge
+    healthcheck:
+      # Verifies database readiness before dependent services attempt connection
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s          # Grace period for database initialization
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"           # Restricts container CPU consumption to 0.5 cores
+          memory: 512M           # Hard memory ceiling to prevent OOM errors on host
+
+  # ----------------------------------------------------------------------------
+  # Cache & In-Memory Store: Redis 7
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-demo-redis
+    restart: unless-stopped
+    # Enables Append-Only File (AOF) persistence and sets authentication password
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 256M
+
+  # ----------------------------------------------------------------------------
+  # Core Service: Application Orchestrator
+  # ----------------------------------------------------------------------------
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime            # Multi-stage Dockerfile target to keep runtime slim
+    image: ${PROJECT_NAME}-orchestrator:${IMAGE_TAG:-latest}
+    container_name: ${PROJECT_NAME}-demo-orchestrator
+    restart: unless-stopped
+    
+    # Ensures database and cache services are HEALTHY before starting app container
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+        
+    env_file:
+      - ../.env.demo              # Loads environment configuration variables
+    environment:
+      DOCKER_HOST: tcp://${PROJECT_NAME}-edge-docker-proxy:2375
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PROVISION_HOST: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GENERATED_BACKEND_DOCKER_DB_HOST: postgres
+      GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-demo-postgres
+      GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-demo-gen-net
+      GENERATED_PROJECTS_ROOT: ${GENERATED_PROJECTS_HOST_PATH}
+      RUN_DEMO_SEED: 1            # Triggers automated population of demo data on startup
+    volumes:
+      - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
+    networks:
+      - edge                     # Connected to external proxy network for web traffic
+      - internal                 # Connected to private network for database/cache communication
+    labels:
+      # Traefik Reverse Proxy Configuration
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROJECT_NAME}-edge"
+      - "traefik.http.routers.${PROJECT_NAME}-demo.rule=Host(`${DEMO_DOMAIN}`)"
+      - "traefik.http.routers.${PROJECT_NAME}-demo.entrypoints=websecure"
+      - "traefik.http.routers.${PROJECT_NAME}-demo.tls.certresolver=letsencrypt"
+      - "traefik.http.services.${PROJECT_NAME}-demo.loadbalancer.server.port=4803"
+      
+    # Security Hardening (Container Isolation Best Practices)
+    security_opt:
+      - "no-new-privileges:true" # Prevents processes from gaining additional privileges via setuid
+    cap_drop:
+      - ALL                      # Drops all Linux kernel capabilities to restrict access
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+          
+    healthcheck:
+      # Validates application health by querying HTTP endpoint via Node.js
+      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s          # Allows Node.js application startup time
+      retries: 3
+      
+    logging:
+      # Prevents container logs from consuming all available disk space
+      driver: json-file
+      options:
+        max-size: "10m"          # Rotates log file after reaching 10 megabytes
+        max-file: "3"            # Retains a maximum of 3 log files

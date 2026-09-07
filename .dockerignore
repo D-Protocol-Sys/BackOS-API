@@ -1,0 +1,15 @@
+node_modules
+dist
+coverage
+generated
+generated-test
+.git
+.github
+.env
+.env.*
+!.env.*.example
+*.log
+test
+docs
+.vscode
+.idea

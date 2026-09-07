@@ -1,0 +1,69 @@
+# ============================================================================
+# DEPENDABOT CONFIGURATION
+# This file (.github/dependabot.yml) instructs GitHub's Dependabot to 
+# automatically check for outdated dependencies and open Pull Requests (PRs).
+# ============================================================================
+
+version: 2
+updates:
+  # ============================================================================
+  # 1. Node.js Ecosystem (npm / pnpm / yarn)
+  # ============================================================================
+  - package-ecosystem: "npm"      # Package manager to monitor (npm, pnpm, yarn use "npm")
+    directory: "/"                # Location of package.json and lockfile
+    schedule:
+      interval: "weekly"          # Check frequency (daily, weekly, monthly)
+      day: "monday"               # Day of the week to run checks
+      time: "04:00"               # Scheduled time (24h format)
+      timezone: "Etc/UTC"         # Timezone reference for execution
+    open-pull-requests-limit: 10  # Maximum number of concurrent PRs allowed to prevent spam
+
+    # Group multiple updates into a single PR to reduce repository noise
+    groups:
+      nestjs:
+        patterns: ["@nestjs/*"]   # Bundles all NestJS packages into one update PR
+      dev-dependencies:
+        dependency-type: "development" # Bundles all devDependencies into one update PR
+
+    # Metadata applied automatically to generated Pull Requests
+    labels:
+      - "dependencies"
+      - "javascript"
+    
+    # Customizes commit messages for semantic versioning / Conventional Commits
+    commit-message:
+      prefix: "chore(deps)"
+
+  # ============================================================================
+  # 2. Docker Base Images
+  # ============================================================================
+  - package-ecosystem: "docker"   # Monitors base images in Dockerfiles (e.g., FROM node:22-alpine)
+    directory: "/deploy"          # Location of Dockerfiles
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "04:30"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "docker"
+    commit-message:
+      prefix: "chore(docker)"
+
+  # ============================================================================
+  # 3. GitHub Actions Workflows
+  # ============================================================================
+  - package-ecosystem: "github-actions" # Monitors GitHub Actions versions (e.g., actions/checkout@v4)
+    directory: "/"                      # Searches inside .github/workflows/
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "05:00"
+      timezone: "Etc/UTC"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "github-actions"
+    commit-message:
+      prefix: "chore(ci)"

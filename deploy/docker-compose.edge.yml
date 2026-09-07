@@ -1,0 +1,130 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: EDGE / REVERSE PROXY LAYER
+# Purpose: Single public entrypoint managing incoming HTTP/HTTPS traffic, SSL 
+#          certificates, and API protection for all hosted environments.
+# Key Features:
+#   - Automated SSL certificate management via Let's Encrypt (ACME protocol).
+#   - Enforced HTTP-to-HTTPS automatic redirection.
+#   - Secure Docker API Proxy restricting access to the host's Docker socket.
+# ==============================================================================
+
+version: "3.8"
+
+# ------------------------------------------------------------------------------
+# NETWORKS
+# Public edge network where proxy and web application entrypoints meet.
+# ------------------------------------------------------------------------------
+networks:
+  # Shared public-facing bridge network used by Traefik to route ingress traffic
+  edge:
+    name: ${PROJECT_NAME}-edge
+    driver: bridge              # Creates an isolated Docker bridge network
+
+# ------------------------------------------------------------------------------
+# VOLUMES
+# Storage for persistent cryptographic assets.
+# ------------------------------------------------------------------------------
+volumes:
+  # Persistent volume preserving Let's Encrypt certificates across container rebuilds
+  traefik_certs:
+    name: ${PROJECT_NAME}-traefik-certs
+
+# ------------------------------------------------------------------------------
+# SERVICES
+# ------------------------------------------------------------------------------
+services:
+
+  # ----------------------------------------------------------------------------
+  # Edge Reverse Proxy & TLS Termination: Traefik v3.1
+  # ----------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    container_name: ${PROJECT_NAME}-edge-traefik
+    restart: unless-stopped
+    
+    # Traefik CLI configuration arguments
+    command:
+      # Provider settings: Dynamic auto-discovery of local Docker containers
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false" # Security: Requires explicit 'traefik.enable=true' label on containers
+      - "--providers.docker.network=${PROJECT_NAME}-edge"
+
+      # Entrypoints setup: Defining standard web ports
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+
+      # Automatic HTTP -> HTTPS enforcement for all incoming unencrypted traffic
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+
+      # Automated Let's Encrypt SSL/TLS resolver setup (ACME HTTP-01 challenge)
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.httpchallenge.entrypoint=web"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}" # Email used for SSL expiration notices
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json" # Secure storage file for certs
+
+      # Hardening & Operations
+      - "--api.dashboard=false"                     # Security: Disables web UI dashboard to eliminate attack surface
+      - "--log.level=WARN"                          # Restricts log output to actionable warning and error events
+      
+    ports:
+      - "80:80"                                     # Public HTTP port mapping
+      - "443:443"                                   # Public HTTPS port mapping
+      
+    volumes:
+      - traefik_certs:/letsencrypt                  # Mounts persistent volume for certificates
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only access to Docker socket for container discovery
+      
+    networks:
+      - edge
+      
+    security_opt:
+      - "no-new-privileges:true"                     # Restricts container processes from gaining escalated root permissions
+      
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"                              # Caps CPU usage at 0.5 cores
+          memory: 256M                              # Enforces 256MB RAM consumption limit
+
+  # ----------------------------------------------------------------------------
+  # Security Layer: Docker Socket Proxy (Tecnativa)
+  # ----------------------------------------------------------------------------
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: ${PROJECT_NAME}-edge-docker-proxy
+    restart: unless-stopped
+    
+    # Granular access control for the Docker API
+    environment:
+      # Explicitly allow safe read/write endpoints required by the app orchestrator
+      CONTAINERS: 1
+      IMAGES: 1
+      BUILD: 1
+      NETWORKS: 1
+      INFO: 1
+      PING: 1
+      POST: 1
+      # Sensitive administrative endpoints remain blocked by default (value 0):
+      # SWARM=0, SERVICES=0, SECRETS=0, VOLUMES=0, SYSTEM=0, EXEC=0
+      
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro # Mounts host socket read-only to proxy
+      
+    networks:
+      - edge
+      
+    security_opt:
+      - "no-new-privileges:true"
+      
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M

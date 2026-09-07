@@ -1,0 +1,300 @@
+# ============================================================================
+# PIPELINE OVERVIEW: Continuous Integration (CI)
+# This workflow runs quality gates, automated testing, static analysis, and
+# security auditing on pull requests and main branch updates.
+# ============================================================================
+
+name: CI
+
+# ----------------------------------------------------------------------------
+# TRIGGERS
+# Defines events that start the integration tests.
+# ----------------------------------------------------------------------------
+on:
+  pull_request:            # Run checks on any open or updated Pull Request
+  push:
+    branches: [main]       # Run checks when code is merged directly into 'main'
+
+# ----------------------------------------------------------------------------
+# CONCURRENCY MANAGEMENT
+# Automatically cancels running workflows on the same branch/PR when new code 
+# is pushed, saving runner minutes and compute resources.
+# ----------------------------------------------------------------------------
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# ----------------------------------------------------------------------------
+# SECURITY: Global Permissions
+# Restricts default repository tokens to read-only mode (Least Privilege).
+# ----------------------------------------------------------------------------
+permissions:
+  contents: read
+
+# ----------------------------------------------------------------------------
+# SHARED ENVIRONMENT CONFIGURATION
+# Defines global runtime and tool versions used across jobs.
+# ----------------------------------------------------------------------------
+env:
+  NODE_VERSION: "22"
+  PNPM_VERSION: "9"
+
+jobs:
+
+  # ============================================================================
+  # JOB 1: Code Quality, Linting, and Formatting
+  # ============================================================================
+  lint:
+    name: Lint & Format Checks
+    runs-on: ubuntu-latest
+    steps:
+      # Step 1: Clone codebase
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Install pnpm package manager with specific version
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+        with:
+          version: "${{ env.PNPM_VERSION }}"
+
+      # Step 3: Install Node.js runtime and configure pnpm dependency caching
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"            # Caches node_modules dependencies to speed up future runs
+
+      # Step 4: Install exact dependencies defined in pnpm-lock.yaml
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Step 5: Generate Prisma database client code before linting
+      - name: Generate Prisma ORM client
+        run: pnpm exec prisma generate
+
+      # Step 6: Execute static code analysis (ESLint/Biome)
+      - name: Execute linter checks
+        run: pnpm run lint
+
+      # Step 7: Check if source files follow Prettier code styling rules
+      - name: Verify code formatting with Prettier
+        run: pnpm exec prettier --check "src/**/*.ts" "test/**/*.ts"
+
+  # ============================================================================
+  # JOB 2: Static Analysis and Compilation
+  # ============================================================================
+  build:
+    name: Type Check & Build Verification
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+        with:
+          version: "${{ env.PNPM_VERSION }}"
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma ORM client
+        run: pnpm exec prisma generate
+
+      # Validates TypeScript compilation (tsc) and production asset generation
+      - name: Execute TypeScript compilation build
+        run: pnpm run build
+
+  # ============================================================================
+  # JOB 3: Unit Testing and Coverage Artifacts
+  # ============================================================================
+  unit-tests:
+    name: Unit Tests & Code Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+        with:
+          version: "${{ env.PNPM_VERSION }}"
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma ORM client
+        run: pnpm exec prisma generate
+
+      # Run unit test suite and compute coverage metrics
+      - name: Run unit test suite with coverage
+        run: pnpm run test:cov
+
+      # Save HTML/LCOV coverage files as downloadable artifacts for 14 days
+      - name: Archive test coverage artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/
+          retention-days: 14
+
+  # ============================================================================
+  # JOB 4: Integration Testing (E2E)
+  # ============================================================================
+  e2e-tests:
+    name: End-to-End Integration Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+        with:
+          version: "${{ env.PNPM_VERSION }}"
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma ORM client
+        run: pnpm exec prisma generate
+
+      # Generate runtime .env configuration with secret keys from GitHub Secrets
+      - name: Populate test environment configuration from repository secrets
+        run: |
+          cp .env.test.example .env.test
+          {
+            echo "ENCRYPTION_KEY=${{ secrets.CI_ENCRYPTION_KEY }}"
+            echo "JWT_SECRET=${{ secrets.CI_JWT_SECRET }}"
+          } >> .env.test
+
+      # Execute full stack end-to-end tests
+      - name: Execute end-to-end integration suite
+        run: pnpm run test:e2e
+
+      # Debugging helper: Print container logs if E2E tests fail
+      - name: Capture Docker Compose logs on job failure
+        if: failure()              # Executes ONLY if a previous step failed
+        run: docker compose -f deploy/docker-compose.test.yml logs || true
+
+  # ============================================================================
+  # JOB 5: Dependency Security Auditing
+  # ============================================================================
+  dependency-scan:
+    name: Dependency Vulnerability Audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+        with:
+          version: "${{ env.PNPM_VERSION }}"
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Check package dependencies against known vulnerability databases
+      - name: Audit dependencies for high-severity vulnerabilities
+        run: pnpm audit --audit-level=high
+
+      # Analyze PR dependency changes and flag high-risk packages
+      - name: Review pull request dependency changes
+        if: github.event_name == 'pull_request'
+        uses: actions/dependency-review-action@v4
+        with:
+          fail-on-severity: high
+
+  # ============================================================================
+  # JOB 6: Secret Leak Detection (DevSecOps)
+  # ============================================================================
+  secret-scan:
+    name: Hardcoded Secret Detection
+    runs-on: ubuntu-latest
+    steps:
+      # Fetch full Git history so Gitleaks can inspect older commits
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0          # '0' retrieves all commits, branches, and tags
+
+      # Scan repository history for leaked passwords, API tokens, and private keys
+      - name: Scan codebase for leaked credentials
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  # ============================================================================
+  # JOB 7: File System and Container Security Scan
+  # ============================================================================
+  container-scan:
+    name: Container & Filesystem Vulnerability Scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write      # Enables uploading SARIF reports to GitHub Security
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Build Docker image locally without pushing to a remote registry
+      - name: Build local container image for analysis
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/Dockerfile
+          target: runtime
+          push: false              # Prevent deployment during testing phase
+          tags: ci-image:scan
+          load: true               # Expose image to local runner's Docker daemon
+
+      # Scan source code repository files for security misconfigurations
+      - name: Scan repository filesystem with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          severity: CRITICAL,HIGH
+          exit-code: "1"           # Fails the pipeline if critical/high issues are found
+
+      # Scan local Docker image layers for vulnerable OS packages or libraries
+      - name: Scan container image with Trivy
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: ci-image:scan
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+
+      # Upload Trivy vulnerability report to GitHub Code Scanning dashboard
+      - name: Upload Trivy security findings
+        if: always()               # Upload report even if Trivy identified vulnerabilities
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif

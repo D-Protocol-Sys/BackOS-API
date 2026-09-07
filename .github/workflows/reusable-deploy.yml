@@ -1,0 +1,87 @@
+# ============================================================================
+# PIPELINE OVERVIEW: Reusable Deployment Workflow
+# This workflow is called by other workflows (like CD) to execute SSH deployment
+# steps, perform health checks, and handle automatic rollback upon failure.
+# ============================================================================
+
+name: Reusable Deployment
+
+# ----------------------------------------------------------------------------
+# TRIGGERS
+# 'workflow_call' allows this file to be consumed as a modular function by
+# parent workflows.
+# ----------------------------------------------------------------------------
+on:
+  workflow_call:
+    # Inputs define the mandatory dynamic parameters passed by the caller
+    inputs:
+      environment:
+        required: true
+        type: string          # Name of the deployment environment (e.g., demo, production)
+      target_url:
+        required: true
+        type: string          # Public URL of the deployed application
+      image_tag:
+        required: true
+        type: string          # Docker image tag or commit SHA to deploy
+      env_file:
+        required: true
+        type: string          # Environment file path on target server (e.g., .env.demo)
+      health_check_url:
+        required: true
+        type: string          # Endpoint URL used to verify app health
+
+jobs:
+  deploy:
+    name: Execute deployment
+    runs-on: ubuntu-latest
+    
+    # Links this job to GitHub's deployment tracker and active environment rules
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ inputs.target_url }}
+
+    steps:
+      # Step 1: Connect to remote host over SSH and launch deployment script
+      - name: Deploy application via SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            # Navigate to base directory on remote server
+            cd ${{ secrets.DEPLOY_PATH }}
+            
+            # Synchronize local repository state with the exact commit SHA
+            git fetch --tags && git checkout ${{ github.sha }}
+            
+            # Inject the target image version into environment configuration file
+            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> ${{ inputs.env_file }}
+            
+            # Run application update script for specified environment
+            ./scripts/stack.sh up ${{ inputs.environment }}
+
+      # Step 2: Post-deployment validation & automatic recovery
+      - name: Verify health and rollback on failure
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.DEPLOY_HOST }}
+          username: ${{ secrets.DEPLOY_USER }}
+          key: ${{ secrets.DEPLOY_SSH_KEY }}
+          script: |
+            # Wait 10 seconds to allow container services to initialize properly
+            sleep 10
+            
+            # Perform HTTP request to test if application responds with HTTP 200
+            if ! curl -fsS ${{ inputs.health_check_url }}; then
+              echo "CRITICAL: Health check failed for ${{ inputs.environment }}. Initiating automated rollback..."
+              
+              # Revert deployment to previous stable state
+              ./scripts/stack.sh rollback ${{ inputs.environment }}
+              
+              echo "FAILED: Deployment aborted and previous version restored."
+              exit 1 # Fail the pipeline step explicitly
+            fi
+            
+            echo "SUCCESS: Post-deployment health check passed."

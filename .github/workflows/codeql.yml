@@ -1,0 +1,55 @@
+# ============================================================================
+# PIPELINE OVERVIEW: Static Application Security Testing (SAST)
+# This workflow uses GitHub CodeQL to analyze source code for security 
+# vulnerabilities, coding errors, and quality issues without running the app.
+# ============================================================================
+
+name: CodeQL
+
+# ----------------------------------------------------------------------------
+# TRIGGERS
+# Defines when the static code analysis will run.
+# ----------------------------------------------------------------------------
+on:
+  push:
+    branches: [main]       # Run analysis when code is merged directly into 'main'
+  pull_request:
+    branches: [main]       # Run analysis on Pull Requests targeting the 'main' branch
+  schedule:
+    # Recurring cron trigger: Runs every Monday at 03:00 UTC
+    # Catches newly discovered vulnerabilities (CVEs) even if no code changes occurred
+    - cron: "0 3 * * 1"
+
+# ----------------------------------------------------------------------------
+# SECURITY: Job Permissions (Least Privilege Principle)
+# Grants minimal explicit access needed for SAST scanning and security reporting.
+# ----------------------------------------------------------------------------
+permissions:
+  contents: read           # Allows reading the source code
+  security-events: write   # Allows publishing vulnerability alerts to GitHub Security tab
+
+jobs:
+  analyze:
+    name: CodeQL Static Security Analysis
+    runs-on: ubuntu-latest  # Runs on GitHub-hosted Linux environment
+
+    steps:
+      # Step 1: Clone the repository source code to the runner
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Step 2: Initialize CodeQL database and set up target languages and rule suites
+      - name: Initialize CodeQL security scanner
+        uses: github/codeql-action/init@v3
+        with:
+          # Target programming languages to analyze
+          languages: javascript-typescript
+          
+          # Query suites define the strictness and depth of security rules applied
+          # - security-extended: Adds precision rules for deeper security checks
+          # - security-and-quality: Adds code quality and maintainability checks
+          queries: security-extended,security-and-quality
+
+      # Step 3: Run the CodeQL engine to scan code and upload findings to GitHub
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
