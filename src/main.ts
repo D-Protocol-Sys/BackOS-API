@@ -42,6 +42,12 @@ async function bootstrap() {
     // it defaults to `1`, matching the single-Traefik-hop topology in `docker-compose.prod.yml`.
     // Traefik forwards `X-Forwarded-For` by default, so no Traefik-side change is required.
     const trustProxyHops = configService.get<number>('TRUST_PROXY_HOPS', 1);
+    // `app` is typed as the generic `INestApplication`, which doesn't expose Express-specific
+    // methods like `.set()` even though Express is what's actually running underneath by
+    // default. `getHttpAdapter().getInstance()` is the standard NestJS way to reach the
+    // underlying Express instance without switching `NestFactory.create()` to
+    // `NestExpressApplication` (a wider change that would ripple into every other `app.*` call
+    // in this file).
     app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
 
     app.use(helmet());

@@ -200,7 +200,7 @@ export class BackupService {
             await runCommand(
                 'pg_dump',
                 [
-                    `--dbname=${connectionUrl}`,
+                    `--dbname=${this.toLibpqConnectionUrl(connectionUrl)}`,
                     '--no-owner',
                     '--no-privileges',
                     '--verbose',
@@ -243,6 +243,21 @@ export class BackupService {
     private resolveOutputDir(): string {
         const configured = this.configService.get<string>('BACKUP_OUTPUT_DIR', 'backups');
         return path.isAbsolute(configured) ? configured : path.resolve(process.cwd(), configured);
+    }
+
+    /**
+     * BUGFIX (found in production, 2026-09-10): `ProvisioningService.getDecryptedConnectionUrl()`
+     * builds Prisma-style connection URLs, e.g.
+     * `postgresql://user:pass@host:5432/db?schema=public` - the `?schema=` query parameter is a
+     * Prisma-specific extension, not a standard libpq connection parameter. `pg_dump` (which
+     * uses libpq's own URI parser, not Prisma's) rejects it outright: `pg_dump: erreur :
+     * paramètre de la requête URI invalide : « schema »`. Strips that parameter before handing
+     * the URL to `pg_dump` - Prisma-facing code paths are untouched, since Prisma needs it.
+     */
+    private toLibpqConnectionUrl(prismaStyleUrl: string): string {
+        const url = new URL(prismaStyleUrl);
+        url.searchParams.delete('schema');
+        return url.toString();
     }
 
     /** `YYYYMMDD-HHmmss`, filesystem- and URL-safe, sorts chronologically by filename. */

@@ -70,3 +70,42 @@ describe('BackupService.resolveDumpPath (audit #6)', () => {
         expect(() => service.resolveDumpPath('C:evil.sql.gz')).toThrow(BadRequestException);
     });
 });
+
+/**
+ * BUGFIX (found in production against a real Postgres instance, 2026-09-10):
+ * `ProvisioningService` builds Prisma-style connection URLs (`?schema=public`), which `pg_dump`
+ * rejects outright - its libpq URI parser doesn't recognize `schema` as a connection parameter
+ * (`pg_dump: erreur : paramètre de la requête URI invalide : « schema »`). Every dump path
+ * (`dumpOrchestratorDatabase`, `dumpPlatformDatabase`, `dumpAllPlatformDatabases`) funnels
+ * through the same private `toLibpqConnectionUrl()`, so this one test covers all of them.
+ */
+describe('BackupService.toLibpqConnectionUrl (production bugfix)', () => {
+    let service: BackupService;
+
+    beforeEach(() => {
+        service = new BackupService({ get: jest.fn(), getOrThrow: jest.fn() } as any, {} as any, {} as any);
+    });
+
+    const callPrivate = (url: string): string => (service as any).toLibpqConnectionUrl(url);
+
+    it('retire le paramètre "?schema=public" que pg_dump ne reconnaît pas', () => {
+        const result = callPrivate('postgresql://user:pass@localhost:5432/mydb?schema=public');
+        expect(result).toBe('postgresql://user:pass@localhost:5432/mydb');
+    });
+
+    it('préserve les identifiants (y compris avec des caractères spéciaux encodés)', () => {
+        const password = encodeURIComponent('p@ss/word!$%');
+        const result = callPrivate(`postgresql://user:${password}@localhost:5432/mydb?schema=public`);
+        expect(result).toContain(`user:${password}@localhost:5432/mydb`);
+    });
+
+    it("préserve les autres paramètres de requête éventuels tout en retirant uniquement 'schema'", () => {
+        const result = callPrivate('postgresql://user:pass@localhost:5432/mydb?schema=public&sslmode=require');
+        expect(result).toBe('postgresql://user:pass@localhost:5432/mydb?sslmode=require');
+    });
+
+    it("ne modifie pas une URL qui n'a pas de paramètre 'schema'", () => {
+        const result = callPrivate('postgresql://user:pass@localhost:5432/mydb');
+        expect(result).toBe('postgresql://user:pass@localhost:5432/mydb');
+    });
+});

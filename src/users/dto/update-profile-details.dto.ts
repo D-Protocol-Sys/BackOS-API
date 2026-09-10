@@ -103,6 +103,58 @@ export class UpdateProfileDetailsDto {
     avatarUrl?: string;
 
     /**
+     * Employer or organization name, as self-reported by the user.
+     */
+    @ApiPropertyOptional({
+        description: "The user's self-reported company or organization name.",
+        example: 'Acme Corp',
+        maxLength: 100,
+    })
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    company?: string;
+
+    /**
+     * Job title or role, as self-reported by the user.
+     */
+    @ApiPropertyOptional({
+        description: "The user's self-reported job title.",
+        example: 'Senior Product Designer',
+        maxLength: 100,
+    })
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    jobTitle?: string;
+
+    /**
+     * Preferred display/interface language (ISO 639-1 code, e.g. 'fr', 'en').
+     */
+    @ApiPropertyOptional({
+        description: 'Preferred interface language (ISO 639-1 code).',
+        example: 'fr',
+        maxLength: 10,
+    })
+    @IsOptional()
+    @IsString()
+    @MaxLength(10)
+    language?: string;
+
+    /**
+     * Preferred IANA timezone (e.g. 'Europe/Paris').
+     */
+    @ApiPropertyOptional({
+        description: 'Preferred IANA timezone identifier.',
+        example: 'Europe/Paris',
+        maxLength: 100,
+    })
+    @IsOptional()
+    @IsString()
+    @MaxLength(100)
+    timezone?: string;
+
+    /**
      * Map of social network profiles (e.g. twitter, github, linkedin).
      */
     @ApiPropertyOptional({

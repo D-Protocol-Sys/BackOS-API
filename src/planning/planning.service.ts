@@ -329,6 +329,39 @@ export class PlanningService {
     }
 
     /**
+     * Returns the platform Planning's current "responsible" user, if any.
+     *
+     * COMPLETENESS FIX: `reassignResponsible()` (added alongside the `Planning.responsible`
+     * `onDelete: SetNull` fix - see that field's comment in `schema.prisma`) had no counterpart
+     * to read the current value before changing it - discovered while wiring the corresponding
+     * frontend screen, which needs to show who currently holds the responsibility before
+     * offering to reassign it.
+     *
+     * @param actor - Requesting user; must satisfy `assertCanViewPlatformPlanning` (same
+     *   visibility rule as the entries list, since this is planning metadata, not admin-only).
+     * @param platformId - Target platform ID.
+     * @returns `{ responsibleId, responsible }` (both `null` if unset, or if this platform has
+     *   no planning container yet), where `responsible` is a minimal safe user summary.
+     */
+    async getResponsible(actor: Actor, platformId: string) {
+        await this.assertCanViewPlatformPlanning(actor, platformId);
+
+        const planning = await this.prisma.planning.findUnique({
+            where: { platformId },
+            include: {
+                responsible: {
+                    select: { id: true, firstName: true, lastName: true, workEmail: true },
+                },
+            },
+        });
+
+        return {
+            responsibleId: planning?.responsibleId ?? null,
+            responsible: planning?.responsible ?? null,
+        };
+    }
+
+    /**
      * SECURITY FIX (audit #1/#5 follow-up): reassigns a platform Planning's "responsible" user
      * to a different active user.
      *

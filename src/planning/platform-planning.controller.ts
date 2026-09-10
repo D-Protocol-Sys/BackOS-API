@@ -56,6 +56,17 @@ export class PlatformPlanningController {
     }
 
     /**
+     * COMPLETENESS FIX: read-side counterpart to `reassignResponsible()` below - returns who
+     * is currently responsible for this platform's planning (or `null` if unset), so a client
+     * can display that before offering to change it. See `PlanningService.getResponsible()`.
+     * * @route GET /platforms/:platformId/planning/responsible
+     */
+    @Get('responsible')
+    getResponsible(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
+        return this.planningService.getResponsible(actor, platformId);
+    }
+
+    /**
      * SECURITY FIX (audit #1/#5 follow-up): reassigns the platform planning's "responsible"
      * user to someone else. See `PlanningService.reassignResponsible()` for the full rationale -
      * this is what lets an admin resolve `UsersService.hardDeleteUser()`'s pre-check when the

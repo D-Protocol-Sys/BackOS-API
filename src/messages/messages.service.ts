@@ -26,7 +26,7 @@ export class MessagesService {
      * Sends a direct 1-on-1 message to another active user.
      * Finds or creates the target direct conversation before dispatching message and notifications.
      */
-    async sendDirectMessage(actor: Actor, recipientId: string, content: string) {
+    async sendDirectMessage(actor: Actor, recipientId: string, content: string, replyToId?: string) {
         if (actor.userId === recipientId) {
             throw new ForbiddenException("You can't message yourself.");
         }
@@ -36,7 +36,7 @@ export class MessagesService {
         }
 
         const conversation = await this.getOrCreateDirectConversation(actor.userId, recipientId);
-        return this.createMessageAndNotify(conversation.id, actor.userId, content, [recipientId]);
+        return this.createMessageAndNotify(conversation.id, actor.userId, content, [recipientId], replyToId);
     }
 
     /**
@@ -83,12 +83,12 @@ export class MessagesService {
      * Dispatches a message to a specific conversation (DIRECT or PLATFORM_CHANNEL) by ID.
      * Resolves recipient IDs and triggers notifications.
      */
-    async sendToConversation(actor: Actor, conversationId: string, content: string) {
+    async sendToConversation(actor: Actor, conversationId: string, content: string, replyToId?: string) {
         const conversation = await this.findConversationOrThrow(conversationId);
         await this.assertCanAccessConversation(actor.userId, conversation);
 
         const recipientIds = await this.getRecipientIds(conversation, actor.userId);
-        return this.createMessageAndNotify(conversation.id, actor.userId, content, recipientIds);
+        return this.createMessageAndNotify(conversation.id, actor.userId, content, recipientIds, replyToId);
     }
 
     // ---- User Conversation Feeds ----
@@ -143,11 +143,20 @@ export class MessagesService {
         );
 
         // Sort conversations by most recent message or creation timestamp
-        return withUnread.sort((a, b) => {
-            const aTime = a.messages[0]?.createdAt ?? a.createdAt;
-            const bTime = b.messages[0]?.createdAt ?? b.createdAt;
-            return new Date(bTime).getTime() - new Date(aTime).getTime();
-        });
+        return withUnread
+            .sort((a, b) => {
+                const aTime = a.messages[0]?.createdAt ?? a.createdAt;
+                const bTime = b.messages[0]?.createdAt ?? b.createdAt;
+                return new Date(bTime).getTime() - new Date(aTime).getTime();
+            })
+            .map((conv) => ({
+                ...conv,
+                // Keep the preview snippet's shape consistent with `getMessages()` - see
+                // `serializeMessage()`. (Deliberately not filtering out a most-recent message
+                // the actor hid "for me" here - unlike full history, a one-line preview
+                // snippet of something they already saw isn't worth the extra query cost.)
+                messages: conv.messages.map((m) => this.serializeMessage(m)),
+            }));
     }
 
     /**
@@ -169,10 +178,18 @@ export class MessagesService {
         await this.assertCanAccessConversation(actor.userId, conversation);
 
         const messages = await this.prisma.message.findMany({
-            where: { conversationId },
+            where: {
+                conversationId,
+                // COMPLETENESS FIX: "delete for me" hides a message only for the user who
+                // deleted it - never affects what any other participant sees.
+                hiddenFor: { none: { userId: actor.userId } },
+            },
             orderBy: { createdAt: 'desc' },
             take: limit,
-            include: { sender: { select: { id: true, firstName: true, lastName: true } } },
+            include: {
+                sender: { select: { id: true, firstName: true, lastName: true } },
+                replyTo: { include: { sender: { select: { id: true, firstName: true, lastName: true } } } },
+            },
         });
 
         // Upsert read state tracking for the requesting user
@@ -182,7 +199,60 @@ export class MessagesService {
             create: { conversationId, userId: actor.userId, lastReadAt: new Date() },
         });
 
-        return messages.reverse();
+        return messages.reverse().map((m) => this.serializeMessage(m));
+    }
+
+    /**
+     * COMPLETENESS FIX: implements the two-scope deletion the frontend already had UI for.
+     * See `DeleteMessageDto` for the scope semantics.
+     */
+    async deleteMessage(actor: Actor, messageId: string, scope: 'me' | 'everyone') {
+        const message = await this.prisma.message.findUnique({ where: { id: messageId } });
+        if (!message) throw new NotFoundException('Message not found.');
+
+        const conversation = await this.findConversationOrThrow(message.conversationId);
+        await this.assertCanAccessConversation(actor.userId, conversation);
+
+        if (scope === 'everyone') {
+            if (message.senderId !== actor.userId) {
+                throw new ForbiddenException('Only the sender can delete a message for everyone.');
+            }
+            await this.prisma.message.update({
+                where: { id: messageId },
+                data: { content: null, deletedForEveryoneAt: new Date() },
+            });
+            return { message: 'Message deleted for everyone.' };
+        }
+
+        // scope === 'me': hides it for the caller only, idempotently (re-deleting is a no-op,
+        // not an error - the caller's intent, "I don't want to see this", is already satisfied).
+        await this.prisma.messageHiddenFor.upsert({
+            where: { messageId_userId: { messageId, userId: actor.userId } },
+            update: {},
+            create: { messageId, userId: actor.userId },
+        });
+        return { message: 'Message deleted for you.' };
+    }
+
+    /**
+     * COMPLETENESS FIX: maps `deletedForEveryoneAt` (the DB column) to the boolean shape
+     * `isDeletedForEveryone` the frontend's `Message` type already expects, for both a message
+     * and its nested `replyTo` (if any and if not itself deleted-for-everyone already blanked).
+     */
+    private serializeMessage<
+        T extends { deletedForEveryoneAt: Date | null; replyTo?: { deletedForEveryoneAt: Date | null } | null },
+    >(message: T) {
+        const { deletedForEveryoneAt, replyTo, ...rest } = message;
+        return {
+            ...rest,
+            isDeletedForEveryone: deletedForEveryoneAt !== null,
+            replyTo: replyTo
+                ? (() => {
+                      const { deletedForEveryoneAt: replyDeletedAt, ...replyRest } = replyTo;
+                      return { ...replyRest, isDeletedForEveryone: replyDeletedAt !== null };
+                  })()
+                : (replyTo ?? null),
+        };
     }
 
     // ---- Helpers ----
@@ -259,15 +329,41 @@ export class MessagesService {
         senderId: string,
         content: string,
         recipientIds: string[],
+        replyToId?: string,
     ) {
+        // COMPLETENESS FIX: verify the replied-to message actually belongs to THIS conversation
+        // before linking it - without this check, a caller could pass any arbitrary message ID
+        // (including one from a conversation they have no access to) and have it silently
+        // attached as a "reply to" reference, leaking that message's existence/content into a
+        // conversation the original participants never intended it to be visible in.
+        if (replyToId) {
+            const repliedMessage = await this.prisma.message.findUnique({ where: { id: replyToId } });
+            if (!repliedMessage || repliedMessage.conversationId !== conversationId) {
+                throw new NotFoundException('The message being replied to was not found in this conversation.');
+            }
+        }
+
         const message = await this.prisma.message.create({
-            data: { conversationId, senderId, content },
-            include: { sender: { select: { id: true, firstName: true, lastName: true } } },
+            data: { conversationId, senderId, content, replyToId },
+            include: {
+                sender: { select: { id: true, firstName: true, lastName: true } },
+                replyTo: { include: { sender: { select: { id: true, firstName: true, lastName: true } } } },
+            },
         });
 
-        await Promise.all(recipientIds.map((recipientId) => this.notifyIfInactive(conversationId, recipientId, message)));
+        await Promise.all(
+            recipientIds.map((recipientId) =>
+                this.notifyIfInactive(conversationId, recipientId, {
+                    content,
+                    sender: {
+                        firstName: message.sender.firstName,
+                        lastName: message.sender.lastName,
+                    },
+                }),
+            ),
+        );
 
-        return message;
+        return this.serializeMessage(message);
     }
 
     /**

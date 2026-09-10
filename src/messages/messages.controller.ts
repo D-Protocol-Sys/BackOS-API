@@ -1,7 +1,8 @@
-import { Body, Controller, Get, Param, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query } from '@nestjs/common';
 import { MessagesService } from './messages.service';
 import { SendDirectMessageDto } from './dto/send-direct-message.dto';
 import { SendMessageDto } from './dto/send-message.dto';
+import { DeleteMessageDto } from './dto/delete-message.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 
@@ -55,7 +56,7 @@ export class MessagesController {
      */
     @Post('conversations/:id')
     sendToConversation(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: SendMessageDto) {
-        return this.messagesService.sendToConversation(actor, id, dto.content);
+        return this.messagesService.sendToConversation(actor, id, dto.content, dto.replyToId);
     }
 
     /**
@@ -68,6 +69,17 @@ export class MessagesController {
         @Param('userId') userId: string,
         @Body() dto: SendDirectMessageDto,
     ) {
-        return this.messagesService.sendDirectMessage(actor, userId, dto.content);
+        return this.messagesService.sendDirectMessage(actor, userId, dto.content, dto.replyToId);
+    }
+
+    /**
+     * COMPLETENESS FIX: deletes a message, either just for the caller ('me') or, if the caller
+     * is the original sender, for every participant ('everyone'). See `DeleteMessageDto` and
+     * `MessagesService.deleteMessage()`.
+     * @route DELETE /messages/:id
+     */
+    @Delete(':id')
+    deleteMessage(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: DeleteMessageDto) {
+        return this.messagesService.deleteMessage(actor, id, dto.scope);
     }
 }

@@ -199,6 +199,7 @@ model User {
   conversationParticipants ConversationParticipant[]
   conversationReads       ConversationRead[]
   sentMessages            Message[]
+  hiddenMessages          MessageHiddenFor[]
 
   @@index([status])
   @@index([username])
@@ -769,7 +770,8 @@ model ConversationRead {
 
 model Message {
   id             String       @id @default(uuid())
-  content        String
+
+  content        String?
 
   conversationId String
   conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
@@ -781,10 +783,26 @@ model Message {
   replyTo        Message?     @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
   replies        Message[]    @relation("MessageReplies")
 
+  deletedForEveryoneAt DateTime?
+
+  hiddenFor      MessageHiddenFor[]
+
   createdAt      DateTime     @default(now())
 
   @@index([conversationId, createdAt])
   @@map("messages")
+}
+
+model MessageHiddenFor {
+  id        String   @id @default(uuid())
+  messageId String
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  @@unique([messageId, userId])
+  @@map("message_hidden_for")
 }
 
 // ----------------------------------------------------------

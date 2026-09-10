@@ -1,4 +1,4 @@
-import { IsString, MinLength, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsUUID, MinLength, MaxLength } from 'class-validator';
 
 /**
  * Data Transfer Object (DTO) used when sending a direct message to a user or channel.
@@ -13,4 +13,9 @@ export class SendDirectMessageDto {
     @MinLength(1)
     @MaxLength(4000)
     content!: string;
+
+    /** COMPLETENESS FIX: see the identical field on `SendMessageDto` for the full rationale. */
+    @IsOptional()
+    @IsUUID()
+    replyToId?: string;
 }

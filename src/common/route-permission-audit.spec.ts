@@ -92,6 +92,7 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         getMessages: 'Scoped via CurrentUser; conversation participation checked in MessagesService.',
         sendToConversation: 'Scoped via CurrentUser; conversation participation checked in MessagesService.',
         sendDirectMessage: 'Scoped via CurrentUser as the sender; recipient validity checked in MessagesService.',
+        deleteMessage: 'Scoped via CurrentUser; conversation participation checked, and "everyone" scope additionally requires being the sender, in MessagesService.deleteMessage().',
     },
     'planning/personal-planning.controller.ts': {
         create: "Personal planning: always scoped to the caller's own userId, never another user's.",
@@ -103,6 +104,7 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     'planning/platform-planning.controller.ts': {
         create: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
         list: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanViewPlatformPlanning().',
+        getResponsible: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanViewPlatformPlanning() (read-side counterpart to reassignResponsible).',
         reassignResponsible: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning() (audit #1/#5 follow-up).',
         update: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
         delete: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
