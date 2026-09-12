@@ -110,10 +110,10 @@ export class PersonalPlanningProgramController {
         return this.programService.previewForDate(actor, id, date);
     }
 
-    /** Projects the program onto one specific real date in the target personal planning. */
+    /** Projects the program onto one specific real date in the actor's personal planning. */
     @Post(':id/apply')
     apply(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: ApplyProgramDto) {
-        return this.programService.applyToDate(actor, id, dto);
+        return this.programService.applyToPersonalDate(actor, id, dto);
     }
 
     /** Bulk variant of `apply` over a date range (e.g. pre-fill the next few months). */
@@ -123,6 +123,6 @@ export class PersonalPlanningProgramController {
         @Param('id') id: string,
         @Body() dto: GenerateProgramOccurrencesDto,
     ) {
-        return this.programService.generateOccurrences(actor, id, dto);
+        return this.programService.generateForPersonal(actor, id, dto);
     }
 }

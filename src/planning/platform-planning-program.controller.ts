@@ -138,7 +138,7 @@ export class PlatformPlanningProgramController {
         @Param('id') id: string,
         @Body() dto: ApplyProgramDto,
     ) {
-        return this.programService.applyToDate(actor, id, dto);
+        return this.programService.applyToPlatformDate(actor, platformId, id, dto);
     }
 
     /** Bulk variant of `apply` over a date range. */
@@ -149,6 +149,6 @@ export class PlatformPlanningProgramController {
         @Param('id') id: string,
         @Body() dto: GenerateProgramOccurrencesDto,
     ) {
-        return this.programService.generateOccurrences(actor, id, dto);
+        return this.programService.generateForPlatform(actor, platformId, id, dto);
     }
 }

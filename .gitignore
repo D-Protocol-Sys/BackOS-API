@@ -66,6 +66,5 @@ prisma/generated
 .claude/
 .windsurf/
 
-**/scripts/
 generated/
 uploads/
