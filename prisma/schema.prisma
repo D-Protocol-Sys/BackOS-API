@@ -116,6 +116,16 @@ enum PlanningScope {
   TEAM
 }
 
+enum PlanningWeekDay {
+  MONDAY
+  TUESDAY
+  WEDNESDAY
+  THURSDAY
+  FRIDAY
+  SATURDAY
+  SUNDAY
+}
+
 enum ConversationType {
   DIRECT
   PLATFORM_CHANNEL
@@ -195,6 +205,7 @@ model User {
   plannings               Planning[]              @relation("PlanningResponsible")
   planningMemberships     PlanningMember[]
   createdPlanningEntries  PlanningEntry[]         @relation("PlanningEntryCreator")
+  createdPlanningPrograms PlanningProgram[]       @relation("PlanningProgramCreator")
   planningAssignments     PlanningEntryAssignee[]
   conversationParticipants ConversationParticipant[]
   conversationReads       ConversationRead[]
@@ -622,15 +633,6 @@ model Planning {
   timezone      String         @default("Europe/Paris")
 
   responsibleId String?
-  // SECURITY FIX (audit #1 - critical): this was previously `onDelete: Cascade`, which meant
-  // deleting the "responsible" user - including via the self-service `DELETE /users/me` route,
-  // available to any authenticated user with no special permission - silently destroyed the
-  // ENTIRE Planning (and, by further cascade, every PlanningEntry and PlanningMember belonging
-  // to OTHER users on that team). `responsibleId` is optional, so `SetNull` is both safe and
-  // consistent with the field's own nullability: the planning and its history now survive,
-  // simply losing its responsible assignment, which `PlanningService.reassignResponsible()`
-  // (or `UsersService.hardDeleteUser()`'s pre-check, see that method's comment) is expected to
-  // resolve going forward.
   responsible   User?          @relation("PlanningResponsible", fields: [responsibleId], references: [id], onDelete: SetNull)
 
   platformId    String?        @unique
@@ -641,10 +643,110 @@ model Planning {
 
   entries       PlanningEntry[]
   members       PlanningMember[]
+  programs      PlanningProgram[]
 
   @@index([responsibleId])
   @@index([scope])
   @@map("plannings")
+}
+
+model PlanningProgram {
+  id            String          @id @default(uuid())
+  name          String
+  description   String?
+
+  active        Boolean         @default(false)
+  schedule      Boolean         @default(false)
+
+  startDate     DateTime?
+  endDate       DateTime?
+
+  anchorDate    DateTime?
+
+  cycleWeeks    Int             @default(1)
+
+  timezone      String          @default("Europe/Paris")
+
+  planningId    String?
+  planning      Planning?       @relation(fields: [planningId], references: [id], onDelete: Cascade)
+
+  weeks         PlanningProgramWeek[]
+  entries       PlanningEntry[]
+
+  createdById   String
+  createdBy     User            @relation("PlanningProgramCreator", fields: [createdById], references: [id])
+
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  @@index([createdById])
+  @@index([planningId])
+  @@index([active])
+  @@index([schedule])
+  @@index([startDate])
+  @@index([endDate])
+  @@map("planning_programs")
+}
+
+model PlanningProgramWeek {
+  id          String          @id @default(uuid())
+
+  programId   String
+  program     PlanningProgram @relation(fields: [programId], references: [id], onDelete: Cascade)
+
+  weekIndex   Int
+
+  days        PlanningProgramDay[]
+
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@unique([programId, weekIndex])
+  @@index([programId])
+  @@map("planning_program_weeks")
+}
+
+model PlanningProgramDay {
+  id          String              @id @default(uuid())
+
+  weekId      String
+  week        PlanningProgramWeek @relation(fields: [weekId], references: [id], onDelete: Cascade)
+
+  dayOfWeek   PlanningWeekDay
+
+  entries     PlanningProgramEntry[]
+
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@unique([weekId, dayOfWeek])
+  @@index([weekId])
+  @@map("planning_program_days")
+}
+
+model PlanningProgramEntry {
+  id          String                @id @default(uuid())
+
+  type        PlanningItemType
+  title       String
+  description String?
+
+  startTime   String?
+  endTime     String?
+
+  dayId       String
+  day         PlanningProgramDay    @relation(fields: [dayId], references: [id], onDelete: Cascade)
+
+  order       Int                   @default(0)
+
+  createdAt   DateTime              @default(now())
+  updatedAt   DateTime              @updatedAt
+
+  occurrences PlanningEntry[]
+
+  @@index([dayId])
+  @@index([dayId, order])
+  @@map("planning_program_entries")
 }
 
 model PlanningMember {
@@ -664,43 +766,48 @@ model PlanningMember {
 }
 
 model PlanningEntry {
-  id          String              @id @default(uuid())
-  type        PlanningItemType
-  title       String
-  description String?
-  status      PlanningItemStatus?
+  id                String                @id @default(uuid())
+  type              PlanningItemType
+  title             String
+  description       String?
+  status            PlanningItemStatus?
 
-  startAt     DateTime?
-  endAt       DateTime?
-  dueDate     DateTime?
-  targetDate  DateTime?
+  startAt           DateTime?
+  endAt             DateTime?
+  dueDate           DateTime?
+  targetDate        DateTime?
 
-  planningId  String
-  planning    Planning            @relation(fields: [planningId], references: [id], onDelete: Cascade)
+  planningId        String
+  planning          Planning              @relation(fields: [planningId], references: [id], onDelete: Cascade)
 
-  projectId   String?
-  project     Project?            @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  programId         String?
+  program           PlanningProgram?      @relation(fields: [programId], references: [id], onDelete: SetNull)
 
-  // SECURITY FIX (audit #5 - elevated): `creatorId` is required with no explicit `onDelete`,
-  // so Prisma defaults to `Restrict` - deleting a user who has created even one PlanningEntry
-  // used to fail with an opaque, generic 409 (`AllExceptionsFilter` swallowing Prisma's `P2003`
-  // into a message that gave the caller no idea why). `UsersService.hardDeleteUser()` now
-  // pre-checks this explicitly - the same pattern already used for `platformOwned` - and raises
-  // a clear, actionable error instead of relying on the database constraint to surface it.
-  creatorId   String
-  creator     User                @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
+  programEntryId    String?
+  programEntry      PlanningProgramEntry? @relation(fields: [programEntryId], references: [id], onDelete: SetNull)
+  occurrenceDate    DateTime?
 
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  projectId         String?
+  project           Project?              @relation(fields: [projectId], references: [id], onDelete: SetNull)
 
-  assignees   PlanningEntryAssignee[]
-  attachments FileAsset[]
+  creatorId         String
+  creator           User                  @relation("PlanningEntryCreator", fields: [creatorId], references: [id])
 
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  assignees         PlanningEntryAssignee[]
+  attachments       FileAsset[]
+
+  @@unique([programEntryId, occurrenceDate])
+
+  @@index([planningId, startAt])
+  @@index([planningId, dueDate])
+  @@index([planningId, status])
   @@index([planningId])
   @@index([creatorId])
   @@index([projectId])
-  @@index([startAt])
-  @@index([endAt])
+  @@index([programId])
   @@map("planning_entries")
 }
 
@@ -715,7 +822,7 @@ model PlanningEntryAssignee {
   createdAt DateTime      @default(now())
 
   @@unique([entryId, userId])
-  @@index([userId])
+  @@index([userId, entryId])
   @@map("planning_entry_assignees")
 }
 

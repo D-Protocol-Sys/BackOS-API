@@ -36,7 +36,7 @@ type PlanningPayload = Partial<Record<PlanningPayloadField, unknown>>;
  * Defines field validation constraints per PlanningItemType.
  * Ensures data integrity by strictly defining required and forbidden fields for each type.
  */
-const TYPE_REQUIREMENTS: Record<
+export const TYPE_REQUIREMENTS: Record<
     PlanningItemType,
     { required: PlanningPayloadField[]; forbidden: PlanningPayloadField[] }
 > = {
@@ -85,7 +85,7 @@ const TYPE_REQUIREMENTS: Record<
  * @param type The item type being validated (e.g., TASK, EVENT)
  * @param payload The request body payload containing candidate properties
  */
-function validatePlanningEntryPayload(
+export function validatePlanningEntryPayload(
     type: PlanningItemType,
     payload: PlanningPayload,
 ): void {
@@ -520,7 +520,7 @@ export class PlanningService {
     /**
      * Queries the database for a personal planning container tied to a specific user.
      */
-    private async findPersonalPlanning(userId: string) {
+    async findPersonalPlanning(userId: string) {
         return this.prisma.planning.findFirst({
             where: {
                 scope: PlanningScope.PERSONAL,
@@ -533,7 +533,7 @@ export class PlanningService {
     /**
      * Retrieves existing personal planning or lazily creates one if non-existent.
      */
-    private async getOrCreatePersonalPlanning(userId: string) {
+    async getOrCreatePersonalPlanning(userId: string) {
         const existing = await this.findPersonalPlanning(userId);
 
         if (existing) {
@@ -552,7 +552,7 @@ export class PlanningService {
     /**
      * Queries database for a platform-bound planning entity.
      */
-    private async findPlatformPlanning(platformId: string) {
+    async findPlatformPlanning(platformId: string) {
         return this.prisma.planning.findUnique({
             where: { platformId },
         });
@@ -561,7 +561,7 @@ export class PlanningService {
     /**
      * Retrieves existing platform planning container or lazily instantiates it.
      */
-    private async getOrCreatePlatformPlanning(platformId: string, responsibleId?: string) {
+    async getOrCreatePlatformPlanning(platformId: string, responsibleId?: string) {
         const existing = await this.findPlatformPlanning(platformId);
 
         if (existing) {
@@ -684,8 +684,12 @@ export class PlanningService {
     /**
      * Validates read permission for a platform planning.
      * Checks platform ownership, global planning/platform permissions, or active membership.
+     *
+     * NOTE: intentionally not `private` - `PlanningProgramService` reuses this exact rule so
+     * that access to a platform's recurring program templates follows the same visibility as
+     * access to its real planning entries.
      */
-    private async assertCanViewPlatformPlanning(actor: Actor, platformId: string) {
+    async assertCanViewPlatformPlanning(actor: Actor, platformId: string) {
         const platform = await this.prisma.platform.findUnique({
             where: { id: platformId },
         });
@@ -726,8 +730,11 @@ export class PlanningService {
     /**
      * Validates write permission for platform planning operations.
      * Requires platform ownership, global PLANNING_MANAGE permission, or platform ADMIN role.
+     *
+     * NOTE: intentionally not `private` - reused by `PlanningProgramService` for the same
+     * reason as `assertCanViewPlatformPlanning` above.
      */
-    private async assertCanEditPlatformPlanning(actor: Actor, platformId: string) {
+    async assertCanEditPlatformPlanning(actor: Actor, platformId: string) {
         const platform = await this.prisma.platform.findUnique({
             where: { id: platformId },
         });

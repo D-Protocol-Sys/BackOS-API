@@ -1,18 +1,23 @@
 import { Module } from '@nestjs/common';
 import { PlanningService } from './planning.service';
+import { PlanningProgramService } from './planning-program.service';
 import { PersonalPlanningController } from './personal-planning.controller';
 import { PlatformPlanningController } from './platform-planning.controller';
+import { PersonalPlanningProgramController } from './personal-planning-program.controller';
+import { PlatformPlanningProgramController } from './platform-planning-program.controller';
 
 @Module({
 
     controllers: [
         PersonalPlanningController,
-        PlatformPlanningController
+        PlatformPlanningController,
+        PersonalPlanningProgramController,
+        PlatformPlanningProgramController,
     ],
 
-    providers: [PlanningService],
+    providers: [PlanningService, PlanningProgramService],
 
-    exports: [PlanningService],
+    exports: [PlanningService, PlanningProgramService],
 
 })
 
