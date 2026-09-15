@@ -1,4 +1,4 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, Query } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Query, ParseUUIDPipe } from '@nestjs/common';
 import { PlanningService } from './planning.service';
 import { CreatePlanningEntryDto } from './dto/create-planning-entry.dto';
 import { UpdatePlanningEntryDto } from './dto/update-planning-entry.dto';
@@ -17,7 +17,7 @@ type Actor = { userId: string; permissions: string[] };
  */
 @ApiTags('Personal Planning')
 @ApiBearerAuth('access-token')
-@Controller('planning/personal')
+@Controller('planning/personal/entries')
 export class PersonalPlanningController {
     constructor(private readonly planningService: PlanningService) {}
 
@@ -48,7 +48,7 @@ export class PersonalPlanningController {
      * @param id - Unique database entry ID passed as a route path parameter.
      */
     @Get(':id')
-    getById(@CurrentUser() actor: Actor, @Param('id') id: string) {
+    getById(@CurrentUser() actor: Actor, @Param('id', ParseUUIDPipe) id: string) {
         return this.planningService.getPersonalById(actor, id);
     }
 
@@ -59,7 +59,7 @@ export class PersonalPlanningController {
      * @param dto - Validated update payload with optional fields to modify.
      */
     @Patch(':id')
-    update(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: UpdatePlanningEntryDto) {
+    update(@CurrentUser() actor: Actor, @Param('id', ParseUUIDPipe) id: string, @Body() dto: UpdatePlanningEntryDto) {
         return this.planningService.updatePersonal(actor, id, dto);
     }
 
@@ -69,7 +69,7 @@ export class PersonalPlanningController {
      * @param id - Target entry ID for removal.
      */
     @Delete(':id')
-    delete(@CurrentUser() actor: Actor, @Param('id') id: string) {
+    delete(@CurrentUser() actor: Actor, @Param('id', ParseUUIDPipe) id: string) {
         return this.planningService.deletePersonal(actor, id);
     }
 }

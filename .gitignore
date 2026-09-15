@@ -35,16 +35,25 @@ lerna-debug.log*
 !.vscode/launch.json
 !.vscode/extensions.json
 
-# dotenv environment variable files
+# ==============================================================================
+# ENVIRONMENT FILES (secrets)
+# ------------------------------------------------------------------------------
+# EN: Ignore every ".env" and ".env.<anything>" file (real secrets: passwords,
+#     encryption keys, SMTP credentials...) EXCEPT files that end in ".example"
+#     (safe templates with fake placeholder values, meant to be committed and
+#     shared so anyone cloning the repo knows which variables to fill in).
+#     This single blanket rule also automatically protects any NEW env file
+#     you create in the future (.env.lan, .env.staging, etc.) without needing
+#     to remember to add it here by name every time.
+# FR: Ignore tout fichier ".env" et ".env.<quelque chose>" (vrais secrets)
+#     SAUF ceux qui finissent par ".example" (gabarits sans danger, à committer).
+#     Cette règle unique protège aussi automatiquement tout nouveau fichier
+#     .env que tu créeras plus tard, sans avoir à l'ajouter ici à la main.
+# ==============================================================================
 .env
-.env.development
-.env.development.local
-.env.test
-.env.test.local
-.env.production
-.env.production.local
-.env.local
-.env.*.local
+.env.*
+!.env.example
+!.env.*.example
 
 # temp directory
 .temp

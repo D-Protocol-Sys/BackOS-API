@@ -1,0 +1,139 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: LOCAL / INTERNAL ENVIRONMENT (no public domain)
+# ==============================================================================
+# Purpose: A persistent, production-grade stack (same hardened image as prod/demo -
+#          `runtime` build target, migrations + seed run automatically on first boot)
+#          for internal use on a machine with NO public domain and NO port-forwarding.
+#
+# Why this exists, and how it differs from the other three stacks:
+#   - "dev"  (docker-compose.yml, root) is for active development: hot-reload, source
+#     mounted from the host, restarts on every file save. Not meant to stay up as a
+#     stable tool - and it's what you're already running via `pnpm start:dev` today.
+#   - "demo"/"prod" (deploy/docker-compose.{demo,prod}.yml) both route through the
+#     shared `edge` stack (Traefik + Let's Encrypt), which REQUIRES a real domain name
+#     with ports 80/443 reachable from the public internet for the ACME HTTP-01
+#     challenge to succeed. On a machine with neither, Traefik would simply never
+#     obtain a certificate.
+#   - "local" (this file) is the missing middle ground: the same stable, built
+#     (not hot-reloaded) image as prod, but reachable at plain `http://localhost:4803`
+#     (or `http://<this-machine's-LAN-IP>:4803` from another device on your network) -
+#     no domain, no TLS, no edge/Traefik dependency at all.
+#
+# Stopping and restarting this stack is safe and keeps all data - `docker compose
+# stop` (or `down`, WITHOUT `-v`) frees your machine's CPU/RAM without touching the
+# named volumes below; `docker compose up -d` (or `start`) brings it back exactly as
+# you left it. Only `down -v` (or `./scripts/stack.sh nuke local`) destroys data.
+#
+# Moving to a dedicated machine later: copy this repo (or just `git pull` it there),
+# copy `.env.local` over (it holds your generated secrets - don't regenerate them
+# unless you're fine losing access to existing encrypted data), then
+# `./scripts/stack.sh up local` there. Nothing else changes.
+# ==============================================================================
+
+version: "3.8"
+
+networks:
+  internal:
+    name: ${PROJECT_NAME}-local-internal
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: ${PROJECT_NAME}-local-postgres-data
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME}-local-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-local-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime            # Same hardened, non-root production image as prod/demo.
+    image: ${PROJECT_NAME}-orchestrator:${IMAGE_TAG:-latest}
+    container_name: ${PROJECT_NAME}-local-orchestrator
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    env_file:
+      - ../.env.local
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PROVISION_HOST: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      # No shared docker-proxy here (that's an `edge`-stack-only concept) - the
+      # generator's "start/stop runtime" feature talks directly to this host's own
+      # Docker daemon via the socket mounted below.
+      GENERATED_BACKEND_DOCKER_DB_HOST: postgres
+      GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-local-postgres
+      GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-local-gen-net
+      GENERATED_PROJECTS_ROOT: ${GENERATED_PROJECTS_HOST_PATH}
+    volumes:
+      - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
+      # Grants the generator feature (start/stop/inspect generated platform runtimes)
+      # access to this machine's own Docker daemon - the direct equivalent of what the
+      # shared `docker-proxy` service provides for demo/prod. Fine for a single-machine,
+      # single-tenant internal deployment; revisit if this ever needs to be multi-tenant.
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - internal
+    ports:
+      # Reachable at http://localhost:${LOCAL_PORT} from this machine, or
+      # http://<this-machine's-LAN-IP>:${LOCAL_PORT} from another device on your network.
+      - "${LOCAL_PORT:-4803}:4803"
+
+    security_opt:
+      - "no-new-privileges:true"
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"

@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Prisma, PlanningItemType, PlanningScope, PlanningWeekDay } from '@prismamodels/client';
+import { Prisma, PlanningEntry, PlanningItemType, PlanningScope, PlanningWeekDay } from '@prismamodels/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlanningService, TYPE_REQUIREMENTS } from './planning.service';
 import { CreatePlanningProgramDto } from './dto/create-planning-program.dto';
@@ -649,7 +649,9 @@ export class PlanningProgramService {
 
         if (!day?.entries.length) return [];
 
-        const results: Awaited<ReturnType<typeof this.materializeEntry>>[] = [];
+        type MaterializedEntry = Awaited<ReturnType<PlanningProgramService['materializeEntry']>>;
+
+        const results: MaterializedEntry[] = [];
 
         for (const entry of day.entries) {
             results.push(await this.materializeEntry(entry, planningId, date, actor.userId));

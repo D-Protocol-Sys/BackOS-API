@@ -1,0 +1,123 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: LAN-ONLY (usage privé / réseau local)
+# ==============================================================================
+# Objectif : faire tourner l'orchestrateur + Postgres + Redis sur PC1, accessible
+# uniquement depuis ton réseau local (PC2, ton téléphone en wifi maison, etc.),
+# SANS Traefik, SANS domaine public, SANS certificat HTTPS.
+#
+# Différences volontaires par rapport à docker-compose.prod.yml :
+#   - Pas de réseau "edge" / Traefik : le port de l'appli est publié directement
+#     sur l'hôte (PC1), donc accessible via http://<IP-LAN-de-PC1>:4803
+#   - Pas de DOCKER_HOST / socket Docker : la génération de backends via Docker
+#     (DockerRuntimeManagerService) n'est PAS activée par défaut dans ce repo -
+#     inutile de s'en soucier pour un premier déploiement.
+#   - "generated_projects" est un volume Docker nommé au lieu d'un bind-mount
+#     de chemin hôte, pour éviter les soucis de chemins Windows.
+# ==============================================================================
+
+version: "3.8"
+
+networks:
+  internal:
+    name: ${PROJECT_NAME}-lan-internal
+    driver: bridge
+
+volumes:
+  postgres_data:
+    name: ${PROJECT_NAME}-lan-postgres-data
+  generated_projects:
+    name: ${PROJECT_NAME}-lan-generated-projects
+
+services:
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME}-lan-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME}-lan-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${REDIS_PASSWORD}"]
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  orchestrator:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      target: runtime
+    image: ${PROJECT_NAME}-orchestrator:lan
+    container_name: ${PROJECT_NAME}-lan-orchestrator
+    restart: unless-stopped
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+    env_file:
+      - ../.env.lan
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      PROVISION_HOST: postgres
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      GENERATED_PROJECTS_ROOT: /app/generated
+      # Un seul hop devant l'appli ici (rien, en fait - pas de Traefik) donc 0.
+      TRUST_PROXY_HOPS: 0
+
+    volumes:
+      - generated_projects:/app/generated
+
+    # ⚠️ C'est cette ligne qui rend le backend accessible depuis PC2 :
+    # "4803:4803" publie le port sur TOUTES les interfaces réseau de PC1
+    # (donc joignable via l'IP LAN de PC1, ex: http://192.168.1.42:4803)
+    ports:
+      - "4803:4803"
+
+    networks:
+      - internal
+
+    security_opt:
+      - "no-new-privileges:true"
+    cap_drop:
+      - ALL
+
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
