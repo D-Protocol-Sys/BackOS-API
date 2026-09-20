@@ -5,6 +5,7 @@ import { GenerationStatus, Prisma } from '@prismamodels/client';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
+import { PlatformsService } from '../platforms/platforms.service';
 
 /**
  * Service responsible for scheduled background maintenance and database pruning tasks.
@@ -18,6 +19,7 @@ export class CleanupService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
+        private readonly platforms: PlatformsService,
     ) {}
 
     /**
@@ -38,6 +40,7 @@ export class CleanupService {
         totalDeleted += await this.cleanupRecoveryCodes();
         totalDeleted += await this.cleanupGenerations();
         totalDeleted += await this.cleanupBackupDumps();
+        totalDeleted += await this.cleanupArchivedPlatforms();
 
         const durationMs = Date.now() - startedAt;
         this.logger.log(
@@ -228,6 +231,44 @@ export class CleanupService {
             return result.count;
         } catch (error) {
             this.logCleanupError('generations', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Permanently deletes any platform that has been continuously ARCHIVED for longer than the
+     * configured retention window (default 30 days) - see `PlatformsService.archive()` for how
+     * that countdown is started, and `PlatformsService.restore()`/`archive()` for why
+     * unarchiving-then-rearchiving always restarts it from zero rather than resuming it.
+     *
+     * Unlike this service's other cleanup subroutines, this one delegates to
+     * `PlatformsService.purgeExpiredArchives()` instead of running a plain Prisma `deleteMany`
+     * directly: permanently deleting a platform has real side effects beyond the database row
+     * (stopping its Docker runtime if still running, removing its generated project directory
+     * from disk) that only `PlatformsService` has the collaborators to perform correctly.
+     * * @returns The count of platforms permanently deleted.
+     */
+    private async cleanupArchivedPlatforms(): Promise<number> {
+        try {
+            const retentionDays = this.getPositiveIntegerConfig(
+                'PLATFORM_ARCHIVE_RETENTION_DAYS',
+                30,
+            );
+
+            const purgedCount = await this.platforms.purgeExpiredArchives(retentionDays);
+
+            if (purgedCount > 0) {
+                this.logger.log(
+                    `Archived platform cleanup: ${purgedCount} platform(s) permanently deleted ` +
+                    `after ${retentionDays} consecutive day(s) archived.`,
+                );
+            } else {
+                this.logger.debug('Archived platform cleanup: nothing to delete.');
+            }
+
+            return purgedCount;
+        } catch (error) {
+            this.logCleanupError('archived platforms', error);
             return 0;
         }
     }

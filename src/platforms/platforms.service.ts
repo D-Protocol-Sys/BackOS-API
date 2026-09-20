@@ -1,10 +1,12 @@
 import {
     Injectable,
+    Logger,
     NotFoundException,
     ForbiddenException,
     BadRequestException,
     ConflictException,
 } from '@nestjs/common';
+import * as fs from 'fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreatePlatformDto } from './dto/create-platform.dto';
 import { UpdatePlatformDto } from './dto/update-platform.dto';
@@ -14,6 +16,8 @@ import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { slugify } from '../common/utils/slugify.util';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { PlatformRole, UserStatus } from '@prismamodels/client';
+import { DockerRuntimeManagerService } from '../generator/docker-runtime-manager.service';
+import { ProjectScaffolderService } from '../generator/project-scaffolder.service';
 
 /**
  * Type defining the requesting user (actor) details, including ID and global system permissions.
@@ -36,7 +40,13 @@ const ROLE_WEIGHT: Record<PlatformRole, number> = {
 @Injectable()
 export class PlatformsService {
 
-    constructor(private readonly prisma: PrismaService) {}
+    private readonly logger = new Logger(PlatformsService.name);
+
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly runtimeManager: DockerRuntimeManagerService,
+        private readonly scaffolder: ProjectScaffolderService,
+    ) {}
 
     /**
      * Creates a new platform entity owned by the requesting actor.
@@ -106,6 +116,18 @@ export class PlatformsService {
 
     /**
      * Soft-deletes/archives a platform. Reserved for owner or global delete permission holders.
+     *
+     * Two things happen together, deliberately, so "archived" actually means something rather
+     * than just hiding the platform from the default list view:
+     *   1. Its runtime is stopped, if currently running - an archived platform has no business
+     *      still occupying CPU/RAM/a port on the host indefinitely. Best-effort: a stop failure
+     *      is logged but never blocks archiving itself (the platform still gets archived even
+     *      if, say, Docker is temporarily unreachable - the retention-window purge below will
+     *      simply retry the stop when it runs).
+     *   2. `archivedAt` is stamped with the current time - `CleanupService` permanently deletes
+     *      this platform once `archivedAt` is more than the configured retention window (default
+     *      30 days) in the past. See `restore()` for why re-archiving later always restarts this
+     *      countdown from zero instead of resuming it.
      */
     async archive(actor: Actor, id: string) {
         const platform = await this.findPlatformOrThrow(id);
@@ -114,11 +136,20 @@ export class PlatformsService {
         if (platform.status === 'ARCHIVED') {
             throw new BadRequestException('This platform is already archived.');
         }
-        return this.prisma.platform.update({ where: { id }, data: { status: 'ARCHIVED' } });
+
+        await this.stopRuntimeBestEffort(platform.id);
+
+        return this.prisma.platform.update({
+            where: { id },
+            data: { status: 'ARCHIVED', archivedAt: new Date() },
+        });
     }
 
     /**
-     * Restores an archived platform back to DRAFT status.
+     * Restores an archived platform back to DRAFT status and clears `archivedAt` - this is what
+     * makes the 30-day countdown restart from zero rather than resume if the platform is
+     * archived again later: `archive()` always writes a brand new timestamp, and there is no
+     * trace of the earlier one left to fall back to.
      */
     async restore(actor: Actor, id: string) {
         const platform = await this.findPlatformOrThrow(id);
@@ -127,7 +158,121 @@ export class PlatformsService {
         if (platform.status !== 'ARCHIVED') {
             throw new BadRequestException('This platform is not archived.');
         }
-        return this.prisma.platform.update({ where: { id }, data: { status: 'DRAFT' } });
+        return this.prisma.platform.update({
+            where: { id },
+            data: { status: 'DRAFT', archivedAt: null },
+        });
+    }
+
+    /**
+     * Permanently and irreversibly deletes a platform: stops its runtime if still running,
+     * removes its generated project directory from disk, then deletes its database row (cascade
+     * rules in schema.prisma take care of its entities/fields/relations/generations/database
+     * record/planning; Clients and Projects are decoupled via `onDelete: SetNull` rather than
+     * deleted, since that business data can outlive the platform it was modeled on).
+     *
+     * Requires the platform to already be ARCHIVED - there is no direct "delete a live platform"
+     * path. This is intentional: archiving first (even if immediately followed by this call) is
+     * the only way to permanently delete a platform, so nothing gets permanently destroyed
+     * without at least passing through the reversible, visible ARCHIVED state first.
+     */
+    async purge(actor: Actor, id: string) {
+        const platform = await this.findPlatformOrThrow(id);
+        this.assertOwnerOrGlobalPermission(actor, platform, PERMISSIONS.PLATFORM_DELETE);
+
+        if (platform.status !== 'ARCHIVED') {
+            throw new BadRequestException(
+                'Only an archived platform can be permanently deleted. Archive it first with ' +
+                'DELETE /platforms/:id.',
+            );
+        }
+
+        await this.purgePlatform(platform.id, platform.slug);
+        return { message: 'Platform permanently deleted.' };
+    }
+
+    /**
+     * Called daily by `CleanupService`. Permanently deletes every platform that has been
+     * continuously ARCHIVED for longer than `retentionDays` - see `purge()` for exactly what
+     * "permanently deleted" removes. Each platform is purged independently inside its own
+     * try/catch so one failure (e.g. a locked file, a Docker hiccup) never blocks the rest of
+     * the batch; the caller (CleanupService) logs and swallows failures the same way its other
+     * cleanup subroutines already do.
+     *
+     * @returns The count of platforms permanently deleted.
+     */
+    async purgeExpiredArchives(retentionDays: number): Promise<number> {
+        const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+
+        const expired = await this.prisma.platform.findMany({
+            where: { status: 'ARCHIVED', archivedAt: { not: null, lt: cutoff } },
+            select: { id: true, slug: true },
+        });
+
+        let purgedCount = 0;
+        for (const platform of expired) {
+            try {
+                await this.purgePlatform(platform.id, platform.slug);
+                purgedCount++;
+            } catch (error) {
+                this.logger.error(
+                    `Failed to auto-purge archived platform ${platform.id} (${platform.slug}) ` +
+                    `after retention window expired.`,
+                    error instanceof Error ? error.stack : String(error),
+                );
+            }
+        }
+
+        return purgedCount;
+    }
+
+    /**
+     * Shared implementation behind `purge()` (manual, immediate) and `purgeExpiredArchives()`
+     * (automatic, after the retention window) - stop runtime, remove files, delete the row.
+     * Each step is best-effort/defensive on its own: a platform that was already stopped, or
+     * whose generated directory was already removed, must not make the overall purge fail.
+     */
+    private async purgePlatform(platformId: string, slug: string): Promise<void> {
+        await this.stopRuntimeBestEffort(platformId);
+
+        try {
+            await fs.rm(this.scaffolder.getSlugRootPath(slug), { recursive: true, force: true });
+        } catch (error) {
+            // `force: true` already swallows ENOENT (directory never existed / already
+            // removed); anything else is worth knowing about but must not abort the purge -
+            // the database row is the source of truth, and leaving one directory behind is a
+            // far smaller problem than leaving the platform (and its running container, if the
+            // stop above failed too) permanently un-deletable.
+            this.logger.warn(
+                `Could not fully remove generated files for platform ${platformId} (${slug}) ` +
+                `during purge.`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        }
+
+        // Cascade rules in schema.prisma handle every dependent row from here.
+        await this.prisma.platform.delete({ where: { id: platformId } });
+    }
+
+    /**
+     * Stops a platform's Docker runtime if it is currently running, swallowing the "not
+     * currently running" case (nothing to do) and logging - but never throwing - any other
+     * failure, since this is always called as a side effect of archiving/purging, never as the
+     * primary action the caller is waiting on.
+     */
+    private async stopRuntimeBestEffort(platformId: string): Promise<void> {
+        try {
+            await this.runtimeManager.stop(platformId);
+        } catch (error) {
+            if (error instanceof BadRequestException) {
+                // "This backend is not currently running." - expected and fine.
+                return;
+            }
+            this.logger.warn(
+                `Could not stop runtime for platform ${platformId} while archiving/purging it.`,
+                error instanceof Error ? error.stack : String(error),
+            );
+        }
     }
 
     /**

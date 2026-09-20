@@ -29,6 +29,7 @@ cd "$ROOT_DIR"
 
 # Standardized Docker Compose invocation commands configured as Bash arrays
 DEV_COMPOSE=(docker compose -p "${PROJECT_NAME:-monprojet}-dev" -f docker-compose.yml --env-file .env)
+LOCAL_COMPOSE=(docker compose -p "${PROJECT_NAME:-monprojet}-local" -f deploy/docker-compose.local.yml --env-file .env.local)
 EDGE_COMPOSE=(docker compose -p "${PROJECT_NAME:-monprojet}-edge" -f deploy/docker-compose.edge.yml --env-file .env.production)
 PROD_COMPOSE=(docker compose -p "${PROJECT_NAME:-monprojet}-prod" -f deploy/docker-compose.prod.yml --env-file .env.production)
 DEMO_COMPOSE=(docker compose -p "${PROJECT_NAME:-monprojet}-demo" -f deploy/docker-compose.demo.yml --env-file .env.demo)
@@ -82,6 +83,12 @@ up_dev() {
     "${DEV_COMPOSE[@]}" up -d --build --wait
 }
 
+up_local() {
+    require_env_file .env.local
+    echo "==> [local] Starting LAN-only/internal stack (no domain, no TLS, no edge)..."
+    "${LOCAL_COMPOSE[@]}" up -d --build --wait
+}
+
 # ------------------------------------------------------------------------------
 # COMMAND DISPATCHER
 # ------------------------------------------------------------------------------
@@ -95,11 +102,12 @@ target="${2:-all}"
 case "$cmd" in
     up)
         case "$target" in
-            all)  up_edge; up_prod; up_demo; up_dev ;;
-            edge) up_edge ;;
-            prod) up_prod ;;
-            demo) up_demo ;;
-            dev)  up_dev ;;
+            all)   up_edge; up_prod; up_demo; up_dev ;;
+            edge)  up_edge ;;
+            prod)  up_prod ;;
+            demo)  up_demo ;;
+            dev)   up_dev ;;
+            local) up_local ;;
             *) echo "❌ Unknown target: $target" >&2; exit 1 ;;
         esac
         echo "✅ Operation completed successfully. Run './scripts/stack.sh ps' to verify status."
@@ -113,11 +121,16 @@ case "$cmd" in
                 "${DEMO_COMPOSE[@]}" down
                 "${PROD_COMPOSE[@]}" down
                 "${EDGE_COMPOSE[@]}" down
+                # "local" is intentionally NOT part of "all" - it is a standalone/internal
+                # stack (no edge dependency) most people running dev+demo+prod together will
+                # never have started in the first place; stop it explicitly with
+                # `./scripts/stack.sh down local` instead.
                 ;;
-            edge) "${EDGE_COMPOSE[@]}" down ;;
-            prod) "${PROD_COMPOSE[@]}" down ;;
-            demo) "${DEMO_COMPOSE[@]}" down ;;
-            dev)  "${DEV_COMPOSE[@]}" down ;;
+            edge)  "${EDGE_COMPOSE[@]}" down ;;
+            prod)  "${PROD_COMPOSE[@]}" down ;;
+            demo)  "${DEMO_COMPOSE[@]}" down ;;
+            dev)   "${DEV_COMPOSE[@]}" down ;;
+            local) "${LOCAL_COMPOSE[@]}" down ;;
             *) echo "❌ Unknown target: $target" >&2; exit 1 ;;
         esac
         ;;
@@ -140,28 +153,31 @@ case "$cmd" in
         fi
 
         case "$target" in
-            prod) "${PROD_COMPOSE[@]}" down -v ;;
-            demo) "${DEMO_COMPOSE[@]}" down -v ;;
-            dev)  "${DEV_COMPOSE[@]}" down -v ;;
-            edge) "${EDGE_COMPOSE[@]}" down -v ;;
+            prod)  "${PROD_COMPOSE[@]}" down -v ;;
+            demo)  "${DEMO_COMPOSE[@]}" down -v ;;
+            dev)   "${DEV_COMPOSE[@]}" down -v ;;
+            edge)  "${EDGE_COMPOSE[@]}" down -v ;;
+            local) "${LOCAL_COMPOSE[@]}" down -v ;;
             *) echo "❌ Unknown target: $target" >&2; exit 1 ;;
         esac
         ;;
 
     ps)
         # Display runtime status for all stacks, muting output if stack is offline
-        echo "=== [ EDGE ] ==="; "${EDGE_COMPOSE[@]}" ps 2>/dev/null || true
-        echo "=== [ PROD ] ==="; "${PROD_COMPOSE[@]}" ps 2>/dev/null || true
-        echo "=== [ DEMO ] ==="; "${DEMO_COMPOSE[@]}" ps 2>/dev/null || true
-        echo "=== [ DEV  ] ==="; "${DEV_COMPOSE[@]}" ps 2>/dev/null || true
+        echo "=== [ EDGE  ] ==="; "${EDGE_COMPOSE[@]}" ps 2>/dev/null || true
+        echo "=== [ PROD  ] ==="; "${PROD_COMPOSE[@]}" ps 2>/dev/null || true
+        echo "=== [ DEMO  ] ==="; "${DEMO_COMPOSE[@]}" ps 2>/dev/null || true
+        echo "=== [ DEV   ] ==="; "${DEV_COMPOSE[@]}" ps 2>/dev/null || true
+        echo "=== [ LOCAL ] ==="; "${LOCAL_COMPOSE[@]}" ps 2>/dev/null || true
         ;;
 
     logs)
         case "$target" in
-            prod) "${PROD_COMPOSE[@]}" logs -f ;;
-            demo) "${DEMO_COMPOSE[@]}" logs -f ;;
-            dev)  "${DEV_COMPOSE[@]}" logs -f ;;
-            edge) "${EDGE_COMPOSE[@]}" logs -f ;;
+            prod)  "${PROD_COMPOSE[@]}" logs -f ;;
+            demo)  "${DEMO_COMPOSE[@]}" logs -f ;;
+            dev)   "${DEV_COMPOSE[@]}" logs -f ;;
+            edge)  "${EDGE_COMPOSE[@]}" logs -f ;;
+            local) "${LOCAL_COMPOSE[@]}" logs -f ;;
             *) echo "❌ Unknown target: $target" >&2; exit 1 ;;
         esac
         ;;

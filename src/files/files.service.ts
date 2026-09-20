@@ -6,6 +6,7 @@ import { PlanningService } from '../planning/planning.service';
 import { ALLOWED_FILE_TYPES } from './file-type.constant';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { resolveUploadDir } from './multer.config';
+import { matchesFileSignature, SIGNATURE_SAMPLE_BYTES } from './file-signature.util';
 
 /**
  * Type representing the authenticated user performing the file action.
@@ -54,7 +55,23 @@ export class FilesService {
             );
         }
 
-        // 3. Verify user permissions on associated resources before establishing attachment links.
+        // 3. SECURITY FIX (independent audit finding, previously written but never wired up):
+        // `file.mimetype` is just the client-supplied `Content-Type` of the multipart field -
+        // trivially spoofed (e.g. uploading an HTML/script payload declared as `image/png`).
+        // Read back the first bytes Multer actually wrote to disk and confirm they match the
+        // magic-byte signature expected for the declared type BEFORE persisting any metadata
+        // or granting the file a trusted-looking extension. See `file-signature.util.ts` for
+        // the full rationale and the deliberate fail-open behaviour on MIME types with no
+        // known signature (heuristic-only formats like `text/csv`/`text/plain`).
+        const signatureOk = await this.verifyFileSignature(file);
+        if (!signatureOk) {
+            await this.safeDeleteFromDisk(file.filename);
+            throw new BadRequestException(
+                'File content does not match its declared type. Upload rejected.',
+            );
+        }
+
+        // 4. Verify user permissions on associated resources before establishing attachment links.
         if (planningEntryId) {
             /*
              * Verify that the user has edit permissions for the target planning entry 
@@ -63,7 +80,7 @@ export class FilesService {
             await this.planningService.assertCanEditEntry(actor, planningEntryId);
         }
 
-        // 4. Save file metadata in database central storage.
+        // 5. Save file metadata in database central storage.
         return this.prisma.fileAsset.create({
             data: {
                 uploaderId: actor.userId,
@@ -76,6 +93,37 @@ export class FilesService {
                 planningEntryId,
             },
         });
+    }
+
+    /**
+     * Reads back the leading bytes of a just-written upload from disk and checks them against
+     * the magic-byte signature expected for the MIME type the client declared. Kept as its own
+     * method so the read is isolated and easy to unit-test / reason about independently of the
+     * rest of `saveUploadedFile()`'s flow.
+     *
+     * @param file - Express Multer file object (already written to disk by the time this runs).
+     * @returns `true` if the sampled bytes match the declared type (or the type has no known
+     *   signature - see `matchesFileSignature`), `false` otherwise.
+     */
+    private async verifyFileSignature(file: Express.Multer.File): Promise<boolean> {
+        const diskPath = path.join(resolveUploadDir(), file.filename);
+        let handle: fs.FileHandle | undefined;
+        try {
+            handle = await fs.open(diskPath, 'r');
+            const { buffer, bytesRead } = await handle.read(
+                Buffer.alloc(SIGNATURE_SAMPLE_BYTES),
+                0,
+                SIGNATURE_SAMPLE_BYTES,
+                0,
+            );
+            return matchesFileSignature(file.mimetype, buffer.subarray(0, bytesRead));
+        } catch {
+            // If the file can't even be read back (disk error, race condition), fail closed:
+            // treat it as a signature mismatch rather than silently accepting an unverified file.
+            return false;
+        } finally {
+            await handle?.close();
+        }
     }
 
     /**

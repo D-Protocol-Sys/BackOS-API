@@ -361,6 +361,17 @@ export class ProjectScaffolderService {
     }
 
     /**
+     * Public wrapper around the slug's top-level generated directory (the parent of `backend/`,
+     * so it covers everything ever written for this platform, not just the app code itself).
+     * Used by `PlatformsService.purge()`/`purgeExpiredArchives()` to remove every on-disk trace
+     * of a platform being permanently deleted, without duplicating the path-building logic (and
+     * risking it drifting out of sync with `resolveProjectPath()`/`getGeneratedRoot()` above).
+     */
+    getSlugRootPath(slug: string): string {
+        return path.join(this.getGeneratedRoot(), slug);
+    }
+
+    /**
      * Computes absolute path for the generated project output directory based on environment variables.
      */
     private getGeneratedRoot(): string {

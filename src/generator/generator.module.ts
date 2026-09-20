@@ -32,11 +32,13 @@ import { ApiManifestService } from './api-manifest.service';
         PortAllocatorService,
         GenerationProcessor,
         GenerationCancellationRegistry,
+        // NOTE: this comment previously read "registered but not injected anywhere yet" - that
+        // is no longer accurate. GeneratorController's runtime/start, runtime/stop, runtime/
+        // status and runtime/logs routes are wired directly to DockerRuntimeManagerService
+        // below, not to this native-process implementation. RuntimeManagerService is kept
+        // registered for local/no-Docker setups that still construct it directly, but nothing
+        // in this module currently routes traffic to it.
         RuntimeManagerService,
-        // Registered but NOT injected anywhere yet - opt-in Docker isolation for generated
-        // backends. See the class-level comment on DockerRuntimeManagerService for what it
-        // takes to actually switch GeneratorController over to it (Docker must be available on
-        // the host running this orchestrator).
         DockerRuntimeManagerService,
         ApiManifestService,
     ],
@@ -45,7 +47,11 @@ import { ApiManifestService } from './api-manifest.service';
         ProvisioningService,
         SchemaBuilderService,
         ProjectScaffolderService,
-        PortAllocatorService
+        PortAllocatorService,
+        // Exported so PlatformsModule can stop a platform's runtime as part of archiving it,
+        // and remove its on-disk generated project directory as part of permanently deleting
+        // it - see PlatformsService.archive()/purge().
+        DockerRuntimeManagerService,
     ],
 
 })

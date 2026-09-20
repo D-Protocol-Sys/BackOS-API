@@ -134,6 +134,7 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         update: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.update().',
         archive: 'Scoped via CurrentUser + ownership checked in PlatformsService.archive().',
         restore: 'Scoped via CurrentUser + ownership checked in PlatformsService.restore().',
+        purge: 'Scoped via CurrentUser + ownership checked in PlatformsService.purge().',
         transferOwnership: 'Scoped via CurrentUser + current-owner check in PlatformsService.transferOwnership().',
         listMembers: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.listMembers().',
         addMember: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.addMember().',

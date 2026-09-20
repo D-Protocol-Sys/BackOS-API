@@ -1,0 +1,87 @@
+# ==============================================================================
+# DOCKER COMPOSE CONFIGURATION: LOCAL DEVELOPMENT DEPENDENCIES (Postgres + Redis)
+# ==============================================================================
+# Purpose: Provides ONLY the two stateful dependencies (Postgres, Redis) for local
+#          development. The NestJS app itself is NOT containerized here - run it
+#          natively on the host with hot-reload:
+#
+#              cp .env.development.example .env   # fill in the REPLACE_ME values
+#              docker compose up -d                # starts postgres-dev + redis-dev
+#              pnpm install
+#              pnpm exec prisma generate
+#              pnpm exec prisma migrate deploy
+#              pnpm run start:dev
+#
+# This file was referenced by scripts/stack.sh (`up_dev`) and by the header
+# comment of .env.development.example, but was missing from earlier exports of
+# this repository - see docs/README.md > "État de l'outillage de déploiement"
+# for the full explanation. It intentionally mirrors deploy/docker-compose.test.yml
+# (same postgres-init scripts, same provisioning-role mechanism) so dev and the
+# automated e2e harness behave identically - just with standard ports (5432/6379,
+# not the test harness's offset 5433/6380) and a persistent named volume instead
+# of tmpfs, so your dev data survives a restart.
+# ==============================================================================
+
+version: "3.8"
+
+networks:
+  dev:
+    name: ${PROJECT_NAME}-dev
+    driver: bridge
+
+volumes:
+  postgres-dev-data:
+    name: ${PROJECT_NAME:-monprojet}-dev-postgres-data
+
+services:
+
+  postgres-dev:
+    image: postgres:16-alpine
+    container_name: ${PROJECT_NAME:-monprojet}-dev-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-monprojet_dev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-dev}
+      POSTGRES_DB: ${POSTGRES_DB:-monprojet_dev}
+      POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE:-monprojet_provisioner}
+      POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD:-change-me-dev-provisioner}
+    # Loopback-only: this is a dev dependency for the app running natively on THIS
+    # machine, never meant to be reachable from another device on the network.
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-dev-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - dev
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-monprojet_dev}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+    deploy:
+      resources:
+        limits:
+          cpus: "1.00"
+          memory: 512M
+
+  redis-dev:
+    image: redis:7-alpine
+    container_name: ${PROJECT_NAME:-monprojet}-dev-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    networks:
+      - dev
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 3s
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 256M

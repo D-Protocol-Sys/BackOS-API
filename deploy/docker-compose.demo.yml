@@ -114,7 +114,16 @@ services:
     env_file:
       - ../.env.demo              # Loads environment configuration variables
     environment:
-      DOCKER_HOST: tcp://${PROJECT_NAME}-edge-docker-proxy:2375
+      # SECURITY: intentionally NOT set here (unlike prod). The `demo` role (see seed-demo.ts)
+      # only ever gets *_READ permissions - it can never call a generation/start/stop endpoint,
+      # so this container has no legitimate use for Docker orchestration access. Granting it
+      # DOCKER_HOST anyway would hand a public-facing, internet-exposed container a live path to
+      # the docker-socket-proxy (create/start containers, build images) for zero functional
+      # benefit - if this container is ever compromised via an app-level RCE (not just a demo
+      # account login), that unused credential is exactly what would let an attacker pivot from
+      # "demo container" to "things running on this Docker host", including the LAN/prod stack.
+      # Removing it does not break anything: the demo role's permissions already block every
+      # code path that would need it.
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
       POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
       PROVISION_HOST: postgres

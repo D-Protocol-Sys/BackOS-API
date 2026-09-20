@@ -152,6 +152,7 @@ enum ContractStatus {
   EXPIRED
   TERMINATED
   CANCELED
+  ARCHIVED
 }
 
 enum ProjectStatus {
@@ -423,6 +424,8 @@ model Platform {
   runtimePid       Int?
   runtimeStartedAt DateTime?
 
+  archivedAt       DateTime?
+
   ownerId          String
   owner            User              @relation("PlatformOwner", fields: [ownerId], references: [id])
 
@@ -618,10 +621,18 @@ model FileAsset {
   planningEntryId String?
   planningEntry   PlanningEntry? @relation(fields: [planningEntryId], references: [id], onDelete: SetNull)
 
+  projectId       String?
+  project         Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  contractId      String?
+  contract        ClientContract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+
   createdAt       DateTime      @default(now())
 
   @@index([uploaderId])
   @@index([planningEntryId])
+  @@index([projectId])
+  @@index([contractId])
   @@map("file_assets")
 }
 
@@ -943,6 +954,11 @@ model Client {
   testimonialToken          String?         @unique
   testimonialTokenExpiresAt DateTime?
 
+  // Set the instant the client is archived, cleared the instant it is restored - mirrors
+  // Platform.archivedAt exactly. See ClientsService.archive()/restore()/purgeExpiredArchives()
+  // and CleanupService.cleanupArchivedClients().
+  archivedAt                DateTime?
+
   customServiceScope        String?
 
   platformId                String?
@@ -952,6 +968,7 @@ model Client {
   updatedAt                 DateTime        @updatedAt
 
   contracts                 ClientContract[]
+  projects                  Project[]
 
   @@index([platformId])
   @@index([status])
@@ -970,14 +987,19 @@ model ClientContract {
   billingAmount  Float?
   currency       String         @default("EUR")
   serviceKey     String?
-  documentUrl    String?
 
   clientId       String
   client         Client         @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
+  files          FileAsset[]
+
   signedAt       DateTime?
   startedAt      DateTime?
   expiresAt      DateTime?
+
+  archivedAt     DateTime?
+
+  projects       Project[]
 
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
@@ -1002,6 +1024,12 @@ model Project {
   platformId  String?
   platform    Platform?     @relation(fields: [platformId], references: [id], onDelete: SetNull)
 
+  clientId    String?
+  client      Client?       @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  contractId  String?
+  contract    ClientContract? @relation(fields: [contractId], references: [id], onDelete: SetNull)
+
   managerId   String?
   manager     User?         @relation("ProjectManager", fields: [managerId], references: [id], onDelete: SetNull)
 
@@ -1009,12 +1037,16 @@ model Project {
   targetEndAt DateTime?
   completedAt DateTime?
 
+  entries     PlanningEntry[]
+
+  files       FileAsset[]
+
   createdAt   DateTime      @default(now())
   updatedAt   DateTime      @updatedAt
 
-  entries     PlanningEntry[]
-
   @@index([platformId])
+  @@index([clientId])
+  @@index([contractId])
   @@index([managerId])
   @@index([status])
   @@map("projects")

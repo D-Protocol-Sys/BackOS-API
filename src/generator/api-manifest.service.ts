@@ -101,9 +101,12 @@ export class ApiManifestService {
         return {
             platform: { id: platform.id, slug: platform.slug },
             // Public entry point once the platform is generated AND running - see
-            // `src/gateway/GATEWAY_README.md`. Direct-to-process access is intentionally never
-            // exposed here, only the public gateway path.
-            publicBaseUrl: `${gatewayPrefix}/${platform.slug}/api`,
+            // `src/gateway/GATEWAY_README.md`. NOTE: no trailing `/api` segment - the gateway
+            // proxy (`generated-backend-proxy.middleware.ts`) rewrites `/generated/<slug>/...`
+            // straight to the generated backend's own routes (e.g.
+            // `/generated/portfolio/getprojects`, never `/generated/portfolio/api/...`); `/api`
+            // was never part of the real public path and following it as written would 404.
+            publicBaseUrl: `${gatewayPrefix}/${platform.slug}`,
             generatedAt: new Date().toISOString(),
             resourceCount: resources.length,
             resources,
@@ -173,7 +176,9 @@ export class ApiManifestService {
                 requiresAuth: entity.authProtectDelete,
                 description: `Delete a ${modelName}.`,
                 requestBody: null,
-                responseBody: null,
+                // CrudGeneratorService's remove() returns `{ message: '<Model> deleted.' }`,
+                // not an empty body - see buildService() in crud-generator.service.ts.
+                responseBody: [{ name: 'message', type: 'string', required: true }],
             },
         ];
 
@@ -199,7 +204,14 @@ export class ApiManifestService {
 
         for (const relation of relations) {
             if (relation.hasScalarFk) {
-                shapes.push({ name: `${relation.fieldName}Id`, type: 'string (UUID)', required: false });
+                // Always required, matching CrudGeneratorService.buildRelationDtoFields():
+                // `isOptional = forceOptional`, and forceOptional is `false` for the create
+                // path - so the real CreateXxxDto never marks a scalar FK as optional,
+                // regardless of whether the underlying relation itself is nullable. (The
+                // PATCH endpoint below still forces every writable field to `required: false`
+                // on top of this, which is correct - buildRelationDtoFields does the same for
+                // updates via its own `forceOptional` there.)
+                shapes.push({ name: `${relation.fieldName}Id`, type: 'string (UUID)', required: true });
             } else if (relation.isManyToMany) {
                 shapes.push({ name: `${relation.fieldName}Ids`, type: 'string (UUID)[]', required: false });
             }
@@ -237,13 +249,20 @@ export class ApiManifestService {
             } else if (relation.hasScalarFk) {
                 shapes.push({ name: `${relation.fieldName}Id`, type: 'string (UUID)', required: false });
                 shapes.push({ name: relation.fieldName, type: relation.targetModelName, required: false });
-            } else {
-                shapes.push({
-                    name: relation.fieldName,
-                    type: relation.isList ? `${relation.targetModelName}[]` : relation.targetModelName,
-                    required: false,
-                });
+            } else if (relation.isList) {
+                // The "one" side of a one-to-many relation: no scalar FK on this side, but
+                // still a real array field in the response, because CrudGeneratorService's
+                // `directRelations = relations.filter(r => r.hasScalarFk || r.isList)` picks
+                // it up for the Prisma `include` clause via `isList`, same as the M2M branch
+                // above.
+                shapes.push({ name: relation.fieldName, type: `${relation.targetModelName}[]`, required: false });
             }
+            // else: the "virtual"/non-owning side of a one-to-one relation
+            // (hasScalarFk: false, isList: false, isManyToMany: false). Deliberately NOT added
+            // here - it fails that same `hasScalarFk || isList` test, so the real generated
+            // backend's Prisma `include` clause never fetches it and this field will always be
+            // absent from the actual JSON response. Listing it here would document a field
+            // that never actually shows up.
         }
 
         shapes.push({ name: 'createdAt', type: 'string (ISO date)', required: true });

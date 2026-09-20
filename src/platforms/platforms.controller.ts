@@ -70,7 +70,9 @@ export class PlatformsController {
     }
 
     /**
-     * Archives a platform (soft delete).
+     * Archives a platform (soft delete): stops its runtime if running and starts its 30-day
+     * (configurable) permanent-deletion countdown. Reversible via `PATCH /:id/restore` at any
+     * point before that window elapses.
      * * @route DELETE /platforms/:id
      */
     @Delete(':id')
@@ -79,12 +81,26 @@ export class PlatformsController {
     }
 
     /**
-     * Restores an archived platform back to active/draft status.
+     * Restores an archived platform back to active/draft status and cancels its pending
+     * permanent-deletion countdown.
      * * @route PATCH /platforms/:id/restore
      */
     @Patch(':id/restore')
     restore(@CurrentUser() actor: Actor, @Param('id') id: string) {
         return this.platformsService.restore(actor, id);
+    }
+
+    /**
+     * Immediately and irreversibly deletes an already-archived platform, without waiting for
+     * its retention window to elapse: stops its runtime, deletes its generated files, and
+     * hard-deletes its database row (and everything cascading from it). Requires the platform
+     * to be ARCHIVED first (see `archive()`) - there is no way to permanently delete a platform
+     * that hasn't at least passed through the reversible archived state.
+     * * @route DELETE /platforms/:id/permanent
+     */
+    @Delete(':id/permanent')
+    purge(@CurrentUser() actor: Actor, @Param('id') id: string) {
+        return this.platformsService.purge(actor, id);
     }
 
     /**
