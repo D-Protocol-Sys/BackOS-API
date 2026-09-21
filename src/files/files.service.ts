@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -14,11 +14,21 @@ import { matchesFileSignature, SIGNATURE_SAMPLE_BYTES } from './file-signature.u
 type Actor = { userId: string; permissions: string[] };
 
 /**
+ * A file's parent, expressed as at most one set FK - see `assertSingleParent()`. All three are
+ * optional and independent because a `FileAsset` can attach to any one of them (or none at
+ * all, for a bare unattached upload), but never more than one at a time.
+ */
+type FileParent = { planningEntryId?: string; projectId?: string; contractId?: string };
+
+/**
  * Service managing uploaded file metadata, authorization controls, 
  * fine-grained size validation, and physical disk file lifecycle operations.
  */
 @Injectable()
 export class FilesService {
+
+    private readonly logger = new Logger(FilesService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly planningService: PlanningService,
@@ -29,14 +39,24 @@ export class FilesService {
      * Enforces strict MIME type specifications and category-specific size restrictions.
      * * @param actor - The user initiating the file upload.
      * @param file - Express Multer file object created during upload.
-     * @param planningEntryId - Optional ID of an associated planning entry.
+     * @param parent - At most one of `planningEntryId`/`projectId`/`contractId` - see
+     *   `assertSingleParent()`. Leave all unset for a bare unattached upload.
      * @returns The saved FileAsset record in database.
      */
     async saveUploadedFile(
         actor: Actor,
         file: Express.Multer.File,
-        planningEntryId?: string,
+        parent: FileParent = {},
     ) {
+        const { planningEntryId, projectId, contractId } = parent;
+
+        // SECURITY/CORRECTNESS: a FileAsset has three independent, nullable parent FKs at the
+        // schema level (Prisma has no native "exactly one of these" constraint) - this is the
+        // application-layer enforcement of "a file belongs to at most one parent" that the
+        // schema alone can't express. Checked BEFORE any disk I/O so a malformed request never
+        // even gets as far as writing a file.
+        this.assertSingleParent(parent);
+
         // 1. Verify that the file MIME type is allowed by the system configuration.
         const spec = ALLOWED_FILE_TYPES[file.mimetype];
         if (!spec) {
@@ -79,6 +99,12 @@ export class FilesService {
              */
             await this.planningService.assertCanEditEntry(actor, planningEntryId);
         }
+        if (projectId) {
+            await this.assertCanEditProject(actor, projectId);
+        }
+        if (contractId) {
+            await this.assertCanEditContract(actor, contractId);
+        }
 
         // 5. Save file metadata in database central storage.
         return this.prisma.fileAsset.create({
@@ -91,8 +117,54 @@ export class FilesService {
                 category: spec.category,
                 sizeBytes: file.size,
                 planningEntryId,
+                projectId,
+                contractId,
             },
         });
+    }
+
+    /**
+     * Rejects a request that sets more than one of `planningEntryId`/`projectId`/`contractId`
+     * at once. Zero set (a bare unattached upload) and exactly one set are both fine.
+     */
+    private assertSingleParent(parent: FileParent): void {
+        const setCount = [parent.planningEntryId, parent.projectId, parent.contractId].filter(
+            (value) => value !== undefined && value !== null && value !== '',
+        ).length;
+
+        if (setCount > 1) {
+            throw new BadRequestException(
+                'A file can be attached to at most one of planningEntryId, projectId or contractId - not several at once.',
+            );
+        }
+    }
+
+    /**
+     * Asserts the actor may attach/manage files on the given project: the project's manager,
+     * or a global `PROJECT_UPDATE` permission holder - mirrors
+     * `ProjectsService.assertManagerOrGlobalPermission()` exactly. Checked directly against
+     * Prisma here (rather than injecting `ProjectsService`) to avoid a module import cycle:
+     * `ProjectsModule` needs `FilesModule` (to purge a project's files when the project itself
+     * is deleted), so `FilesModule` cannot also depend on `ProjectsModule`.
+     */
+    private async assertCanEditProject(actor: Actor, projectId: string): Promise<void> {
+        const project = await this.prisma.project.findUnique({ where: { id: projectId } });
+        if (!project) throw new BadRequestException('Target project not found.');
+        if (project.managerId === actor.userId) return;
+        if (actor.permissions.includes(PERMISSIONS.PROJECT_UPDATE)) return;
+        throw new ForbiddenException('You do not have permission to attach files to this project.');
+    }
+
+    /**
+     * Asserts the actor may attach/manage files on the given contract. Contracts have no
+     * per-record ownership concept (see `ClientsService`) - authorization is the global
+     * `CONTRACT_UPDATE` permission, same as every other contract-mutating action.
+     */
+    private async assertCanEditContract(actor: Actor, contractId: string): Promise<void> {
+        if (actor.permissions.includes(PERMISSIONS.CONTRACT_UPDATE)) return;
+        const contract = await this.prisma.clientContract.findUnique({ where: { id: contractId } });
+        if (!contract) throw new NotFoundException('Contract not found.');
+        throw new ForbiddenException('You do not have permission to attach files to this contract.');
     }
 
     /**
@@ -158,6 +230,22 @@ export class FilesService {
             return file;
         }
 
+        // Inherited Access Rule: same idea, for a file attached to a project - readable by
+        // anyone who can read the project (manager, or global PROJECT_READ holder).
+        if (file.projectId) {
+            if (actor.permissions.includes(PERMISSIONS.PROJECT_READ)) return file;
+            const project = await this.prisma.project.findUnique({ where: { id: file.projectId } });
+            if (project?.managerId === actor.userId) return file;
+            throw new ForbiddenException('You do not have access to this file.');
+        }
+
+        // Inherited Access Rule: same idea, for a file attached to a contract - contracts have
+        // no per-record ownership, so this is the global CONTRACT_READ permission alone.
+        if (file.contractId) {
+            if (actor.permissions.includes(PERMISSIONS.CONTRACT_READ)) return file;
+            throw new ForbiddenException('You do not have access to this file.');
+        }
+
         throw new ForbiddenException('You do not have access to this file.');
     }
 
@@ -176,6 +264,10 @@ export class FilesService {
             if (file.planningEntryId) {
                 // Users with edit privileges on linked resource can also manage/delete its files.
                 await this.planningService.assertCanEditEntry(actor, file.planningEntryId);
+            } else if (file.projectId) {
+                await this.assertCanEditProject(actor, file.projectId);
+            } else if (file.contractId) {
+                await this.assertCanEditContract(actor, file.contractId);
             } else {
                 throw new ForbiddenException('Only the owner of the file can delete it.');
             }
@@ -185,6 +277,48 @@ export class FilesService {
         await this.safeDeleteFromDisk(file.storedName);
         await this.prisma.fileAsset.delete({ where: { id: fileId } });
         return { message: 'File deleted successfully.' };
+    }
+
+    /**
+     * System-level purge: deletes every `FileAsset` attached to the given project or contract
+     * (disk file + database row for each), with no `actor`/permission check - this is called
+     * exclusively from `ProjectsService.delete()` and `ClientsService`'s purge lifecycle
+     * (`purgeContractInternal()`), i.e. only after the caller has already authorized the
+     * destructive action on the *parent* resource. Exactly one of `projectId`/`contractId`
+     * must be given.
+     *
+     * Each file's disk removal is individually best-effort (mirrors `PlatformsService.
+     * purgePlatform()`'s own file cleanup) - one missing/locked file must not abort the rest of
+     * the batch or the parent purge that triggered it.
+     *
+     * @returns The count of files permanently deleted.
+     */
+    async purgeFilesForParent(parent: { projectId?: string; contractId?: string }): Promise<number> {
+        const { projectId, contractId } = parent;
+        if ((projectId && contractId) || (!projectId && !contractId)) {
+            throw new BadRequestException('purgeFilesForParent requires exactly one of projectId or contractId.');
+        }
+
+        const files = await this.prisma.fileAsset.findMany({
+            where: projectId ? { projectId } : { contractId },
+            select: { id: true, storedName: true },
+        });
+
+        let purgedCount = 0;
+        for (const file of files) {
+            try {
+                await this.safeDeleteFromDisk(file.storedName);
+                await this.prisma.fileAsset.delete({ where: { id: file.id } });
+                purgedCount++;
+            } catch (error) {
+                this.logger.warn(
+                    `Could not fully purge file ${file.id} for ${projectId ? `project ${projectId}` : `contract ${contractId}`}.`,
+                    error instanceof Error ? error.stack : String(error),
+                );
+            }
+        }
+
+        return purgedCount;
     }
 
     /**

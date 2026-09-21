@@ -126,7 +126,7 @@ export async function generateSchedulerFiles(
                 }
 
                 private async scheduleJob(task: {
-                    id: string; actionType: string; triggerType: string;
+                    id: string; actionType: string; triggerType: string; isActive: boolean;
                     runAt: Date | null; cronExpression: string | null; payload: unknown;
                 }) {
                     if (!task.isActive) return;
@@ -202,10 +202,57 @@ export async function generateSchedulerFiles(
             import { PrismaService } from '../prisma/prisma.service';
             import { TASKS_QUEUE_NAME } from './tasks.queue';
 
+            interface EmailTaskPayload {
+                to: string;
+                subject: string;
+                text: string;
+            }
+
+            interface WebhookTaskPayload {
+                url: string;
+                body?: Record<string, unknown>;
+            }
+
             interface TaskJobData {
                 taskId: string;
                 actionType: 'email' | 'webhook';
-                payload: Record<string, any>;
+                payload: Record<string, unknown>;
+            }
+
+            function isEmailTaskPayload(payload: unknown): payload is EmailTaskPayload {
+                if (!payload || typeof payload !== 'object') {
+                    return false;
+                }
+                const value = payload as Record<string, unknown>;
+                return (
+                    typeof value.to === 'string' &&
+                    typeof value.subject === 'string' &&
+                    typeof value.text === 'string'
+                );
+            }
+
+            function isWebhookTaskPayload(payload: unknown): payload is WebhookTaskPayload {
+                if (!payload || typeof payload !== 'object') {
+                    return false;
+                }
+
+                const value = payload as Record<string, unknown>;
+
+                if (typeof value.url !== 'string') {
+                    return false;
+                }
+
+                if (value.body !== undefined) {
+                    if (
+                        typeof value.body !== 'object' ||
+                        value.body === null ||
+                        Array.isArray(value.body)
+                    ) {
+                        return false;
+                    }
+                }
+
+                return true;
             }
 
             @Processor(TASKS_QUEUE_NAME)
@@ -221,8 +268,18 @@ export async function generateSchedulerFiles(
 
                     try {
                         if (actionType === 'email') {
+                            if (!isEmailTaskPayload(payload)) {
+                                throw new Error(
+                                    \`Invalid Payload email for task \${taskId}\`,
+                                );
+                            }
                             await this.runEmailAction(payload);
                         } else if (actionType === 'webhook') {
+                            if (!isWebhookTaskPayload(payload)) {
+                                throw new Error(
+                                    \`Invalid payload webhook invalide for task \${taskId}\`,
+                                );
+                            }
                             await this.runWebhookAction(payload);
                         }
                         await this.prisma.scheduledTask.update({
@@ -230,7 +287,7 @@ export async function generateSchedulerFiles(
                             data: { lastRunAt: new Date(), lastStatus: 'SUCCESS' },
                         });
                     } catch (error) {
-                        this.logger.error(\`Tâche \${taskId} échouée\`, error instanceof Error ? error.stack : String(error));
+                        this.logger.error(\`Task \${taskId} failed\`, error instanceof Error ? error.stack : String(error));
                         await this.prisma.scheduledTask.update({
                             where: { id: taskId },
                             data: { lastRunAt: new Date(), lastStatus: 'FAILED' },
@@ -238,13 +295,17 @@ export async function generateSchedulerFiles(
                     }
                 }
 
-                private async runEmailAction(payload: { to: string; subject: string; text: string }) {
+                private async runEmailAction(payload: EmailTaskPayload) {
                     const transporter = nodemailer.createTransport({
                         host: process.env.SMTP_HOST,
                         port: Number(process.env.SMTP_PORT),
                         secure: false,
-                        auth: { user: process.env.SMTP_USER, pass: process.env.SMTP_PASSWORD },
+                        auth: {
+                            user: process.env.SMTP_USER,
+                            pass: process.env.SMTP_PASSWORD,
+                        },
                     });
+
                     await transporter.sendMail({
                         from: process.env.SMTP_FROM || process.env.SMTP_USER,
                         to: payload.to,
@@ -253,13 +314,20 @@ export async function generateSchedulerFiles(
                     });
                 }
 
-                private async runWebhookAction(payload: { url: string; body?: Record<string, unknown> }) {
+                private async runWebhookAction(payload: WebhookTaskPayload) {
                     const response = await fetch(payload.url, {
                         method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
                         body: JSON.stringify(payload.body ?? {}),
                     });
-                    if (!response.ok) throw new Error(\`Webhook a répondu \${response.status}\`);
+
+                    if (!response.ok) {
+                        throw new Error(
+                            \`Webhook responded \${response.status}\`,
+                        );
+                    }
                 }
             }
         `,

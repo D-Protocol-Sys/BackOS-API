@@ -32,6 +32,11 @@ export class FilesController {
      * * @param actor - The authenticated user extracted from token/session.
      * @param file - File object uploaded via multipart form-data ('file' field).
      * @param planningEntryId - Optional body field linking file to a planning entry.
+     * @param projectId - Optional body field linking file to a project.
+     * @param contractId - Optional body field linking file to a contract.
+     *
+     * At most ONE of `planningEntryId`/`projectId`/`contractId` may be provided - see
+     * `FilesService.assertSingleParent()`.
      *
      * RATE LIMITING: uploads cost real disk I/O and storage space. `ThrottlerGuard` is no
      * longer global (see `app.module.ts`), so it is applied here explicitly with its own
@@ -45,8 +50,14 @@ export class FilesController {
         @CurrentUser() actor: Actor,
         @UploadedFile() file: Express.Multer.File,
         @Body('planningEntryId') planningEntryId?: string,
+        @Body('projectId') projectId?: string,
+        @Body('contractId') contractId?: string,
     ) {
-        return this.filesService.saveUploadedFile(actor, file, planningEntryId || undefined);
+        return this.filesService.saveUploadedFile(actor, file, {
+            planningEntryId: planningEntryId || undefined,
+            projectId: projectId || undefined,
+            contractId: contractId || undefined,
+        });
     }
 
     /**

@@ -34,11 +34,20 @@ export const SYSTEM_AUDIT_ACTIONS = {
     CLIENT_STATUS_CHANGED: 'client.status_changed',
     CLIENT_TESTIMONIAL_SUBMITTED: 'client.testimonial.submitted',
     CLIENT_TESTIMONIAL_TOGGLED: 'client.testimonial.toggled',
+    // Archive/restore/purge lifecycle (mirrors PlatformsService.archive()/restore()/purge() -
+    // see CleanupService.cleanupArchivedClients()): archiving stops nothing (a client has no
+    // runtime), but starts the same kind of retention countdown a platform gets.
+    CLIENT_ARCHIVED: 'client.archived',
+    CLIENT_RESTORED: 'client.restored',
+    CLIENT_PURGED: 'client.purged',
 
     // Contract Events
     CONTRACT_SIGNED: 'contract.signed',
     CONTRACT_EXPIRED: 'contract.expired',
     CONTRACT_TERMINATED: 'contract.terminated',
+    CONTRACT_ARCHIVED: 'contract.archived',
+    CONTRACT_RESTORED: 'contract.restored',
+    CONTRACT_PURGED: 'contract.purged',
 
     // INVITATION
     INVITATION_CREATED: 'invitation.created',
@@ -83,9 +92,15 @@ export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.CLIENT_STATUS_CHANGED]: 'Client lifecycle status was changed (e.g. Prospect to Active)',
     [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_SUBMITTED]: 'Client submitted a review or testimonial',
     [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_TOGGLED]: 'Client testimonial public visibility was changed',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_ARCHIVED]: 'Client was archived - permanently deleted after the retention window unless restored',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_RESTORED]: 'Archived client was restored, cancelling its pending deletion',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_PURGED]: 'Archived client was permanently deleted, along with its contracts and their files',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_SIGNED]: 'Contract was officially marked as signed',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_EXPIRED]: 'Contract reached its expiration date',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_TERMINATED]: 'Contract was terminated prior to expiration',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_ARCHIVED]: 'Contract was archived - permanently deleted after the retention window unless restored',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_RESTORED]: 'Archived contract was restored, cancelling its pending deletion',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_PURGED]: 'Archived contract was permanently deleted, along with its files',
 
     [SYSTEM_AUDIT_ACTIONS.INVITATION_CREATED]: 'A new user invitation was created',
     [SYSTEM_AUDIT_ACTIONS.INVITATION_SENT]: 'An invitation email was sent to a user',

@@ -118,6 +118,7 @@ export class ProjectScaffolderService {
 
             const prismaBlocks: string[] = [];
             const extraPnpmDeps: Record<string, string> = {};
+            const extraPnpmDevDeps: Record<string, string> = {};
             const extraEnvVars: Record<string, unknown> = {};
             const extraModules: { name: string; importPath: string }[] = [
                 // BUGFIX: `health.controller.ts`/`health.module.ts` were written to disk by
@@ -149,6 +150,7 @@ export class ProjectScaffolderService {
                 const blueprint = this.serviceCatalog.getByKey(service.serviceKey);
                 if (blueprint.prismaModels) { prismaBlocks.push(blueprint.prismaModels); }
                 Object.assign(extraPnpmDeps, blueprint.pnpmDependencies);
+                Object.assign(extraPnpmDevDeps, blueprint.pnpmDevDependencies ?? {});
                 const fullConfig = await this.platformServices.getFullDecryptedConfig(params.platformId, service.serviceKey);
                 Object.assign(extraEnvVars, fullConfig);
                 const generatorFn = SERVICE_FILE_GENERATORS[service.serviceKey];
@@ -190,7 +192,18 @@ export class ProjectScaffolderService {
 
             // Write core application configuration files, schema, and base templates
             await Promise.all([
-                fs.writeFile(path.join(projectPath, 'package.json'), JSON.stringify(packageJsonObject(params.slug, extraPnpmDeps), null, 2), 'utf8'),
+                fs.writeFile(
+                    path.join(projectPath, 'package.json'),
+                    JSON.stringify(
+                        packageJsonObject(params.slug, {
+                            dependencies: extraPnpmDeps,
+                            devDependencies: extraPnpmDevDeps,
+                        }),
+                        null,
+                        2,
+                    ),
+                    'utf8',
+                ),
                 fs.writeFile(path.join(projectPath, 'nest-cli.json'), NEST_CLI_JSON, 'utf8'),
                 fs.writeFile(path.join(projectPath, 'tsconfig.json'), TSCONFIG_JSON, 'utf8'),
                 fs.writeFile(path.join(projectPath, 'prisma.config.ts'), prismaConfigTemplate(), 'utf8'),

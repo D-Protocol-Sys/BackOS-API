@@ -155,6 +155,7 @@ export class ClientsController {
     @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
     @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
     @ApiQuery({ name: 'status', required: false, type: String })
+    @ApiQuery({ name: 'includeArchived', required: false, type: Boolean, description: 'Include archived clients (excluded by default)' })
     @ApiResponse({
         status: 200,
         description: 'Paginated client list retrieved successfully.',
@@ -171,8 +172,9 @@ export class ClientsController {
         @Query('page') page?: number,
         @Query('limit') limit?: number,
         @Query('status') status?: string,
+        @Query('includeArchived') includeArchived?: string,
     ) {
-        return this.clientsService.findAll(page, limit, status);
+        return this.clientsService.findAll(page, limit, status, includeArchived === 'true');
     }
 
     /**
@@ -196,8 +198,9 @@ export class ClientsController {
         @Param('platformId') platformId: string,
         @Query('page') page?: number,
         @Query('limit') limit?: number,
+        @Query('includeArchived') includeArchived?: string,
     ) {
-        return this.clientsService.findByPlatform(platformId, page, limit);
+        return this.clientsService.findByPlatform(platformId, page, limit, includeArchived === 'true');
     }
 
     /**
@@ -255,19 +258,23 @@ export class ClientsController {
     }
 
     /**
-     * Removes a client record from the database.
+     * Archives a client (soft delete): starts a retention countdown after which it (and every
+     * one of its contracts, with their attached files) is permanently deleted automatically -
+     * see `docs/README.md` §5 (mirrors the exact same lifecycle already in place for
+     * platforms). Reversible via `PATCH /clients/:id/restore` at any point before that window
+     * elapses.
      */
     @Delete(':id')
     @ApiBearerAuth()
     @RequirePermissions(PERMISSIONS.CLIENT_DELETE)
     @ApiOperation({
-        summary: 'Delete a client',
-        description: 'Deletes a client permanently and creates a delete audit record.',
+        summary: 'Archive a client',
+        description: 'Archives a client and starts its permanent-deletion countdown. Reversible via restore.',
     })
     @ApiParam({ name: 'id', description: 'Client unique identifier' })
     @ApiResponse({
         status: 200,
-        description: 'Client deleted successfully.',
+        description: 'Client archived successfully.',
     })
     @ApiResponse({
         status: 404,
@@ -278,7 +285,69 @@ export class ClientsController {
         @CurrentUser('userId') userId: string,
         @Req() req: any,
     ) {
-        return this.clientsService.delete(id, userId, {
+        return this.clientsService.archive(id, userId, {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        });
+    }
+
+    /**
+     * Restores an archived client, cancelling its pending permanent deletion.
+     */
+    @Patch(':id/restore')
+    @ApiBearerAuth()
+    @RequirePermissions(PERMISSIONS.CLIENT_DELETE)
+    @ApiOperation({
+        summary: 'Restore an archived client',
+        description: 'Restores an archived client back to ACTIVE and cancels its pending deletion.',
+    })
+    @ApiParam({ name: 'id', description: 'Client unique identifier' })
+    @ApiResponse({
+        status: 200,
+        description: 'Client restored successfully.',
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Client not found.',
+    })
+    restore(
+        @Param('id') id: string,
+        @CurrentUser('userId') userId: string,
+        @Req() req: any,
+    ) {
+        return this.clientsService.restore(id, userId, {
+        ipAddress: req.ip,
+        userAgent: req.headers['user-agent'],
+        });
+    }
+
+    /**
+     * Immediately and irreversibly deletes an already-archived client, without waiting for its
+     * retention window to elapse - along with every one of its contracts and their attached
+     * files. Requires the client to be ARCHIVED first (see `remove()` above).
+     */
+    @Delete(':id/permanent')
+    @ApiBearerAuth()
+    @RequirePermissions(PERMISSIONS.CLIENT_DELETE)
+    @ApiOperation({
+        summary: 'Permanently delete a client',
+        description: 'Immediately and irreversibly deletes an already-archived client, its contracts, and their files.',
+    })
+    @ApiParam({ name: 'id', description: 'Client unique identifier' })
+    @ApiResponse({
+        status: 200,
+        description: 'Client permanently deleted.',
+    })
+    @ApiResponse({
+        status: 404,
+        description: 'Client not found.',
+    })
+    purge(
+        @Param('id') id: string,
+        @CurrentUser('userId') userId: string,
+        @Req() req: any,
+    ) {
+        return this.clientsService.purge(id, userId, {
         ipAddress: req.ip,
         userAgent: req.headers['user-agent'],
         });

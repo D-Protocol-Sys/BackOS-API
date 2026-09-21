@@ -58,6 +58,25 @@ export class CreateProjectDto {
     platformId?: string;
 
     /**
+     * Optional client this project is being built for. See `ProjectsService.
+     * assertClientContractConsistency()`: if both `platformId` and `clientId` are given, the
+     * client must either be platform-agnostic (`Client.platformId === null`) or belong to that
+     * exact same platform - a project can't claim to be for platform A while billing a client
+     * scoped to platform B.
+     */
+    @IsOptional()
+    @IsUUID()
+    clientId?: string;
+
+    /**
+     * Optional contract governing this project. If `clientId` is also given, the contract must
+     * belong to that same client (see `assertClientContractConsistency()`).
+     */
+    @IsOptional()
+    @IsUUID()
+    contractId?: string;
+
+    /**
      * Optional manager for this project. Defaults to the creating user in the service layer
      * when omitted, so every project has a clear point of contact unless explicitly cleared
      * later via `UpdateProjectDto`.

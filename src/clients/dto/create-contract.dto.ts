@@ -4,6 +4,13 @@ import { ContractStatus } from '@prismamodels/client';
 /**
  * Data Transfer Object (DTO) for contract creation.
  * Validates basic metadata, pricing, lifecycle dates, and status enum.
+ *
+ * SCHEMA FIX: `documentUrl` (a free-text string) used to live here, but `ClientContract` no
+ * longer has that column - it was replaced by a proper `files: FileAsset[]` relation (see
+ * `schema.prisma`). A signed contract can now have several real, validated attachments
+ * (original + amendments) instead of a single unverified URL string that bypassed the upload
+ * pipeline's magic-byte signature check entirely. Attach files after creating the contract via
+ * `POST /files` with `contractId` in the body - see `FilesService.saveUploadedFile()`.
  */
 export class CreateContractDto {
     /**
@@ -74,15 +81,12 @@ export class CreateContractDto {
     expiresAt?: string;
 
     /**
-     * Direct link or URI pointing to the signed PDF document in storage.
-     */
-    @IsString()
-    @IsOptional()
-    documentUrl?: string;
-
-    /**
      * Lifecycle status of the contract (e.g., DRAFT, ACTIVE, EXPIRED).
-     * Validates against the ContractStatus enum.
+     * Validates against the ContractStatus enum. `ARCHIVED` is rejected here - see
+     * `ClientsService.addContract()`/`updateContract()`: archiving a contract is only ever
+     * done through the dedicated `DELETE /contracts/:id` (archive) endpoint, which also stamps
+     * `archivedAt` - setting `status: ARCHIVED` through this generic field would desync the
+     * two and silently break the retention countdown in `CleanupService`.
      */
     @IsEnum(ContractStatus)
     @IsOptional()

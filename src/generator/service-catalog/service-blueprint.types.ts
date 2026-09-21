@@ -30,6 +30,7 @@ export interface ServiceBlueprint {
     description: string;
     /** Map of npm package dependencies and versions injected into `package.json` */
     pnpmDependencies: Record<string, string>;
+    pnpmDevDependencies?: Record<string, string>;
     /** Array of configuration inputs required to operate this service */
     configFields: ServiceConfigField[];
     /** Optional Prisma Schema DSL snippet appended to the target database schema */

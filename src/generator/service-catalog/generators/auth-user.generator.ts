@@ -109,7 +109,9 @@ export async function generateAuthUserFiles(
                     super({
                         jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
                         ignoreExpiration: false,
-                        secretOrKey: process.env.JWT_SECRET,
+                        secretOrKey: process.env.JWT_SECRET || (() => {
+                            throw new Error('JWT_SECRET is required.');
+                        })(),
                     });
                 }
 
@@ -261,18 +263,20 @@ export async function generateAuthUserFiles(
 
         'src/auth/auth.module.ts': `
             import { Module } from '@nestjs/common';
-            import { JwtModule } from '@nestjs/jwt';
+            import { JwtModule, type JwtSignOptions } from '@nestjs/jwt';
             import { PassportModule } from '@nestjs/passport';
             import { AuthService } from './auth.service';
             import { AuthController } from './auth.controller';
             import { JwtStrategy } from './strategies/jwt.strategy';
+
+            const jwtExpiresIn = (process.env.JWT_EXPIRES_IN || '15m') as NonNullable<JwtSignOptions['expiresIn']>;
 
             @Module({
                 imports: [
                     PassportModule,
                     JwtModule.register({
                         secret: process.env.JWT_SECRET,
-                        signOptions: { expiresIn: process.env.JWT_EXPIRES_IN || '15m' },
+                        signOptions: { expiresIn: jwtExpiresIn },
                     }),
                 ],
                 controllers: [AuthController],

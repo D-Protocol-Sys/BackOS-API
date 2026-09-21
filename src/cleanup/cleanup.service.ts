@@ -6,6 +6,7 @@ import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlatformsService } from '../platforms/platforms.service';
+import { ClientsService } from '../clients/clients.service';
 
 /**
  * Service responsible for scheduled background maintenance and database pruning tasks.
@@ -20,6 +21,7 @@ export class CleanupService {
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
         private readonly platforms: PlatformsService,
+        private readonly clients: ClientsService,
     ) {}
 
     /**
@@ -41,6 +43,8 @@ export class CleanupService {
         totalDeleted += await this.cleanupGenerations();
         totalDeleted += await this.cleanupBackupDumps();
         totalDeleted += await this.cleanupArchivedPlatforms();
+        totalDeleted += await this.cleanupArchivedClients();
+        totalDeleted += await this.cleanupArchivedContracts();
 
         const durationMs = Date.now() - startedAt;
         this.logger.log(
@@ -269,6 +273,73 @@ export class CleanupService {
             return purgedCount;
         } catch (error) {
             this.logCleanupError('archived platforms', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Permanently deletes any client that has been continuously ARCHIVED for longer than the
+     * configured retention window (default 30 days) - same mechanism as
+     * `cleanupArchivedPlatforms()` above, see `ClientsService.archive()`/`restore()` for how
+     * the countdown works. Purging a client also purges every one of its contracts (and their
+     * attached files) - see `ClientsService.purgeClientInternal()`.
+     * * @returns The count of clients permanently deleted.
+     */
+    private async cleanupArchivedClients(): Promise<number> {
+        try {
+            const retentionDays = this.getPositiveIntegerConfig(
+                'CLIENT_ARCHIVE_RETENTION_DAYS',
+                30,
+            );
+
+            const purgedCount = await this.clients.purgeExpiredArchives(retentionDays);
+
+            if (purgedCount > 0) {
+                this.logger.log(
+                    `Archived client cleanup: ${purgedCount} client(s) permanently deleted ` +
+                    `after ${retentionDays} consecutive day(s) archived.`,
+                );
+            } else {
+                this.logger.debug('Archived client cleanup: nothing to delete.');
+            }
+
+            return purgedCount;
+        } catch (error) {
+            this.logCleanupError('archived clients', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Permanently deletes any contract that has been continuously ARCHIVED for longer than the
+     * configured retention window (default 30 days) - independently of its client's own
+     * archive state, since a contract can be archived on its own (see `ClientsService.
+     * archiveContract()`). Deleting an already-archived client purges its contracts
+     * immediately regardless of this window (see `cleanupArchivedClients()` above); this
+     * subroutine only ever catches contracts archived on their own.
+     * * @returns The count of contracts permanently deleted.
+     */
+    private async cleanupArchivedContracts(): Promise<number> {
+        try {
+            const retentionDays = this.getPositiveIntegerConfig(
+                'CONTRACT_ARCHIVE_RETENTION_DAYS',
+                30,
+            );
+
+            const purgedCount = await this.clients.purgeExpiredContractArchives(retentionDays);
+
+            if (purgedCount > 0) {
+                this.logger.log(
+                    `Archived contract cleanup: ${purgedCount} contract(s) permanently deleted ` +
+                    `after ${retentionDays} consecutive day(s) archived.`,
+                );
+            } else {
+                this.logger.debug('Archived contract cleanup: nothing to delete.');
+            }
+
+            return purgedCount;
+        } catch (error) {
+            this.logCleanupError('archived contracts', error);
             return 0;
         }
     }

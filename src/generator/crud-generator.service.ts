@@ -130,8 +130,9 @@ export class CrudGeneratorService {
                 if (r.hasScalarFk) {
                     const isOptional = forceOptional;
                     const questionMark = isOptional ? '?' : '';
+                    const definiteAssignment = isOptional ? '' : '!';
                     const decorators = isOptional ? '  @IsOptional()\n  @IsUUID()' : '  @IsUUID()';
-                    return `${decorators}\n  ${r.fieldName}Id${questionMark}: string;`;
+                    return `${decorators}\n  ${r.fieldName}Id${questionMark}${definiteAssignment}: string;`;
                 }
                 return `  @IsOptional()\n  @IsArray()\n  @IsUUID('4', { each: true })\n  ${r.fieldName}Ids?: string[];`;
             })
@@ -317,7 +318,7 @@ export class CrudGeneratorService {
 
         const includeClause =
             directRelations.length > 0
-                ? `\n    include: { ${directRelations.map((r) => `${r.fieldName}: true`).join(', ')} },`
+                ? `,\n    include: { ${directRelations.map((r) => `${r.fieldName}: true`).join(', ')} }`
                 : '';
 
         return `

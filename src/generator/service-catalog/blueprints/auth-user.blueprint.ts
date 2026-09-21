@@ -24,6 +24,12 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
         'nodemailer': '^6.9.16',
     },
 
+    pnpmDevDependencies: {
+        '@types/passport-jwt': '^4.0.1',
+        '@types/bcrypt': '^5.0.2',
+        '@types/nodemailer': '^6.4.17',
+    },
+
     // Config fields required from tenant users upon activating this service
     configFields: [
         { key: 'jwtSecret', label: 'Secret JWT', secret: true, required: true },

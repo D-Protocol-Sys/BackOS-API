@@ -57,6 +57,25 @@ export class UpdateProjectDto {
     platformId?: string | null;
 
     /**
+     * An optional updated client link. Send `null` explicitly to detach. See
+     * `ProjectsService.assertClientContractConsistency()` for the platform-consistency rule
+     * enforced when both `platformId` and `clientId` end up set.
+     */
+    @IsOptional()
+    @ValidateIf((_, value) => value !== null)
+    @IsUUID()
+    clientId?: string | null;
+
+    /**
+     * An optional updated contract link. Send `null` explicitly to detach. Must belong to the
+     * project's client when both end up set (see `assertClientContractConsistency()`).
+     */
+    @IsOptional()
+    @ValidateIf((_, value) => value !== null)
+    @IsUUID()
+    contractId?: string | null;
+
+    /**
      * An optional updated manager. Send `null` explicitly to unassign the project.
      */
     @IsOptional()

@@ -9,7 +9,13 @@ import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from "
  * @param extraDependencies - Additional runtime package dependencies injected from service blueprints.
  * @returns Serializable package configuration object.
  */
-export function packageJsonObject(slug: string, extraDependencies: Record<string, string>) {
+export function packageJsonObject(
+    slug: string,
+    extraDependencies: {
+        dependencies?: Record<string, string>;
+        devDependencies?: Record<string, string>;
+    } = {},
+) {
     
     return {
         'name': slug,
@@ -33,6 +39,7 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             '@nestjs/platform-express': '^11.0.1',
             '@prisma/client': '^7.9.0',
             '@prisma/adapter-pg': '^7.9.0',
+            'bullmq': '^5.81.3',
             'pg': '^8.13.0',
             'class-validator': '^0.14.1',
             'class-transformer': '^0.5.1',
@@ -48,7 +55,7 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             // transitive packages to `require()`, so omitting this would fail at runtime with
             // "Cannot find module 'multer'" the first time an upload is attempted.
             'multer': '^1.4.5-lts.1',
-            ...extraDependencies,
+            ...(extraDependencies.dependencies ?? {}),
         },
         devDependencies: {
             '@nestjs/cli': '^11.0.0',
@@ -56,6 +63,8 @@ export function packageJsonObject(slug: string, extraDependencies: Record<string
             '@types/node': '^24.0.0',
             '@types/express': '^5.0.0',
             '@types/multer': '^1.4.12',
+            // Types required by optional generated services.
+            ...(extraDependencies.devDependencies ?? {}),
             'prisma': '^7.9.0',
             'tsx': '^4.19.0',
             'typescript': '^5.7.3',
@@ -730,6 +739,8 @@ allowBuilds:
   '@prisma/engines': true
   esbuild: true
   '@scarf/scarf': true
+  bcrypt: true
+  msgpackr-extract: true
 `;
 }
 

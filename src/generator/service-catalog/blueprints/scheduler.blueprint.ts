@@ -16,8 +16,14 @@ export const SCHEDULER_BLUEPRINT: ServiceBlueprint = {
 
     // Required npm/pnpm dependencies for background job management via Redis queues
     pnpmDependencies: {
-        bullmq: '^5.34.0',
-        ioredis: '^5.4.1',
+        '@nestjs/bullmq': '^11.0.0',
+        'bullmq': '^5.34.0',
+        'ioredis': '^5.4.1',
+        'nodemailer': '^6.9.16',
+    },
+
+    pnpmDevDependencies: {
+        '@types/nodemailer': '^6.4.17',
     },
 
     // Config fields for email dispatches triggered by scheduled jobs (all optional)

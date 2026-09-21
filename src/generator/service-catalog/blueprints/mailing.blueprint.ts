@@ -16,7 +16,11 @@ export const MAILING_BLUEPRINT: ServiceBlueprint = {
 
     // Required npm/pnpm dependencies injected into the target project's package.json
     pnpmDependencies: {
-        nodemailer: '^6.9.16',
+        'nodemailer': '^6.9.16',
+    },
+
+    pnpmDevDependencies: {
+        '@types/nodemailer': '^6.4.17',
     },
 
     // Config fields required from tenant users upon activating this service
