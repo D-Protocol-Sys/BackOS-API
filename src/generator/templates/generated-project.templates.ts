@@ -378,14 +378,32 @@ export function envTemplate(
         `DATABASE_URL="${databaseUrl}"`,
         `PORT=${port}`,
         `HOST=${host}`,
-        `CORS_ORIGINS="${corsOrigins.join(',')}"`,
+        `CORS_ORIGINS=${formatEnvValue(corsOrigins.join(','))}`,
     ];
 
     for (const [key, value] of Object.entries(extraVars)) {
-        lines.push(`${toEnvKey(key)}=${JSON.stringify(String(value))}`);
+        // Only scalar settings can live in a `.env` line. A structured setting (e.g. the profile
+        // field definitions of the Auth & User service, which is an array of objects) is consumed
+        // by its own code generator instead - stringifying it here would emit `[object Object]`.
+        if (value === undefined || value === null || typeof value === 'object') continue;
+        lines.push(`${toEnvKey(key)}=${formatEnvValue(String(value))}`);
     }
 
     return lines.join('\n') + '\n';
+}
+
+/**
+ * Formats one `.env` value so that BOTH consumers of this file read the same string:
+ *   - `dotenv` (process runtime, and `main.ts`), which strips surrounding quotes;
+ *   - `docker run --env-file` (Docker runtime), which does NOT - it hands the value over
+ *     literally, so `KEY="abc"` would reach the container as the 5-character string `"abc"`,
+ *     quotes included (breaking e.g. `CORS_ORIGINS` and `SMTP_HOST`).
+ * A value made only of characters that are literal in both parsers is therefore written bare;
+ * anything else falls back to a JSON-quoted string, exactly as before.
+ */
+function formatEnvValue(value: string): string {
+    if (value === '') return '';
+    return /^[A-Za-z0-9_@.:/+=,-]+$/.test(value) ? value : JSON.stringify(value);
 }
 
 /**
@@ -440,7 +458,9 @@ export function healthModuleTemplate(): string {
 /**
  * Generates the Multer configuration for a generated backend's `UploadsController` - the
  * counterpart to the frontend's `uploadToGeneratedBackend()` (`lib/api/generated-records.ts`),
- * which every `IMAGE`/`FILE` entity field (see `schema-builder.service.ts`) ultimately calls.
+ * which every `IMAGE` / `VIDEO` / `MEDIA` / `FILE` entity field (see `schema-builder.service.ts`)
+ * ultimately calls - including those declared as ARRAY fields (a gallery of images and videos):
+ * the client uploads each file separately, then stores the returned URLs together in the array.
  *
  * Mirrors the orchestrator's OWN `files/multer.config.ts` conventions on purpose (random
  * `crypto.randomUUID()` filenames - never the client-supplied name, which eliminates path
@@ -449,10 +469,19 @@ export function healthModuleTemplate(): string {
  * with no additional sandboxing beyond what this file provides, so it deserves the same
  * discipline as the orchestrator's own upload path, not a lighter-weight version of it.
  *
- * Allowlist and size cap intentionally match the client-side check already in
+ * VIDEOS (mp4 / webm / mov): allowed up to 100 MB, versus 5 MB for images and PDFs. Multer only
+ * supports a single `fileSize` limit per request, so it is set to the video ceiling and the
+ * tighter image/document cap is enforced immediately afterwards in `UploadsController`. Every
+ * upload's magic bytes are also checked against its declared MIME type (same idea as the
+ * orchestrator's `files/file-signature.util.ts`), since the multipart `Content-Type` is entirely
+ * client-controlled.
+ *
+ * The allowlist and the 5 MB image cap intentionally match the client-side check already in
  * `uploadToGeneratedBackend()` (`ALLOWED_UPLOAD_TYPES` / `MAX_UPLOAD_BYTES`) - that check is
  * documented there as "a UX nicety only", and this is the enforcement it was always assuming
- * existed server-side.
+ * existed server-side. NOTE: that client-side allowlist must now also accept the three video
+ * MIME types, and its size cap must become per-kind, or the browser will refuse videos before
+ * they ever reach this backend.
  */
 export function uploadsMulterConfigTemplate(): string {
     return `
@@ -460,7 +489,7 @@ export function uploadsMulterConfigTemplate(): string {
         import * as crypto from 'crypto';
         import * as path from 'path';
         import * as fs from 'fs';
-        import { BadRequestException } from '@nestjs/common';
+        import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
         // Resolves relative to this process's cwd (the project root - see RuntimeManagerService
         // / DockerRuntimeManagerService, both of which spawn/run from there), unless overridden.
@@ -469,67 +498,154 @@ export function uploadsMulterConfigTemplate(): string {
         const uploadDir = process.env.UPLOADS_DIR ?? './uploads';
         fs.mkdirSync(uploadDir, { recursive: true });
 
-        /** MIME type -> file extension. Matches the frontend's own ALLOWED_UPLOAD_TYPES exactly. */
-        export const ALLOWED_UPLOAD_MIME_TYPES: Record<string, string> = {
-            'image/jpeg': 'jpg',
-            'image/png': 'png',
-            'image/gif': 'gif',
-            'image/webp': 'webp',
-            'application/pdf': 'pdf',
+        export type UploadKind = 'image' | 'video' | 'file';
+
+        interface UploadTypeSpec {
+            extension: string;
+            kind: UploadKind;
+        }
+
+        /** MIME type -> stored extension + coarse kind. The single source of truth for what may be uploaded. */
+        export const ALLOWED_UPLOAD_TYPES: Record<string, UploadTypeSpec> = {
+            'image/jpeg': { extension: 'jpg', kind: 'image' },
+            'image/png': { extension: 'png', kind: 'image' },
+            'image/gif': { extension: 'gif', kind: 'image' },
+            'image/webp': { extension: 'webp', kind: 'image' },
+            'video/mp4': { extension: 'mp4', kind: 'video' },
+            'video/webm': { extension: 'webm', kind: 'video' },
+            'video/quicktime': { extension: 'mov', kind: 'video' },
+            'application/pdf': { extension: 'pdf', kind: 'file' },
         };
 
-        // Matches the frontend's own MAX_UPLOAD_BYTES exactly (see generated-records.ts).
-        export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
+        // Images and documents keep the original 5 MB cap (matches the frontend's MAX_UPLOAD_BYTES).
+        export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+        // Videos are much larger by nature. Also the hard ceiling handed to Multer below, since Multer
+        // applies ONE fileSize limit per request and cannot vary it by MIME type - the tighter per-kind
+        // cap for images/documents is enforced right after the upload, in UploadsController.
+        export const MAX_VIDEO_BYTES = 100 * 1024 * 1024;
+
+        export function maxBytesFor(kind: UploadKind): number {
+            return kind === 'video' ? MAX_VIDEO_BYTES : MAX_IMAGE_BYTES;
+        }
 
         export const uploadsMulterOptions = {
             storage: diskStorage({
                 destination: uploadDir,
                 filename: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, filename: string) => void) => {
-                    const extension = ALLOWED_UPLOAD_MIME_TYPES[file.mimetype] ?? 'bin';
+                    const extension = ALLOWED_UPLOAD_TYPES[file.mimetype]?.extension ?? 'bin';
                     callback(null, \`\${crypto.randomUUID()}.\${extension}\`);
                 },
             }),
-            fileFilter: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
-                if (!ALLOWED_UPLOAD_MIME_TYPES[file.mimetype]) {
+            fileFilter: (req: { user?: { type?: string } }, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+                const spec = ALLOWED_UPLOAD_TYPES[file.mimetype];
+                if (!spec) {
                     return callback(new BadRequestException(\`Unsupported file type: \${file.mimetype}\`), false);
+                }
+                // Videos are reserved to internal accounts (an external user is a visitor: images and
+                // documents for their own profile are fine, 100 MB videos are not). \`req.user\` is already
+                // set here - the auth guards run before this interceptor.
+                if (spec.kind === 'video' && req.user?.type === 'external') {
+                    return callback(new ForbiddenException('Video uploads are reserved to internal accounts.'), false);
                 }
                 callback(null, true);
             },
-            limits: { fileSize: MAX_UPLOAD_BYTES },
+            limits: { fileSize: MAX_VIDEO_BYTES, files: 1 },
         };
 
         export function resolveUploadsDir(): string {
             return path.resolve(uploadDir);
         }
 
-        /** Inverse of ALLOWED_UPLOAD_MIME_TYPES - used by UploadsController to set a correct
-         * Content-Type when serving a file back, since nothing else records it (this backend
-         * has no database table for uploads - they're served straight off disk by filename). */
+        /** Inverse of ALLOWED_UPLOAD_TYPES - used by UploadsController to set a correct Content-Type
+         * when serving a file back, since nothing else records it (this backend has no database table
+         * for uploads - they're served straight off disk by filename). */
         export function mimeTypeForExtension(extension: string): string {
-            const entry = Object.entries(ALLOWED_UPLOAD_MIME_TYPES).find(([, ext]) => ext === extension);
+            const entry = Object.entries(ALLOWED_UPLOAD_TYPES).find(([, spec]) => spec.extension === extension);
             return entry?.[0] ?? 'application/octet-stream';
+        }
+
+        const startsWith = (head: Buffer, bytes: number[]): boolean =>
+            head.length >= bytes.length && bytes.every((byte, index) => head[index] === byte);
+
+        /** ISO base media (MP4 / MOV): a 4-byte box size, then a 4-byte box type at offset 4. */
+        const boxTypeAt4 = (head: Buffer): string => head.subarray(4, 8).toString('latin1');
+
+        /**
+         * Content-based check: the \`Content-Type\` of a multipart field is whatever the client says it
+         * is, so it is never trusted on its own. Confirms the first bytes actually written to disk match
+         * the magic-byte signature of the MIME type that was claimed.
+         */
+        export function matchesFileSignature(mimeType: string, head: Buffer): boolean {
+            switch (mimeType) {
+                case 'image/jpeg':
+                    return startsWith(head, [0xff, 0xd8, 0xff]);
+                case 'image/png':
+                    return startsWith(head, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+                case 'image/gif':
+                    return startsWith(head, [0x47, 0x49, 0x46, 0x38]);
+                case 'image/webp':
+                    // "RIFF" + 4-byte size + "WEBP"
+                    return startsWith(head, [0x52, 0x49, 0x46, 0x46]) && head.subarray(8, 12).toString('latin1') === 'WEBP';
+                case 'application/pdf':
+                    return startsWith(head, [0x25, 0x50, 0x44, 0x46, 0x2d]);
+                case 'video/webm':
+                    // EBML header (shared with Matroska).
+                    return startsWith(head, [0x1a, 0x45, 0xdf, 0xa3]);
+                case 'video/mp4':
+                    return boxTypeAt4(head) === 'ftyp';
+                case 'video/quicktime':
+                    // Modern .mov files start with "ftyp", but older QuickTime files start directly with
+                    // a "moov" / "mdat" / "wide" / "free" / "skip" atom.
+                    return ['ftyp', 'moov', 'mdat', 'wide', 'free', 'skip'].includes(boxTypeAt4(head));
+                default:
+                    return false;
+            }
         }
     `;
 }
 
 /**
  * Generates the `UploadsController` for a generated backend: accepts a single multipart file
- * upload and serves it back by filename. Deliberately PUBLIC/unauthenticated (no
- * `@ApiBearerAuth`, no guard) - matching `uploadToGeneratedBackend()`'s own documented
- * assumption that it "sends no BackOS credentials at all", and consistent with every other
- * unprotected entity route on a generated backend (see `crud-generator.service.ts`). If a
- * platform needs uploads gated behind its own "Auth & User" service instead, that is a bigger,
- * separate design decision (per-field auth requirements for uploads specifically) - out of
- * scope for making the existing frontend upload flow actually work end-to-end.
+ * upload and serves it back by filename (with HTTP Range support, so videos can be played and
+ * seeked in a browser).
+ *
+ * ACCESS:
+ *   - `GET /uploads/:filename` is public (files are shown on the platform's public pages; their
+ *     names are random UUIDs, never guessable).
+ *   - `POST /uploads` requires a signed-in account (JwtAuthGuard) whenever the platform has the
+ *     Auth & User service: internal accounts may upload images, PDFs and videos, external users
+ *     (visitors) images and PDFs only, and only a few per hour. Without Auth & User there is
+ *     nobody to authenticate, so the endpoint stays open - but every platform, authenticated or
+ *     not, is protected by a disk quota (see `UploadPolicyGuard`) so uploads can never fill the disk.
+ *   - The back-office must therefore send an INTERNAL access token when uploading
+ *     (see `uploadToGeneratedBackend()` in the frontend's `generated-records.ts`).
  */
-export function uploadsControllerTemplate(): string {
+export function uploadsControllerTemplate(authEnabled: boolean): string {
+    const authImports = authEnabled
+        ? "import { ApiBearerAuth } from '@nestjs/swagger';\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';"
+        : '';
+    // Uploading requires a signed-in account whenever the platform has the Auth & User service;
+    // without it there is nobody to authenticate, so only the storage policy applies.
+    const guards = authEnabled
+        ? "@UseGuards(JwtAuthGuard, UploadPolicyGuard)\n    @ApiBearerAuth('access-token')"
+        : '@UseGuards(UploadPolicyGuard)';
     return `
-        import { Controller, Post, Get, Param, UseInterceptors, UploadedFile, BadRequestException, NotFoundException, Res } from '@nestjs/common';
+        import { Controller, Post, Get, Param, UseGuards, UseInterceptors, UploadedFile, BadRequestException, NotFoundException, PayloadTooLargeException, Res } from '@nestjs/common';
         import { FileInterceptor } from '@nestjs/platform-express';
         import type { Response } from 'express';
         import * as fs from 'fs';
         import * as path from 'path';
-        import { uploadsMulterOptions, resolveUploadsDir, mimeTypeForExtension } from './uploads.multer-config';
+
+        ${authImports}
+        import { UploadPolicyGuard } from './uploads.policy.guard';
+        import {
+            uploadsMulterOptions,
+            resolveUploadsDir,
+            mimeTypeForExtension,
+            matchesFileSignature,
+            maxBytesFor,
+            ALLOWED_UPLOAD_TYPES,
+        } from './uploads.multer-config';
 
         // Matches exactly what multer's own \`diskStorage.filename()\` produces
         // (crypto.randomUUID() + '.' + extension) - used to reject any hand-crafted filename
@@ -538,18 +654,64 @@ export function uploadsControllerTemplate(): string {
         // prevent path traversal here, since multer never generates a name outside this shape).
         const SAFE_FILENAME_PATTERN = /^[0-9a-f-]{36}\\.[a-zA-Z0-9]+$/;
 
+        /** Reads only the first bytes of a file - enough for every signature check. */
+        async function readHead(filePath: string): Promise<Buffer> {
+            const handle = await fs.promises.open(filePath, 'r');
+            try {
+                const buffer = Buffer.alloc(16);
+                const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
+                return buffer.subarray(0, bytesRead);
+            } finally {
+                await handle.close();
+            }
+        }
+
+        async function discard(filePath: string): Promise<void> {
+            await fs.promises.unlink(filePath).catch(() => undefined);
+        }
+
         @Controller('uploads')
         export class UploadsController {
+            /**
+             * Accepts ONE file (multipart field "file"): an image (jpeg/png/gif/webp), a video
+             * (mp4/webm/mov) or a pdf. To fill an ARRAY field (a gallery, an "illustration" list...) the
+             * client calls this once per file, then sends the returned \`url\`s together in one array.
+             *
+             * Access: see UploadPolicyGuard (disk quota for everyone) and, when the platform has the Auth &
+             * User service, the JWT requirement above - external users may upload images / documents only.
+             */
+
+    ${guards}
             @Post()
             @UseInterceptors(FileInterceptor('file', uploadsMulterOptions))
-            upload(@UploadedFile() file: Express.Multer.File) {
+            async upload(@UploadedFile() file: Express.Multer.File) {
                 if (!file) {
                     throw new BadRequestException('No file was provided (expected multipart field "file").');
                 }
+
+                const spec = ALLOWED_UPLOAD_TYPES[file.mimetype];
+
+                // Multer's own limit is the (large) video ceiling; images and documents have a tighter cap.
+                if (file.size > maxBytesFor(spec.kind)) {
+                    await discard(file.path);
+                    throw new PayloadTooLargeException(\`This \${spec.kind} exceeds the \${maxBytesFor(spec.kind) / 1024 / 1024} MB limit.\`);
+                }
+
+                // The declared MIME type is client-controlled - verify what was actually written.
+                if (!matchesFileSignature(file.mimetype, await readHead(file.path))) {
+                    await discard(file.path);
+                    throw new BadRequestException('The file content does not match its declared type.');
+                }
+
                 // Relative path only - this backend doesn't know its own public gateway URL
                 // (BackOS's \`GENERATED_BACKEND_GATEWAY_PREFIX\`); the frontend combines this
                 // with that base itself. See uploadToGeneratedBackend() in generated-records.ts.
-                return { url: \`/uploads/\${file.filename}\` };
+                return {
+                    url: \`/uploads/\${file.filename}\`,
+                    kind: spec.kind,
+                    mimeType: file.mimetype,
+                    size: file.size,
+                };
             }
 
             @Get(':filename')
@@ -566,14 +728,122 @@ export function uploadsControllerTemplate(): string {
                     throw new NotFoundException('File not found.');
                 }
 
-                res.set({
-                    'Content-Type': mimeTypeForExtension(path.extname(filename).slice(1)),
-                    'X-Content-Type-Options': 'nosniff',
-                    // Safe to cache aggressively and immutably - filenames are random UUIDs,
-                    // never reused or overwritten once uploaded.
-                    'Cache-Control': 'public, max-age=31536000, immutable',
-                });
-                fs.createReadStream(diskPath).pipe(res);
+                // sendFile (rather than piping a read stream) is what gives us HTTP Range support -
+                // browsers (Safari especially) refuse to play or seek inside a <video> whose source
+                // cannot answer "206 Partial Content".
+                res.sendFile(
+                    diskPath,
+                    {
+                        dotfiles: 'deny',
+                        headers: {
+                            'Content-Type': mimeTypeForExtension(path.extname(filename).slice(1)),
+                            'X-Content-Type-Options': 'nosniff',
+                            // helmet() defaults to \`same-origin\`, which makes a browser refuse to render
+                            // an <img>/<video> from this backend on a DIFFERENT origin (the platform's
+                            // own public site) even though CORS allows it - CORP is a separate check.
+                            'Cross-Origin-Resource-Policy': 'cross-origin',
+                            // Safe to cache aggressively and immutably - filenames are random UUIDs,
+                            // never reused or overwritten once uploaded.
+                            'Cache-Control': 'public, max-age=31536000, immutable',
+                        },
+                    },
+                    (error) => {
+                        if (error && !res.headersSent) {
+                            res.status(404).json({ statusCode: 404, message: 'File not found.' });
+                        }
+                    },
+                );
+            }
+        }
+    `;
+}
+
+/**
+ * Generates the guard that protects `POST /uploads` before the request body is read: a disk quota
+ * for everybody, plus a size and hourly cap for external users. See the file's own comments.
+ */
+export function uploadsPolicyGuardTemplate(): string {
+    return `
+        import { CanActivate, ExecutionContext, HttpException, HttpStatus, Injectable, PayloadTooLargeException } from '@nestjs/common';
+        import * as fs from 'fs';
+        import * as path from 'path';
+        import { MAX_IMAGE_BYTES, resolveUploadsDir } from './uploads.multer-config';
+
+        const MB = 1024 * 1024;
+
+        // Total disk space the uploads folder may occupy. Without a ceiling, anyone able to upload could
+        // fill the server's disk (and take every other platform on it down with it). Override with
+        // MAX_UPLOADS_TOTAL_MB in the environment.
+        const QUOTA_BYTES = (Number(process.env.MAX_UPLOADS_TOTAL_MB) || 2048) * MB;
+
+        // An external user (a visitor with a free account) may only send small files, and only a few per hour.
+        const MAX_EXTERNAL_UPLOAD_BYTES = MAX_IMAGE_BYTES + 256 * 1024; // + multipart framing overhead
+        const EXTERNAL_UPLOADS_PER_HOUR = 20;
+        const ONE_HOUR_MS = 60 * 60 * 1000;
+
+        /**
+         * Runs BEFORE the request body is read - so a refused upload costs no disk and no bandwidth:
+         *   1. the uploads folder must have room left (everybody);
+         *   2. an external user must announce a small body (Content-Length) and stay under an hourly cap.
+         * (Whether the caller is signed in at all is decided by JwtAuthGuard, which precedes this guard on
+         * platforms that have the Auth & User service.)
+         */
+        @Injectable()
+        export class UploadPolicyGuard implements CanActivate {
+            private readonly externalUploads = new Map<string, number[]>();
+            private cachedUsage: { bytes: number; at: number } | null = null;
+
+            async canActivate(context: ExecutionContext): Promise<boolean> {
+                const request = context.switchToHttp().getRequest();
+                const declaredLength = Number(request.headers['content-length']);
+                const incoming = Number.isFinite(declaredLength) ? declaredLength : 0;
+
+                if (request.user?.type === 'external') {
+                    if (!Number.isFinite(declaredLength)) {
+                        throw new HttpException('A Content-Length header is required.', HttpStatus.LENGTH_REQUIRED);
+                    }
+                    if (declaredLength > MAX_EXTERNAL_UPLOAD_BYTES) {
+                        throw new PayloadTooLargeException('This file is too large (limit: ' + MAX_IMAGE_BYTES / MB + ' MB).');
+                    }
+                    this.assertExternalRateLimit(request.user.userId);
+                }
+
+                if ((await this.usedBytes()) + incoming > QUOTA_BYTES) {
+                    throw new HttpException('The storage space of this platform is full.', HttpStatus.INSUFFICIENT_STORAGE);
+                }
+                // Count the accepted upload right away instead of waiting for the next disk read, so a burst of
+                // simultaneous uploads cannot all slip under the ceiling together. (Slightly pessimistic if one
+                // is refused later on - corrected at the next refresh.)
+                if (this.cachedUsage) this.cachedUsage.bytes += incoming;
+                return true;
+            }
+
+            private assertExternalRateLimit(userId: string): void {
+                const now = Date.now();
+                const recent = (this.externalUploads.get(userId) ?? []).filter((at) => now - at < ONE_HOUR_MS);
+                if (recent.length >= EXTERNAL_UPLOADS_PER_HOUR) {
+                    throw new HttpException('Too many uploads, please try again later.', HttpStatus.TOO_MANY_REQUESTS);
+                }
+                recent.push(now);
+                this.externalUploads.set(userId, recent);
+            }
+
+            /** Bytes currently stored, recomputed at most every 5 seconds. */
+            private async usedBytes(): Promise<number> {
+                if (this.cachedUsage && Date.now() - this.cachedUsage.at < 5000) return this.cachedUsage.bytes;
+
+                const dir = resolveUploadsDir();
+                let bytes = 0;
+                try {
+                    for (const name of await fs.promises.readdir(dir)) {
+                        const stat = await fs.promises.stat(path.join(dir, name)).catch(() => null);
+                        if (stat?.isFile()) bytes += stat.size;
+                    }
+                } catch {
+                    // Folder not created yet: nothing stored.
+                }
+                this.cachedUsage = { bytes, at: Date.now() };
+                return bytes;
             }
         }
     `;

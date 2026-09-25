@@ -11,9 +11,10 @@ export async function generateMailingFiles(
 
     const requiresAuth = config.requiresAuth === true || config.requiresAuth === 'true';
     const guardImport = requiresAuth
-        ? `import { UseGuards } from '@nestjs/common';\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';\n`
+        ? `import { UseGuards } from '@nestjs/common';\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';\nimport { InternalOnlyGuard } from '../common/guards/internal-only.guard';\n`
         : '';
-    const guardDecorator = requiresAuth ? '  @UseGuards(JwtAuthGuard)\n' : '';
+    // Sending e-mail is an administrative action: internal accounts only (never an external visitor).
+    const guardDecorator = requiresAuth ? '  @UseGuards(JwtAuthGuard, InternalOnlyGuard)\n' : '';
 
     const files: Record<string, string> = {
 
@@ -33,7 +34,7 @@ export async function generateMailingFiles(
 
                 async send(to: string, subject: string, text: string, html?: string) {
                     await this.transporter.sendMail({
-                        from: process.env.SMTP_FROM || process.env.SMTP_USER,
+                        from: process.env.FROM_EMAIL || process.env.SMTP_FROM || process.env.SMTP_USER,
                         to,
                         subject,
                         text,

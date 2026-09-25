@@ -13,15 +13,21 @@ import { GenerationCancellationRegistry } from './generation-cancellation.regist
 import { RuntimeManagerService } from './runtime-manager.service';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 import { ApiManifestService } from './api-manifest.service';
+import { AuthModule } from '../auth/auth.module';
+import { InternalGeneratedAuthController } from './internal-generated-auth.controller';
+import { InternalGeneratedAuthService } from './internal-generated-auth.service';
 
 @Module({
 
     imports: [
         GeneratorQueueModule,
-        ServiceCatalogModule
+        ServiceCatalogModule,
+        // Provides AuthService, used by InternalGeneratedAuthService to verify the authenticator
+        // code of a person logging in to a generated backend.
+        AuthModule,
     ],
 
-    controllers: [GeneratorController],
+    controllers: [GeneratorController, InternalGeneratedAuthController],
 
     providers: [
         ProvisioningService,
@@ -41,6 +47,7 @@ import { ApiManifestService } from './api-manifest.service';
         RuntimeManagerService,
         DockerRuntimeManagerService,
         ApiManifestService,
+        InternalGeneratedAuthService,
     ],
     
     exports: [

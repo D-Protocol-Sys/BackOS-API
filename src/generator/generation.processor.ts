@@ -311,7 +311,20 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             // Allocates a dedicated port and writes out source files, module definitions, and static configurations to disk.
             await this.log(generationId, '→ Scaffolding project files...');
             const port = await this.portAllocator.getOrAllocatePort(platformId);
-            const { projectPath, isFirstGeneration } = await this.scaffolder.scaffold({ platformId, slug, databaseUrl, port });
+            // Whoever triggered this generation gets an internal account on the generated backend
+            // (Auth & User service) - read from the DB rather than the job payload so it also holds
+            // for jobs restarted by the boot-time reconciliation.
+            const triggeredBy = await this.prisma.generation.findUnique({
+                where: { id: generationId },
+                select: { triggeredById: true },
+            });
+            const { projectPath, isFirstGeneration } = await this.scaffolder.scaffold({
+                platformId,
+                slug,
+                databaseUrl,
+                port,
+                triggeredById: triggeredBy?.triggeredById ?? undefined,
+            });
 
             await this.log(generationId, `  Project scaffolded at ${projectPath}`);
             await this.log(generationId, isFirstGeneration ? '  Initial project generation detected.' : '  Re-generation detected: existing migration history preserved.');

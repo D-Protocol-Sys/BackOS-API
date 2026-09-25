@@ -82,6 +82,8 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         list: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
         enable: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
         disable: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
+        getProfileFields: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
+        setProfileFields: 'Scoped via CurrentUser + platform membership / PLATFORM_UPDATE checked in PlatformServicesService.',
     },
     'generator/service-catalog.controller.ts': {
         list: 'Static, non-sensitive reference data (the service catalog) - authentication alone (global JwtAuthGuard) is intentionally sufficient; nothing here is user- or platform-specific.',

@@ -1,5 +1,5 @@
 import { Injectable, BadRequestException, NotFoundException } from '@nestjs/common';
-import { ServiceBlueprint } from './service-blueprint.types';
+import { ServiceBlueprint, ServiceConfigField } from './service-blueprint.types';
 import { AUTH_USER_BLUEPRINT } from './blueprints/auth-user.blueprint';
 import { MAILING_BLUEPRINT } from './blueprints/mailing.blueprint';
 import { SCHEDULER_BLUEPRINT } from './blueprints/scheduler.blueprint';
@@ -22,11 +22,20 @@ const ALL_BLUEPRINTS: ServiceBlueprint[] = [
 export class ServiceCatalog {
 
     /**
-     * Returns the full array of available service blueprints in the system.
-     * @returns List of all `ServiceBlueprint` definitions.
+     * Returns the catalog as exposed to the front-end (`GET /service-catalog`): every blueprint,
+     * WITHOUT its internal (`system`) config fields, and with its `dependsOn` prerequisites so a
+     * form can show "requires Mailing" and disable the toggle until that service is on.
+     * @returns List of public `ServiceBlueprint` definitions.
      */
     list(): ServiceBlueprint[] {
-        return ALL_BLUEPRINTS;
+        return ALL_BLUEPRINTS.map((blueprint) => ({
+            ...blueprint,
+            dependsOn: blueprint.dependsOn ?? [],
+            // A config-driven Prisma generator is a function - not serialisable, and not something
+            // a client needs to see.
+            prismaModels: typeof blueprint.prismaModels === 'string' ? blueprint.prismaModels : undefined,
+            configFields: blueprint.configFields.filter((field) => !field.system),
+        }));
     }
 
     /**
@@ -42,15 +51,41 @@ export class ServiceCatalog {
     }
 
     /**
+     * Blueprints of the services that must be active BEFORE `key` can be (its prerequisites).
+     */
+    getDependencies(key: string): ServiceBlueprint[] {
+        return (this.getByKey(key).dependsOn ?? []).map((dependencyKey) => this.getByKey(dependencyKey));
+    }
+
+    /**
+     * Blueprints of the services that REQUIRE `key` to be active (the reverse of `getDependencies`).
+     */
+    getDependents(key: string): ServiceBlueprint[] {
+        return ALL_BLUEPRINTS.filter((blueprint) => blueprint.dependsOn?.includes(key));
+    }
+
+    /**
+     * Resolves the Prisma models a service contributes, whether declared as a fixed snippet or as
+     * a function of the service's full configuration.
+     */
+    resolvePrismaModels(key: string, fullConfig: Record<string, unknown>): string | undefined {
+        const { prismaModels } = this.getByKey(key);
+        if (!prismaModels) return undefined;
+        return typeof prismaModels === 'function' ? prismaModels(fullConfig) : prismaModels;
+    }
+
+    /**
      * Validates an incoming configuration object against the rules defined in the blueprint.
-     * Checks for unexpected/unknown properties and ensures all required fields are supplied.
+     * Checks for unexpected/unknown properties, ensures all required fields are supplied, and that
+     * typed fields (`boolean` / `number`) hold a value of the right kind.
      * * @param key - The service key identifying the blueprint.
      * @param providedConfig - The raw key-value configuration payload to validate.
      * @throws `BadRequestException` if unknown keys are passed or mandatory fields are missing/empty.
      */
     validateConfig(key: string, providedConfig: Record<string, unknown>): void {
         const blueprint = this.getByKey(key);
-        const allowedKeys = new Set(blueprint.configFields.map((f) => f.key));
+        // Internal (`system`) fields are managed by the platform itself, so they are NOT accepted from the caller.
+        const allowedKeys = new Set(blueprint.configFields.filter((f) => !f.system).map((f) => f.key));
 
         // 1. Reject extraneous keys that are not defined in the blueprint's configuration schema
         for (const providedKey of Object.keys(providedConfig)) {
@@ -61,10 +96,43 @@ export class ServiceCatalog {
 
         // 2. Ensure all mandatory fields defined as required in the blueprint are present and non-empty
         for (const field of blueprint.configFields) {
+            if (field.system) continue;
             if (field.required && (providedConfig[field.key] === undefined || providedConfig[field.key] === '')) {
                 throw new BadRequestException(`The field "${field.label}" is required for service "${blueprint.name}".`);
             }
         }
+
+        // 3. Ensure typed fields actually hold a value of that type
+        for (const field of blueprint.configFields) {
+            if (field.system) continue;
+            const value = providedConfig[field.key];
+            if (value === undefined || value === '') continue;
+            if (!this.isValidForType(field, value)) {
+                throw new BadRequestException(`The field "${field.label}" must be a ${field.type}.`);
+            }
+        }
+    }
+
+    /**
+     * Coerces typed values to their real type (`"true"` -> `true`, `"587"` -> `587`) so that what is
+     * stored and later read back by the generators is always a proper boolean / number, whatever
+     * the client sent. Must be called AFTER `validateConfig()`.
+     */
+    normalizeConfig(key: string, providedConfig: Record<string, unknown>): Record<string, unknown> {
+        const blueprint = this.getByKey(key);
+        const normalized: Record<string, unknown> = { ...providedConfig };
+
+        for (const field of blueprint.configFields) {
+            const value = normalized[field.key];
+            if (value === undefined || value === '') {
+                delete normalized[field.key];
+                continue;
+            }
+            if (field.type === 'boolean') normalized[field.key] = value === true || value === 'true';
+            if (field.type === 'number') normalized[field.key] = Number(value);
+        }
+
+        return normalized;
     }
 
     /**
@@ -93,5 +161,16 @@ export class ServiceCatalog {
         }
 
         return { plain, secret };
+    }
+
+    private isValidForType(field: ServiceConfigField, value: unknown): boolean {
+        switch (field.type) {
+            case 'boolean':
+                return typeof value === 'boolean' || value === 'true' || value === 'false';
+            case 'number':
+                return (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) && Number.isFinite(Number(value));
+            default:
+                return true;
+        }
     }
 }

@@ -48,6 +48,20 @@ export class CreateFieldDto {
     unique?: boolean;
 
     /**
+     * Optional flag making this field a LIST of values instead of a single value - e.g. a
+     * `tags` field of type STRING holding `["react", "nestjs"]`, or an `illustration` field of
+     * type MEDIA holding several image and video URLs.
+     * * `@IsOptional()` - Defaults to `false` (a regular single-value field).
+     * `@IsBoolean()` - Ensures strict boolean validation.
+     *
+     * Restrictions (enforced in `FieldsService`): an array field cannot be `unique` and cannot
+     * carry a `defaultValue`.
+     */
+    @IsOptional()
+    @IsBoolean()
+    isArray?: boolean;
+
+    /**
      * Optional default value assigned automatically when creating new entity records.
      * * `@IsOptional()` - Allows omitting a default value.
      * `@IsString()` - Ensures string representation.

@@ -3,7 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { SchemaBuilderService } from './schema-builder.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { toPascalCase, toCamelCase } from '../common/utils/case.util';
-import { FIELD_TYPE_VALIDATORS } from '../common/utils/field-type-validator-mapper.util';
+import { tsTypeFor } from '../common/utils/field-type-validator-mapper.util';
+import { UPLOAD_FIELD_TYPES } from '../common/utils/field-type-mapper.util';
 import { computeRelationFieldsByEntity, RelationFieldMeta } from '../common/utils/relation-metadata.util';
 
 /**
@@ -13,6 +14,12 @@ interface ManifestFieldShape {
     name: string;
     type: string;
     required: boolean;
+    /**
+     * Set to `true` on a field holding a file reference (IMAGE / VIDEO / MEDIA / FILE): the value
+     * is the URL returned by `POST /uploads`, so a frontend should render an upload widget, upload
+     * each file first, then send the resulting URL(s) here. Absent on every other field.
+     */
+    upload?: boolean;
 }
 
 /**
@@ -21,7 +28,16 @@ interface ManifestFieldShape {
 interface ManifestEndpoint {
     method: 'GET' | 'POST' | 'PATCH' | 'DELETE';
     path: string;
+    /** True whenever a token is needed (`access` is then 'authenticated' or 'internal'). */
     requiresAuth: boolean;
+    /**
+     * Who may call the route on the generated backend:
+     *  - 'public'        : anyone;
+     *  - 'authenticated' : any signed-in account (internal staff OR an external visitor / customer);
+     *  - 'internal'      : internal accounts only (BackOS username + authenticator code) - the rule for
+     *                      every create / update / delete on a protected entity.
+     */
+    access: 'public' | 'authenticated' | 'internal';
     description: string;
     requestBody: ManifestFieldShape[] | null;
     responseBody: ManifestFieldShape[] | 'array' | null;
@@ -124,7 +140,7 @@ export class ApiManifestService {
             authProtectRead: boolean;
             authProtectUpdate: boolean;
             authProtectDelete: boolean;
-            fields: { column: string; type: string; required: boolean }[];
+            fields: { column: string; type: string; required: boolean; isArray: boolean }[];
         },
         relations: RelationFieldMeta[],
     ): ManifestResource {
@@ -140,7 +156,9 @@ export class ApiManifestService {
                 method: 'POST',
                 path: basePath,
                 requiresAuth: entity.authProtectCreate,
-                description: `Create a new ${modelName}.`,
+                // Writes are administrative: an external user (a visitor) can never perform them.
+                access: entity.authProtectCreate ? 'internal' : 'public',
+                description: `Create a new ${modelName}.${entity.authProtectCreate ? ' Internal accounts only.' : ''}`,
                 requestBody: writableFields.map((f) => ({ ...f, required: f.required })),
                 responseBody: responseFields,
             },
@@ -148,8 +166,9 @@ export class ApiManifestService {
                 method: 'GET',
                 path: basePath,
                 requiresAuth: entity.authProtectRead,
+                access: entity.authProtectRead ? 'authenticated' : 'public',
                 description: entity.isSchedulable
-                    ? `List ${modelName} records (published only by default; pass ?includeUnpublished=true to see everything).`
+                    ? `List ${modelName} records (published ones only). Pass ?includeUnpublished=true to see everything - that requires an internal account (401 without a token, 403 for an external user).`
                     : `List all ${modelName} records.`,
                 requestBody: null,
                 responseBody: 'array',
@@ -158,7 +177,10 @@ export class ApiManifestService {
                 method: 'GET',
                 path: `${basePath}/:id`,
                 requiresAuth: entity.authProtectRead,
-                description: `Retrieve a single ${modelName} by ID.`,
+                access: entity.authProtectRead ? 'authenticated' : 'public',
+                description: entity.isSchedulable
+                    ? `Retrieve a single ${modelName} by ID. An unpublished record answers 404 unless ?includeUnpublished=true is passed with an internal account's token.`
+                    : `Retrieve a single ${modelName} by ID.`,
                 requestBody: null,
                 responseBody: responseFields,
             },
@@ -166,7 +188,8 @@ export class ApiManifestService {
                 method: 'PATCH',
                 path: `${basePath}/:id`,
                 requiresAuth: entity.authProtectUpdate,
-                description: `Partially update a ${modelName}. All fields are optional on this route.`,
+                access: entity.authProtectUpdate ? 'internal' : 'public',
+                description: `Partially update a ${modelName}. All fields are optional on this route.${entity.authProtectUpdate ? ' Internal accounts only.' : ''}`,
                 requestBody: writableFields.map((f) => ({ ...f, required: false })),
                 responseBody: responseFields,
             },
@@ -174,7 +197,8 @@ export class ApiManifestService {
                 method: 'DELETE',
                 path: `${basePath}/:id`,
                 requiresAuth: entity.authProtectDelete,
-                description: `Delete a ${modelName}.`,
+                access: entity.authProtectDelete ? 'internal' : 'public',
+                description: `Delete a ${modelName}.${entity.authProtectDelete ? ' Internal accounts only.' : ''}`,
                 requestBody: null,
                 // CrudGeneratorService's remove() returns `{ message: '<Model> deleted.' }`,
                 // not an empty body - see buildService() in crud-generator.service.ts.
@@ -191,15 +215,17 @@ export class ApiManifestService {
      * Mirrors `CrudGeneratorService.buildDtoFields()` / `buildRelationDtoFields()`.
      */
     private buildFieldShapes(
-        fields: { column: string; type: string; required: boolean }[],
+        fields: { column: string; type: string; required: boolean; isArray: boolean }[],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {
 
         const shapes: ManifestFieldShape[] = fields.map((field) => ({
             name: toCamelCase(field.column),
-            type: FIELD_TYPE_VALIDATORS[field.type as keyof typeof FIELD_TYPE_VALIDATORS].tsType,
+            // `string[]` for an array field, `string` otherwise - mirrors buildDtoFieldsSource().
+            type: tsTypeFor(field.type, field.isArray),
             required: field.required,
+            ...(UPLOAD_FIELD_TYPES.has(field.type) ? { upload: true } : {}),
         }));
 
         for (const relation of relations) {
@@ -233,7 +259,7 @@ export class ApiManifestService {
      * every direct - non many-to-many - relation).
      */
     private buildResponseShapes(
-        fields: { column: string; type: string; required: boolean }[],
+        fields: { column: string; type: string; required: boolean; isArray: boolean }[],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {

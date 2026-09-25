@@ -50,6 +50,18 @@ export class UpdateFieldDto {
     unique?: boolean;
 
     /**
+     * Optional flag to turn the field into a list of values (or back into a single value).
+     * * `@IsOptional()` - Field can be omitted.
+     * `@IsBoolean()` - Ensures strict boolean validation.
+     *
+     * Like `type`, this changes the physical database column and is therefore rejected once
+     * the platform has already been generated (see `FieldsService.update()`).
+     */
+    @IsOptional()
+    @IsBoolean()
+    isArray?: boolean;
+
+    /**
      * Optional updated default value assigned to newly created entity records.
      * * `@IsOptional()` - Field can be omitted.
      * `@IsString()` - Ensures string representation.

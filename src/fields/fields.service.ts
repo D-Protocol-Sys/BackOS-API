@@ -62,6 +62,8 @@ export class FieldsService {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.FIELD_CREATE);
         await this.findEntityOrThrow(platformId, entityId);
 
+        this.assertArrayFieldIsCoherent(dto.isArray ?? false, dto.unique ?? false, dto.defaultValue);
+
         // Generates a sanitized SQL column name (e.g., "created_at") with collision handling
         const column = await this.generateUniqueColumn(entityId, dto.name);
         // Automatically appends new field to the end of the ordering sequence
@@ -75,6 +77,7 @@ export class FieldsService {
                 type: dto.type,
                 required: dto.required ?? false,
                 unique: dto.unique ?? false,
+                isArray: dto.isArray ?? false,
                 defaultValue: dto.defaultValue,
                 config: dto.config as Prisma.InputJsonValue | undefined,
                 order,
@@ -103,6 +106,26 @@ export class FieldsService {
                 'Cannot change field type: this platform has already been generated. Delete and recreate the field if necessary.',
             );
         }
+
+        // Same rule for single <-> array: it turns a `TEXT` column into a `TEXT[]` one (or back),
+        // which PostgreSQL cannot do with a plain ALTER once rows exist - the generated
+        // migration would fail on the very next generation.
+        if (
+            dto.isArray !== undefined &&
+            dto.isArray !== field.isArray &&
+            LOCKED_STATUSES.includes(platform.status)
+        ) {
+            throw new BadRequestException(
+                'Cannot change whether a field is an array: this platform has already been generated. Delete and recreate the field if necessary.',
+            );
+        }
+
+        // Validate the RESULTING field (current values overlaid with this patch), not just the patch.
+        this.assertArrayFieldIsCoherent(
+            dto.isArray ?? field.isArray,
+            dto.unique ?? field.unique,
+            dto.defaultValue !== undefined ? dto.defaultValue : field.defaultValue,
+        );
 
         return this.prisma.field.update({
             where: { id: field.id },
@@ -165,6 +188,21 @@ export class FieldsService {
     }
 
     // ---- Helpers ----
+
+    /**
+     * Rejects combinations PostgreSQL / Prisma cannot honour for a LIST column: `@unique` on a
+     * scalar list is not supported, and a custom default cannot be expressed through the single-
+     * value `defaultValue` string (an empty list is always the implicit default).
+     */
+    private assertArrayFieldIsCoherent(isArray: boolean, unique: boolean, defaultValue: string | null | undefined): void {
+        if (!isArray) return;
+        if (unique) {
+            throw new BadRequestException('An array field cannot be unique.');
+        }
+        if (defaultValue !== undefined && defaultValue !== null && defaultValue !== '') {
+            throw new BadRequestException('An array field cannot have a default value (it defaults to an empty list).');
+        }
+    }
 
     /**
      * Helper: Ensures a platform exists or throws a 404 error.

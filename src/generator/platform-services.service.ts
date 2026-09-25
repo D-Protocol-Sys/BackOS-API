@@ -11,9 +11,22 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ServiceCatalog } from './service-catalog/service-catalog';
 import { CryptoService } from '../common/services/crypto.service';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
+import { generateSecureToken } from '../common/utils/token.util';
+import { isExternalUsersEnabled } from './service-catalog/blueprints/auth-user.prisma-models';
+import {
+    PROFILE_FIELDS_CONFIG_KEY,
+    ProfileFieldDefinition,
+    buildProfileFieldDefinitions,
+    readProfileFields,
+} from './service-catalog/profile-fields.util';
+import { SetProfileFieldsDto } from './dto/set-profile-fields.dto';
 
 type Actor = { userId: string; permissions: string[] };
 type ServiceConfig = Record<string, unknown>;
+
+// Same rule as FieldsService: once the platform's database exists, a column's shape cannot be
+// changed in place.
+const LOCKED_STATUSES = ['ACTIVE', 'GENERATING'];
 
 @Injectable()
 export class PlatformServicesService {
@@ -60,11 +73,17 @@ export class PlatformServicesService {
             throw new BadRequestException('Invalid service configuration provided.');
         }
 
-        // Validate complete structure against catalog specifications
+        // Validate complete structure against catalog specifications, then coerce typed values
+        // ("true" -> true) so what is stored - and read back by the generators - is always well-typed.
         this.catalog.validateConfig(serviceKey, fullConfig);
+        const providedConfig = this.catalog.normalizeConfig(serviceKey, fullConfig);
 
-        // Business Rule: Ensure target prerequisites exist (e.g., Mailing requires Auth & User)
-        if (serviceKey === 'mailing' && fullConfig.requiresAuth === true) {
+        // Business Rule: every service this one depends on (e.g. Mailing for Auth & User and for
+        // Scheduler) must already be active on the platform.
+        await this.assertDependenciesActive(platformId, serviceKey);
+
+        // Business Rule: Mailing can optionally protect /mail/send with Auth & User, which must then be active.
+        if (serviceKey === 'mailing' && providedConfig.requiresAuth === true) {
             const authUserService = await this.prisma.platformService.findUnique({
                 where: { platformId_serviceKey: { platformId, serviceKey: 'auth-user' } },
                 select: { serviceKey: true },
@@ -75,7 +94,18 @@ export class PlatformServicesService {
             }
         }
 
-        const { plain, secret } = this.catalog.splitConfig(serviceKey, fullConfig);
+        // Internal (`system`) settings are never supplied by the caller: carry over what is already
+        // stored (e.g. the profile fields), and generate once what must exist (e.g. the internal
+        // key BackOS shares with the generated backend to authenticate its verification calls).
+        const existingConfig = await this.readExistingConfig(platformId, serviceKey);
+        const systemValues: ServiceConfig = {};
+        for (const field of this.catalog.getByKey(serviceKey).configFields.filter((f) => f.system)) {
+            const current = existingConfig[field.key];
+            if (current !== undefined) systemValues[field.key] = current;
+            else if (field.autoGenerate) systemValues[field.key] = generateSecureToken(32);
+        }
+
+        const { plain, secret } = this.catalog.splitConfig(serviceKey, { ...providedConfig, ...systemValues });
         const encryptionKey = this.configService.getOrThrow<string>('ENCRYPTION_KEY');
         const hasSecrets = Object.keys(secret).length > 0;
         const encryptedConfig = hasSecrets ? this.cryptoService.encryptWithRawKey(JSON.stringify(secret), encryptionKey) : null;
@@ -111,6 +141,33 @@ export class PlatformServicesService {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.PLATFORM_UPDATE);
         this.assertValidServiceKey(serviceKey);
 
+        // A service others rely on cannot be switched off underneath them (e.g. Mailing while
+        // Auth & User or Scheduler are active) - the next generation would fail to compile.
+        const dependentKeys = this.catalog.getDependents(serviceKey).map((blueprint) => blueprint.key);
+        if (dependentKeys.length > 0) {
+            const activeDependents = await this.prisma.platformService.findMany({
+                where: { platformId, serviceKey: { in: dependentKeys } },
+                select: { serviceKey: true },
+            });
+            if (activeDependents.length > 0) {
+                const names = activeDependents.map((d) => `"${this.catalog.getByKey(d.serviceKey).name}"`).join(', ');
+                const plural = activeDependents.length > 1;
+                throw new BadRequestException(
+                    `Cannot disable "${this.catalog.getByKey(serviceKey).name}": ${names} ${plural ? 'depend' : 'depends'} on it. Disable ${plural ? 'them' : 'it'} first.`,
+                );
+            }
+        }
+
+        // Mailing can be protected by Auth & User (its `requiresAuth` option) - same reasoning.
+        if (serviceKey === 'auth-user') {
+            const mailingConfig = await this.readExistingConfig(platformId, 'mailing');
+            if (mailingConfig.requiresAuth === true || mailingConfig.requiresAuth === 'true') {
+                throw new BadRequestException(
+                    'Cannot disable "Auth & User": Mailing protects /mail/send with it. Turn that option off on Mailing first.',
+                );
+            }
+        }
+
         const result = await this.prisma.platformService.deleteMany({
             where: { platformId, serviceKey },
         });
@@ -120,6 +177,71 @@ export class PlatformServicesService {
         }
 
         return { message: `Service "${serviceKey}" disabled successfully.` };
+    }
+
+    /**
+     * Profile fields currently defined for external users of the platform's generated backend.
+     */
+    async getProfileFields(actor: Actor, platformId: string) {
+        await this.assertCanView(actor, platformId);
+
+        const config = await this.getPublicConfig(platformId, 'auth-user').catch(() => null);
+        if (!config) {
+            throw new BadRequestException('Auth & User is not enabled on this platform.');
+        }
+
+        return {
+            externalUsersEnabled: isExternalUsersEnabled(config),
+            fields: readProfileFields(config),
+        };
+    }
+
+    /**
+     * Defines (replaces) the profile fields external users fill in after creating their account.
+     * Only possible once Auth & User is enabled WITH external users. The change reaches the
+     * generated backend at the next generation.
+     */
+    async setProfileFields(actor: Actor, platformId: string, dto: SetProfileFieldsDto) {
+        await this.assertCanEdit(actor, platformId, PERMISSIONS.PLATFORM_UPDATE);
+
+        const record = await this.prisma.platformService.findUnique({
+            where: { platformId_serviceKey: { platformId, serviceKey: 'auth-user' } },
+            select: { config: true },
+        });
+        if (!record) {
+            throw new BadRequestException('Please enable "Auth & User" first.');
+        }
+
+        const config = this.normalizeConfig(record.config);
+        if (!isExternalUsersEnabled(config)) {
+            throw new BadRequestException(
+                'External users are not enabled: re-enable "Auth & User" with "allowExternalUsers" turned on before defining a profile.',
+            );
+        }
+
+        const fields = buildProfileFieldDefinitions(dto.fields);
+
+        // A column whose type or list-ness changes cannot be altered in place once the database exists
+        // (same rule as entity fields) - the next generation's migration would fail.
+        const platform = await this.prisma.platform.findUnique({ where: { id: platformId }, select: { status: true } });
+        if (platform && LOCKED_STATUSES.includes(platform.status)) {
+            const previous = new Map<string, ProfileFieldDefinition>(readProfileFields(config).map((f) => [f.column, f]));
+            for (const field of fields) {
+                const before = previous.get(field.column);
+                if (before && (before.type !== field.type || before.isArray !== field.isArray)) {
+                    throw new BadRequestException(
+                        `Cannot change the type of the profile field "${field.name}": this platform has already been generated. Remove it and add a new one instead.`,
+                    );
+                }
+            }
+        }
+
+        await this.prisma.platformService.update({
+            where: { platformId_serviceKey: { platformId, serviceKey: 'auth-user' } },
+            data: { config: { ...config, [PROFILE_FIELDS_CONFIG_KEY]: fields } as unknown as Prisma.InputJsonValue },
+        });
+
+        return { fields, message: 'Profile fields saved. Generate the platform again to apply them.' };
     }
 
     /**
@@ -176,6 +298,40 @@ export class PlatformServicesService {
         }
 
         return this.normalizeConfig(record.config);
+    }
+
+    /**
+     * Throws a clear 400 when a prerequisite service of `serviceKey` is not active on the platform.
+     */
+    private async assertDependenciesActive(platformId: string, serviceKey: string): Promise<void> {
+        const dependencies = this.catalog.getDependencies(serviceKey);
+        if (dependencies.length === 0) return;
+
+        const active = await this.prisma.platformService.findMany({
+            where: { platformId, serviceKey: { in: dependencies.map((d) => d.key) } },
+            select: { serviceKey: true },
+        });
+        const activeKeys = new Set(active.map((row) => row.serviceKey));
+        const missing = dependencies.filter((d) => !activeKeys.has(d.key));
+
+        if (missing.length > 0) {
+            const names = missing.map((d) => `"${d.name}"`).join(', ');
+            throw new BadRequestException(
+                `"${this.catalog.getByKey(serviceKey).name}" requires ${names} to be enabled first.`,
+            );
+        }
+    }
+
+    /**
+     * Current stored configuration (plain + decrypted secrets) or `{}` when the service is not yet active.
+     */
+    private async readExistingConfig(platformId: string, serviceKey: string): Promise<ServiceConfig> {
+        try {
+            return await this.getFullDecryptedConfig(platformId, serviceKey);
+        } catch (error) {
+            if (error instanceof NotFoundException) return {};
+            throw error;
+        }
     }
 
     /**

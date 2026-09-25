@@ -1,6 +1,7 @@
-import { Body, Controller, Delete, Get, Param, Post } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Put } from '@nestjs/common';
 import { PlatformServicesService } from './platform-services.service';
 import { EnableServiceDto } from './dto/enable-service.dto';
+import { SetProfileFieldsDto } from './dto/set-profile-fields.dto';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 
@@ -46,6 +47,35 @@ export class PlatformServicesController {
         @Body() dto: EnableServiceDto,
     ) {
         return this.platformServices.enable(actor, platformId, dto.serviceKey, dto.config);
+    }
+
+    /**
+     * Returns the profile fields external users must/can fill in after signing up to the
+     * platform's generated backend (Auth & User service, with external users enabled).
+     *
+     * @param actor - The authenticated user making the request.
+     * @param platformId - Unique identifier of the target platform.
+     */
+    @Get('auth-user/profile-fields')
+    getProfileFields(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
+        return this.platformServices.getProfileFields(actor, platformId);
+    }
+
+    /**
+     * Defines (replaces) the profile fields of external users. Second step after enabling
+     * Auth & User with `allowExternalUsers: true`; takes effect at the next generation.
+     *
+     * @param actor - The authenticated user making the request.
+     * @param platformId - Unique identifier of the target platform.
+     * @param dto - The full list of profile fields.
+     */
+    @Put('auth-user/profile-fields')
+    setProfileFields(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Body() dto: SetProfileFieldsDto,
+    ) {
+        return this.platformServices.setProfileFields(actor, platformId, dto);
     }
 
     /**

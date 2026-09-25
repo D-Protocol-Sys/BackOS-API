@@ -451,6 +451,88 @@ export class AuthService {
     }
 
     /**
+     * Confirms, on behalf of a GENERATED BACKEND, that a BackOS user currently holds a valid
+     * authenticator (TOTP) code - the "internal login" of a generated backend's Auth & User service.
+     *
+     * The TOTP secret never leaves BackOS: the generated backend only ever receives the yes/no
+     * answer (and the username). The same protections as `login()` apply, deliberately sharing its
+     * counter: an ACTIVE account, a working MFA enrolment, and the lockout policy - so guessing
+     * codes through a generated backend is exactly as hard as guessing them on BackOS itself.
+     * (The flip side: repeated wrong codes typed into a generated backend's login also lock the
+     * user out of BackOS for the same cool-down.)
+     *
+     * Every failure is the same generic 401, whatever the reason.
+     *
+     * @param userId - BackOS user whose code is being checked.
+     * @param totpCode - The 6-digit code the person typed.
+     * @param platformId - The platform whose generated backend asked (audit trail only).
+     * @param context - Audit metadata (the caller is the generated backend, not the end user).
+     * @returns The user's id and username.
+     * @throws UnauthorizedException when the account, MFA or code is not valid.
+     */
+    async verifyTotpForGeneratedBackend(
+        userId: string,
+        totpCode: string,
+        platformId: string,
+        context: AuditContext,
+    ): Promise<{ userId: string; username: string }> {
+        const user = await this.prisma.user.findUnique({ where: { id: userId } });
+        if (!user || user.status !== UserStatus.ACTIVE) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+
+        const mfa = await this.prisma.userMfa.findUnique({ where: { userId: user.id } });
+        if (!mfa || mfa.status !== MfaStatus.ACTIVE) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+
+        const isValid = await this.mfaService.verify(mfa.secretEncrypted, totpCode);
+        if (!isValid) {
+            await this.registerFailedLoginAttempt(user.id, user.failedLoginAttempts, context);
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+
+        if (user.failedLoginAttempts > 0 || user.lockedUntil) {
+            await this.prisma.user.update({
+                where: { id: user.id },
+                data: { failedLoginAttempts: 0, lockedUntil: null },
+            });
+        }
+
+        await this.auditLog.log({
+            action: AUDIT_ACTIONS.LOGIN,
+            actorId: user.id,
+            targetType: AUDIT_TARGETS.USER,
+            targetId: user.id,
+            metadata: { channel: 'generated-backend', platformId },
+            context,
+        });
+
+        return { userId: user.id, username: user.username };
+    }
+
+    /**
+     * Lighter counterpart of `verifyTotpForGeneratedBackend()`, without a code: is this user still
+     * an ACTIVE BackOS account? Used by a generated backend when renewing a session.
+     *
+     * @throws UnauthorizedException when the account no longer exists or is not active.
+     */
+    async assertActiveUserForGeneratedBackend(userId: string): Promise<{ userId: string; username: string }> {
+        const user = await this.prisma.user.findUnique({
+            where: { id: userId },
+            select: { id: true, username: true, status: true },
+        });
+        if (!user || user.status !== UserStatus.ACTIVE) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
+        return { userId: user.id, username: user.username };
+    }
+
+    /**
      * Authenticates a user emergency backup access using a single-use recovery code.
      * Supports authentication via either work email or username.
      * * Process Flow:

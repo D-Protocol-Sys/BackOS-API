@@ -160,9 +160,17 @@ export async function generateSchedulerFiles(
             import { TasksService } from './tasks.service';
             import { CreateTaskDto } from './dto/create-task.dto';
             import { UpdateTaskDto } from './dto/update-task.dto';
-            import { ApiTags } from '@nestjs/swagger';
+            import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+            import { UseGuards } from '@nestjs/common';
+            import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+            import { InternalOnlyGuard } from '../common/guards/internal-only.guard';
 
+            // Scheduled tasks can send e-mails and call arbitrary URLs on the server's behalf, so the
+            // whole controller is reserved to INTERNAL accounts (Auth & User is a prerequisite of
+            // Scheduler for exactly this reason - see SCHEDULER_BLUEPRINT.dependsOn).
             @ApiTags('Task')
+            @ApiBearerAuth('access-token')
+            @UseGuards(JwtAuthGuard, InternalOnlyGuard)
             @Controller('tasks')
             export class TasksController {
                 constructor(private readonly tasksService: TasksService) {}
@@ -198,8 +206,8 @@ export async function generateSchedulerFiles(
             import { Processor, WorkerHost } from '@nestjs/bullmq';
             import { Logger } from '@nestjs/common';
             import { Job } from 'bullmq';
-            import * as nodemailer from 'nodemailer';
             import { PrismaService } from '../prisma/prisma.service';
+            import { MailService } from '../mail/mail.service';
             import { TASKS_QUEUE_NAME } from './tasks.queue';
 
             interface EmailTaskPayload {
@@ -259,7 +267,12 @@ export async function generateSchedulerFiles(
             export class TasksProcessor extends WorkerHost {
                 private readonly logger = new Logger(TasksProcessor.name);
 
-                constructor(private readonly prisma: PrismaService) {
+                // E-mail actions are sent through the Mailing service (a prerequisite of Scheduler,
+                // see SCHEDULER_BLUEPRINT.dependsOn) rather than a second, duplicated SMTP setup.
+                constructor(
+                    private readonly prisma: PrismaService,
+                    private readonly mailService: MailService,
+                ) {
                     super();
                 }
 
@@ -296,22 +309,7 @@ export async function generateSchedulerFiles(
                 }
 
                 private async runEmailAction(payload: EmailTaskPayload) {
-                    const transporter = nodemailer.createTransport({
-                        host: process.env.SMTP_HOST,
-                        port: Number(process.env.SMTP_PORT),
-                        secure: false,
-                        auth: {
-                            user: process.env.SMTP_USER,
-                            pass: process.env.SMTP_PASSWORD,
-                        },
-                    });
-
-                    await transporter.sendMail({
-                        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-                        to: payload.to,
-                        subject: payload.subject,
-                        text: payload.text,
-                    });
+                    await this.mailService.send(payload.to, payload.subject, payload.text);
                 }
 
                 private async runWebhookAction(payload: WebhookTaskPayload) {

@@ -78,6 +78,12 @@ export const validationSchema = Joi.object({
     // internally. See src/gateway/GATEWAY_README.md for the full rationale.
     GENERATED_BACKEND_HOST: Joi.string().default('127.0.0.1'),
     GENERATED_BACKEND_GATEWAY_PREFIX: Joi.string().default('/generated'),
+    // Base URL a generated backend calls to have BackOS verify an internal login (BackOS username +
+    // authenticator code) - see `InternalGeneratedAuthController`. Optional: when unset it defaults
+    // to `http://host.docker.internal:<PORT>` (the host, as seen from a generated Docker container).
+    // Set it when BackOS itself runs in a container, or generated backends run as native processes
+    // (e.g. `http://127.0.0.1:4803`). No trailing path.
+    GENERATED_BACKEND_BACKOS_URL: Joi.string().uri({ scheme: ['http', 'https'] }).optional(),
 
     // --- GENERATED BACKEND DOCKER ISOLATION (see DockerRuntimeManagerService, opt-in) ---
     GENERATED_BACKEND_MEMORY_LIMIT: Joi.string().default('256m'),

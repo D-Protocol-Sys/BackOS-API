@@ -8,8 +8,9 @@ import { PlatformServicesService } from './platform-services.service';
 import { ServiceCatalog } from './service-catalog/service-catalog';
 import { SERVICE_FILE_GENERATORS } from './service-catalog/service-file-generators';
 import { PrismaService } from '../prisma/prisma.service';
-import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate, healthControllerTemplate, healthModuleTemplate, dockerfileTemplate, dockerignoreTemplate, npmrcTemplate, pnpmWorkspaceYamlTemplate, uploadsControllerTemplate, uploadsModuleTemplate, uploadsMulterConfigTemplate } from './templates/generated-project.templates';
+import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate, healthControllerTemplate, healthModuleTemplate, dockerfileTemplate, dockerignoreTemplate, npmrcTemplate, pnpmWorkspaceYamlTemplate, uploadsControllerTemplate, uploadsModuleTemplate, uploadsMulterConfigTemplate, uploadsPolicyGuardTemplate } from './templates/generated-project.templates';
 import { computeRelationFieldsByEntity } from '../common/utils/relation-metadata.util';
+import { UserStatus } from '@prismamodels/enums';
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
@@ -71,8 +72,24 @@ export class ProjectScaffolderService {
      * Scaffolds a complete standalone NestJS application directory for a given platform.
      * Preserves existing Prisma migration history during project regeneration.
      */
-    async scaffold(params: { platformId: string; slug: string; databaseUrl: string; port: number }): Promise<{ projectPath: string; isFirstGeneration: boolean }> {
+    async scaffold(params: {
+        platformId: string;
+        slug: string;
+        databaseUrl: string;
+        port: number;
+        /** BackOS user who triggered this generation - gets an internal account on the generated backend. */
+        triggeredById?: string;
+    }): Promise<{ projectPath: string; isFirstGeneration: boolean }> {
         this.validateSlug(params.slug);
+
+        // Read the active services and check their prerequisites BEFORE touching the disk: a missing
+        // prerequisite (e.g. Auth & User active but Mailing not) would otherwise only surface as a
+        // compile error deep inside the generated project, after the previous one was already wiped.
+        const activeServices = await this.prisma.platformService.findMany({
+            where: { platformId: params.platformId },
+            orderBy: { createdAt: 'asc' },
+        });
+        this.assertServiceDependencies(new Set(activeServices.map((service) => service.serviceKey)));
 
         const projectPath = this.resolveProjectPath(params.slug);
         const migrationsPath = path.join(projectPath, 'prisma', 'migrations');
@@ -111,11 +128,6 @@ export class ProjectScaffolderService {
                 preservedUploadsPath = null;
             }
 
-            const activeServices = await this.prisma.platformService.findMany({
-                where: { platformId: params.platformId },
-                orderBy: { createdAt: 'asc' },
-            });
-
             const prismaBlocks: string[] = [];
             const extraPnpmDeps: Record<string, string> = {};
             const extraPnpmDevDeps: Record<string, string> = {};
@@ -148,16 +160,28 @@ export class ProjectScaffolderService {
             // Aggregate Prisma models, dependencies, environment configs, and code generation hooks for active services
             for (const service of activeServices) {
                 const blueprint = this.serviceCatalog.getByKey(service.serviceKey);
-                if (blueprint.prismaModels) { prismaBlocks.push(blueprint.prismaModels); }
                 Object.assign(extraPnpmDeps, blueprint.pnpmDependencies);
                 Object.assign(extraPnpmDevDeps, blueprint.pnpmDevDependencies ?? {});
                 const fullConfig = await this.platformServices.getFullDecryptedConfig(params.platformId, service.serviceKey);
+                // A service's tables may depend on its configuration (e.g. the external-user profile
+                // of Auth & User), hence resolved here, once the full config is known.
+                const prismaModels = this.serviceCatalog.resolvePrismaModels(service.serviceKey, fullConfig);
+                if (prismaModels) { prismaBlocks.push(prismaModels); }
                 Object.assign(extraEnvVars, fullConfig);
                 const generatorFn = SERVICE_FILE_GENERATORS[service.serviceKey];
                 if (generatorFn) {
                     const modules = await generatorFn(projectPath, fullConfig);
                     extraModules.push(...modules);
                 }
+            }
+
+            // Auth & User: everything the generated backend needs to have BackOS verify the
+            // authenticator code of an internal login (see `BackosVerifierService` in the generated
+            // code): who to call, which platform it is, and who gets an internal account.
+            if (activeServices.some((service) => service.serviceKey === 'auth-user')) {
+                extraEnvVars.backosUrl = this.resolveBackosUrl();
+                extraEnvVars.backosPlatformId = params.platformId;
+                extraEnvVars.internalAccounts = await this.buildInternalAccountsEnv(params.platformId, params.triggeredById);
             }
 
             // Build dynamic Prisma schema and fetch entity definitions
@@ -224,7 +248,8 @@ export class ProjectScaffolderService {
                 fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.module.ts'), prismaModuleTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'health', 'health.controller.ts'), healthControllerTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'health', 'health.module.ts'), healthModuleTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.controller.ts'), uploadsControllerTemplate(), 'utf8'),
+                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.controller.ts'), uploadsControllerTemplate(activeServices.some((service) => service.serviceKey === 'auth-user')), 'utf8'),
+                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.policy.guard.ts'), uploadsPolicyGuardTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.module.ts'), uploadsModuleTemplate(), 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.multer-config.ts'), uploadsMulterConfigTemplate(), 'utf8'),
                 // Written unconditionally on every generation, whether or not Docker isolation
@@ -287,6 +312,65 @@ export class ProjectScaffolderService {
                 }
             }
         }
+    }
+
+    /**
+     * Throws when an active service needs another one that is not active (e.g. Auth & User or
+     * Scheduler without Mailing). Normally impossible - `PlatformServicesService` refuses to
+     * enable / disable in a way that breaks this - but platforms configured before the dependency
+     * existed can still be in that state, and must get a clear message rather than a build failure.
+     */
+    private assertServiceDependencies(activeServiceKeys: Set<string>): void {
+        for (const key of activeServiceKeys) {
+            const blueprint = this.serviceCatalog.getByKey(key);
+            const missing = (blueprint.dependsOn ?? []).filter((dependency) => !activeServiceKeys.has(dependency));
+            if (missing.length > 0) {
+                const names = missing.map((dependency) => `"${this.serviceCatalog.getByKey(dependency).name}"`).join(', ');
+                throw new BadRequestException(
+                    `Le service "${blueprint.name}" nécessite ${names}, qui n'est pas actif. Activez-le puis relancez la génération.`,
+                );
+            }
+        }
+    }
+
+    /**
+     * Base URL a generated backend uses to reach BackOS (for the internal-login verification).
+     * `GENERATED_BACKEND_BACKOS_URL` wins when set. Otherwise: the host machine as seen from a
+     * Docker container, on BackOS's own port - the default runtime for generated backends.
+     */
+    private resolveBackosUrl(): string {
+        const configured = this.configService.get<string>('GENERATED_BACKEND_BACKOS_URL');
+        if (configured && configured.trim()) return configured.trim().replace(/\/+$/, '');
+        const port = this.configService.get<number>('app.port') ?? this.configService.get<number>('PORT') ?? 4803;
+        return `http://host.docker.internal:${port}`;
+    }
+
+    /**
+     * The BackOS people who get an internal account on the generated backend, as a base64 JSON
+     * list for the `INTERNAL_ACCOUNTS` variable: the platform owner, plus whoever triggered this
+     * generation. Only people who can actually authenticate through BackOS for this platform (the
+     * owner or a member, and still ACTIVE) are listed - an account nobody can log in to would
+     * only be confusing. The generated backend creates / refreshes the accounts at start-up.
+     */
+    private async buildInternalAccountsEnv(platformId: string, triggeredById?: string): Promise<string> {
+        const platform = await this.prisma.platform.findUnique({
+            where: { id: platformId },
+            select: { ownerId: true, members: { select: { userId: true } } },
+        });
+
+        const memberIds = new Set((platform?.members ?? []).map((member) => member.userId));
+        const candidateIds = Array.from(new Set([platform?.ownerId, triggeredById].filter((id): id is string => Boolean(id))));
+        const eligibleIds = candidateIds.filter((id) => id === platform?.ownerId || memberIds.has(id));
+
+        const users = eligibleIds.length
+            ? await this.prisma.user.findMany({
+                  where: { id: { in: eligibleIds }, status: UserStatus.ACTIVE },
+                  select: { id: true, username: true },
+              })
+            : [];
+
+        const accounts = users.map((user) => ({ userId: user.id, username: user.username }));
+        return Buffer.from(JSON.stringify(accounts), 'utf8').toString('base64');
     }
 
     /**

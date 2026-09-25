@@ -73,6 +73,7 @@ export class SchemaBuilderService {
                 type: string;
                 required: boolean;
                 unique: boolean;
+                isArray: boolean;
                 defaultValue: string | null;
             }[];
         },
@@ -108,10 +109,23 @@ export class SchemaBuilderService {
         type: string;
         required: boolean;
         unique: boolean;
+        isArray: boolean;
         defaultValue: string | null;
     }): string {
         const fieldName = toCamelCase(field.column);
         const prismaType = FIELD_TYPE_TO_PRISMA[field.type as keyof typeof FIELD_TYPE_TO_PRISMA];
+
+        // ARRAY fields (tags, image/video galleries, ...) become a native PostgreSQL array
+        // column (`TEXT[]`, `DOUBLE PRECISION[]`, `JSONB[]`, ...). Prisma rules that shape this line:
+        //   - a scalar list can never be optional (`String[]?` is invalid) - so no `?` here, and
+        //     "required" is enforced at the API layer instead (`@ArrayNotEmpty()` in the DTO);
+        //   - `@default([])` makes an omitted value an empty list instead of NULL;
+        //   - `@unique` on a list is not supported, and neither is a custom default - both are
+        //     rejected up front by `FieldsService`, so they can never reach this point.
+        if (field.isArray) {
+            return `  ${fieldName} ${prismaType}[] @default([])`;
+        }
+
         const optionalMark = field.required ? '' : '?';
 
         const attributes: string[] = [];
@@ -137,6 +151,8 @@ export class SchemaBuilderService {
             case 'TEXT':
             case 'IMAGE':
             case 'FILE':
+            case 'VIDEO':
+            case 'MEDIA':
             case 'URL': {
                 const escaped = rawDefault.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
                 return `@default("${escaped}")`;
