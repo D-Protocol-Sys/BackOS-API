@@ -16,6 +16,8 @@ import { ApiManifestService } from './api-manifest.service';
 import { AuthModule } from '../auth/auth.module';
 import { InternalGeneratedAuthController } from './internal-generated-auth.controller';
 import { InternalGeneratedAuthService } from './internal-generated-auth.service';
+import { PlatformAccessModule } from '../platforms/platform-access.module';
+import { InternalAccountsSyncService } from './internal-accounts-sync.service';
 
 @Module({
 
@@ -25,6 +27,9 @@ import { InternalGeneratedAuthService } from './internal-generated-auth.service'
         // Provides AuthService, used by InternalGeneratedAuthService to verify the authenticator
         // code of a person logging in to a generated backend.
         AuthModule,
+        // Shared "who can do what on this platform" resolver (see PlatformAccessModule for why
+        // it is a standalone module rather than coming from PlatformsModule).
+        PlatformAccessModule,
     ],
 
     controllers: [GeneratorController, InternalGeneratedAuthController],
@@ -33,6 +38,7 @@ import { InternalGeneratedAuthService } from './internal-generated-auth.service'
         ProvisioningService,
         SchemaBuilderService,
         ProjectScaffolderService,
+        InternalAccountsSyncService,
         CrudGeneratorService,
         GenerationsService,
         PortAllocatorService,
@@ -55,6 +61,9 @@ import { InternalGeneratedAuthService } from './internal-generated-auth.service'
         SchemaBuilderService,
         ProjectScaffolderService,
         PortAllocatorService,
+        // Exported so PlatformsModule can tell a running generated backend to resync its internal
+        // accounts whenever a member / role changes (see InternalAccountsSyncService).
+        InternalAccountsSyncService,
         // Exported so PlatformsModule can stop a platform's runtime as part of archiving it,
         // and remove its on-disk generated project directory as part of permanently deleting
         // it - see PlatformsService.archive()/purge().

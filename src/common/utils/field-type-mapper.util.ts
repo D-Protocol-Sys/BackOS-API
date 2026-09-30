@@ -20,6 +20,10 @@ export const FIELD_TYPE_TO_PRISMA: Record<FieldType, string> = {
     MEDIA: 'String',
     URL: 'String',
     JSON: 'Json',
+    // Never actually read: SchemaBuilderService special-cases ENUM fields before consulting this
+    // map, resolving the field's own EnumDefinition to a Prisma `enum` type instead. Present only
+    // so this Record stays exhaustive over every FieldType.
+    ENUM: 'String',
 };
 
 /**

@@ -74,13 +74,14 @@ export class ProjectsService {
      * Actors with the global `PROJECT_READ` permission see every project; everyone else only
      * sees projects they manage. Supports optional filtering by platform and status.
      */
-    async list(actor: Actor, filters: { platformId?: string; status?: ProjectStatus } = {}) {
+    async list(actor: Actor, filters: { platformId?: string; clientId?: string; status?: ProjectStatus } = {}) {
 
         const canSeeAll = actor.permissions.includes(PERMISSIONS.PROJECT_READ);
 
         return this.prisma.project.findMany({
             where: {
                 ...(filters.platformId ? { platformId: filters.platformId } : {}),
+                ...(filters.clientId ? { clientId: filters.clientId } : {}),
                 ...(filters.status ? { status: filters.status } : {}),
                 ...(canSeeAll ? {} : { managerId: actor.userId }),
             },

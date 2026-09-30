@@ -15,23 +15,15 @@ import { AddMemberDto } from './dto/add-member.dto';
 import { UpdateMemberRoleDto } from './dto/update-member-role.dto';
 import { slugify } from '../common/utils/slugify.util';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
-import { PlatformRole, UserStatus } from '@prismamodels/client';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
+import { UserStatus } from '@prismamodels/client';
 import { DockerRuntimeManagerService } from '../generator/docker-runtime-manager.service';
 import { ProjectScaffolderService } from '../generator/project-scaffolder.service';
+import { PlatformAccessService, Actor } from './platform-access.service';
+import { InternalAccountsSyncService } from '../generator/internal-accounts-sync.service';
 
-/**
- * Type defining the requesting user (actor) details, including ID and global system permissions.
- */
-type Actor = { userId: string; permissions: string[] };
-
-/**
- * Hierarchy weight mapping used to compare platform roles during authorization checks.
- */
-const ROLE_WEIGHT: Record<PlatformRole, number> = {
-    VIEWER: 1,
-    EDITOR: 2,
-    ADMIN: 3,
-};
+/** Name of the system role every platform is seeded with at creation time - see `create()`. */
+export const SYSTEM_ADMIN_ROLE_NAME = 'ADMIN';
 
 /**
  * Domain Service managing platform resources lifecycle, RBAC access checks,
@@ -46,24 +38,36 @@ export class PlatformsService {
         private readonly prisma: PrismaService,
         private readonly runtimeManager: DockerRuntimeManagerService,
         private readonly scaffolder: ProjectScaffolderService,
+        private readonly access: PlatformAccessService,
+        private readonly internalAccountsSync: InternalAccountsSyncService,
     ) {}
 
     /**
-     * Creates a new platform entity owned by the requesting actor.
-     * Automatically generates a unique URL-friendly slug based on the platform name.
+     * Creates a new platform entity owned by the requesting actor, and seeds its system "ADMIN"
+     * role in the same transaction - every platform must have exactly one `isSystem: true` role
+     * from the moment it exists, since `PlatformMember.platformRoleId` is required (there is no
+     * "member with no role" state - see `PlatformMember` in schema.prisma).
      */
     async create(actor: Actor, dto: CreatePlatformDto) {
 
         const slug = await this.generateUniqueSlug(dto.name);
 
-        return this.prisma.platform.create({
-            data: {
-                name: dto.name,
-                description: dto.description,
-                url: dto.url,
-                slug,
-                ownerId: actor.userId,
-            },
+        return this.prisma.$transaction(async (tx) => {
+            const platform = await tx.platform.create({
+                data: {
+                    name: dto.name,
+                    description: dto.description,
+                    url: dto.url,
+                    slug,
+                    ownerId: actor.userId,
+                },
+            });
+
+            await tx.platformRole.create({
+                data: { platformId: platform.id, name: SYSTEM_ADMIN_ROLE_NAME, isSystem: true },
+            });
+
+            return platform;
         });
     }
 
@@ -109,7 +113,7 @@ export class PlatformsService {
      */
     async update(actor: Actor, id: string, dto: UpdatePlatformDto) {
         const platform = await this.findPlatformOrThrow(id);
-        await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_UPDATE);
+        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_UPDATE, PERMISSIONS.PLATFORM_UPDATE);
 
         return this.prisma.platform.update({ where: { id }, data: dto });
     }
@@ -287,7 +291,10 @@ export class PlatformsService {
             throw new BadRequestException('The new owner is invalid or inactive.');
         }
 
-        return this.prisma.platform.update({ where: { id }, data: { ownerId: dto.newOwnerId } });
+        const updated = await this.prisma.platform.update({ where: { id }, data: { ownerId: dto.newOwnerId } });
+        // The new owner gets an internal account on the generated backend right away.
+        void this.internalAccountsSync.notify(id);
+        return updated;
     }
 
     // ---- Members ----
@@ -301,8 +308,36 @@ export class PlatformsService {
 
         return this.prisma.platformMember.findMany({
             where: { platformId },
-            include: { user: { select: { id: true, workEmail: true, firstName: true, lastName: true } } },
+            include: {
+                user: { select: { id: true, username: true, workEmail: true, firstName: true, lastName: true } },
+                platformRole: { select: { id: true, name: true, isSystem: true } },
+            },
         });
+    }
+
+    /**
+     * The caller's own effective access on this platform, for the UI to gate buttons and tabs:
+     * whether they are the owner / an ADMIN, their role name, and the platform permission keys they
+     * hold. Purely informative - every action is still re-checked server-side.
+     */
+    async getMyAccess(actor: Actor, platformId: string) {
+        const platform = await this.findPlatformOrThrow(platformId);
+        await this.assertCanView(actor, platform);
+
+        const { isOwner, isAdmin, permissions } = await this.access.getEffectivePermissions(actor, platform);
+        const membership = isOwner
+            ? null
+            : await this.prisma.platformMember.findUnique({
+                  where: { platformId_userId: { platformId, userId: actor.userId } },
+                  select: { platformRole: { select: { id: true, name: true, isSystem: true } } },
+              });
+
+        return {
+            isOwner,
+            isAdmin,
+            role: membership?.platformRole ?? null,
+            permissions: Array.from(permissions),
+        };
     }
 
     /**
@@ -310,8 +345,9 @@ export class PlatformsService {
      */
     async addMember(actor: Actor, platformId: string, dto: AddMemberDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
-        this.assertCanGrantRole(actor, platform, dto.role);
+        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        const role = await this.resolveRoleOrThrow(platformId, dto.platformRoleId);
+        await this.assertCanGrantRole(actor, platform, role);
 
         if (dto.userId === platform.ownerId) {
             throw new BadRequestException('The owner does not need to be added as a member.');
@@ -321,11 +357,15 @@ export class PlatformsService {
             throw new BadRequestException('Invalid or inactive user.');
         }
 
-        return this.prisma.platformMember.upsert({
+        const member = await this.prisma.platformMember.upsert({
             where: { platformId_userId: { platformId, userId: dto.userId } },
-            update: { role: dto.role },
-            create: { platformId, userId: dto.userId, role: dto.role },
+            update: { platformRoleId: role.id },
+            create: { platformId, userId: dto.userId, platformRoleId: role.id },
         });
+        // Immediate effect on the generated backend: an ADMIN / data-role member gets their
+        // internal account created now (no restart, no regeneration) - see InternalAccountsSyncService.
+        void this.internalAccountsSync.notify(platformId);
+        return member;
     }
 
     /**
@@ -333,18 +373,22 @@ export class PlatformsService {
      */
     async updateMemberRole(actor: Actor, platformId: string, targetUserId: string, dto: UpdateMemberRoleDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
-        this.assertCanGrantRole(actor, platform, dto.role);
+        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        const role = await this.resolveRoleOrThrow(platformId, dto.platformRoleId);
+        await this.assertCanGrantRole(actor, platform, role);
 
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
         if (!membership) throw new NotFoundException('This member is not part of the platform.');
 
-        return this.prisma.platformMember.update({
+        const updated = await this.prisma.platformMember.update({
             where: { id: membership.id },
-            data: { role: dto.role },
+            data: { platformRoleId: role.id },
         });
+        // Gaining OR losing data access changes who holds an internal account.
+        void this.internalAccountsSync.notify(platformId);
+        return updated;
     }
 
     /**
@@ -354,7 +398,7 @@ export class PlatformsService {
     async removeMember(actor: Actor, platformId: string, targetUserId: string) {
 
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.assertHasAtLeastRole(actor, platform, PlatformRole.ADMIN, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
 
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
@@ -367,6 +411,7 @@ export class PlatformsService {
 
         if (isOwnerOrGlobal) {
             await this.prisma.platformMember.delete({ where: { id: membership.id } });
+            void this.internalAccountsSync.notify(platformId);
             return { message: 'Member removed.', status: 'removed' };
         }
 
@@ -400,6 +445,8 @@ export class PlatformsService {
         }
 
         await this.prisma.platformMember.delete({ where: { id: membership.id } });
+        // Their internal account on the generated backend is revoked right away.
+        void this.internalAccountsSync.notify(platformId);
         return { message: 'Removal confirmed, member deleted.' };
     }
 
@@ -466,24 +513,6 @@ export class PlatformsService {
     }
 
     /**
-     * Asserts actor holds a specific minimum role weight or has global override permissions.
-     */
-    private async assertHasAtLeastRole(
-        actor: Actor,
-        platform: { id: string; ownerId: string },
-        minRole: PlatformRole,
-        globalPermission: string,
-    ) {
-        if (platform.ownerId === actor.userId) return;
-        if (actor.permissions.includes(globalPermission)) return;
-
-        const membership = await this.getMembership(actor.userId, platform.id);
-        if (!membership || ROLE_WEIGHT[membership.role] < ROLE_WEIGHT[minRole]) {
-            throw new ForbiddenException('Action not authorized on this platform.');
-        }
-    }
-
-    /**
      * Asserts action is executed by the platform owner or an actor with global permission.
      */
     private assertOwnerOrGlobalPermission(
@@ -497,20 +526,49 @@ export class PlatformsService {
     }
 
     /**
-     * Restricts ADMIN role assignments strictly to the platform owner or global member managers.
+     * Resolves a `platformRoleId` to its row (with permissions loaded), or throws if it doesn't
+     * exist or belongs to a different platform than the one being acted on.
      */
-    private assertCanGrantRole(
-        actor: Actor,
-        platform: { ownerId: string },
-        roleToGrant: PlatformRole,
-    ) {
-        if (roleToGrant !== PlatformRole.ADMIN) return;
-        if (platform.ownerId === actor.userId) return;
-        if (actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS)) return;
+    private async resolveRoleOrThrow(platformId: string, platformRoleId: string) {
+        const role = await this.prisma.platformRole.findUnique({
+            where: { id: platformRoleId },
+            include: { rolePermissions: { include: { platformPermission: true } } },
+        });
+        if (!role || role.platformId !== platformId) {
+            throw new BadRequestException('This role does not exist on this platform.');
+        }
+        return role;
+    }
 
-        throw new ForbiddenException(
-            'Only the platform owner can assign another admin.',
-        );
+    /**
+     * Restricts who can grant `role` to a member:
+     * - the system ADMIN role: only the platform owner, or a global member-manager - exactly the
+     *   pre-existing "only the owner can assign another admin" rule.
+     * - a custom role: the granting actor must themselves hold, on this platform, every
+     *   permission the role carries - the same permission-ceiling rule
+     *   `PlatformRolesService.assertGrantablePermissions()` applies when the role is *created*,
+     *   applied again here because the actor granting an existing role to a member may not be
+     *   the same actor who created it.
+     */
+    private async assertCanGrantRole(
+        actor: Actor,
+        platform: { id: string; ownerId: string },
+        role: { isSystem: boolean; rolePermissions: { platformPermission: { key: string } }[] },
+    ) {
+        if (role.isSystem) {
+            if (platform.ownerId === actor.userId) return;
+            if (actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS)) return;
+            throw new ForbiddenException('Only the platform owner can assign the ADMIN role.');
+        }
+
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        const roleKeys = role.rolePermissions.map((rp) => rp.platformPermission.key);
+        const notOwned = roleKeys.filter((key) => !permissions.has(key as never));
+        if (notOwned.length > 0) {
+            throw new ForbiddenException(
+                `You cannot assign a role that carries permission(s) you do not hold yourself: ${notOwned.join(', ')}.`,
+            );
+        }
     }
 
     /**

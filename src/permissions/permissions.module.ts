@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { PermissionsSyncService } from './permissions-sync.service';
+import { PlatformPermissionsSyncService } from './platform-permissions-sync.service';
 import { PermissionsService } from './permissions.service';
 import { PermissionsController } from './permissions.controller';
 
@@ -7,7 +8,7 @@ import { PermissionsController } from './permissions.controller';
 
     controllers: [PermissionsController],
 
-    providers: [PermissionsSyncService, PermissionsService],
+    providers: [PermissionsSyncService, PlatformPermissionsSyncService, PermissionsService],
 
 })
 

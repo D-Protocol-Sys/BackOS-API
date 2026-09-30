@@ -1,3 +1,5 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 import {
     Injectable, NotFoundException, ForbiddenException, BadRequestException,
 } from '@nestjs/common';
@@ -29,7 +31,10 @@ export class FieldsService {
     /**
      * @param prisma - Database client providing access to Prisma ORM methods.
      */
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly access: PlatformAccessService,
+    ) {}
 
     /**
      * Retrieves all fields defined within a specific entity, ordered by display position.
@@ -63,6 +68,7 @@ export class FieldsService {
         await this.findEntityOrThrow(platformId, entityId);
 
         this.assertArrayFieldIsCoherent(dto.isArray ?? false, dto.unique ?? false, dto.defaultValue);
+        await this.assertEnumFieldIsCoherent(platformId, dto.type, dto.enumDefinitionId, dto.defaultValue);
 
         // Generates a sanitized SQL column name (e.g., "created_at") with collision handling
         const column = await this.generateUniqueColumn(entityId, dto.name);
@@ -80,6 +86,7 @@ export class FieldsService {
                 isArray: dto.isArray ?? false,
                 defaultValue: dto.defaultValue,
                 config: dto.config as Prisma.InputJsonValue | undefined,
+                enumDefinitionId: dto.type === 'ENUM' ? dto.enumDefinitionId : null,
                 order,
             },
         });
@@ -127,10 +134,28 @@ export class FieldsService {
             dto.defaultValue !== undefined ? dto.defaultValue : field.defaultValue,
         );
 
+        const resultingType = dto.type ?? field.type;
+        const resultingEnumDefinitionId =
+            resultingType !== 'ENUM' ? null : dto.enumDefinitionId !== undefined ? dto.enumDefinitionId : field.enumDefinitionId;
+        const resultingDefaultValue = dto.defaultValue !== undefined ? dto.defaultValue : field.defaultValue;
+        await this.assertEnumFieldIsCoherent(platformId, resultingType, resultingEnumDefinitionId ?? undefined, resultingDefaultValue);
+
+        // Which EnumDefinition a field points to is, for the generated database, exactly as
+        // structural as its `type` or `isArray` - it decides which Prisma `enum` the column is.
+        if (
+            resultingEnumDefinitionId !== (field.enumDefinitionId ?? null) &&
+            LOCKED_STATUSES.includes(platform.status)
+        ) {
+            throw new BadRequestException(
+                'Cannot change which enum this field uses: this platform has already been generated. Delete and recreate the field if necessary.',
+            );
+        }
+
         return this.prisma.field.update({
             where: { id: field.id },
             data: {
                 ...dto,
+                enumDefinitionId: resultingEnumDefinitionId,
                 config: dto.config as Prisma.InputJsonValue | undefined,
             },
         });
@@ -205,6 +230,38 @@ export class FieldsService {
     }
 
     /**
+     * An ENUM field must point to exactly one `EnumDefinition` of the SAME platform (an enum
+     * defined for one platform can never be borrowed by another); any other field type must
+     * leave `enumDefinitionId` unset.
+     */
+    private async assertEnumFieldIsCoherent(
+        platformId: string,
+        type: string,
+        enumDefinitionId: string | undefined | null,
+        defaultValue?: string | null,
+    ): Promise<void> {
+        if (type !== 'ENUM') {
+            if (enumDefinitionId) {
+                throw new BadRequestException('Only an ENUM field can reference an enum.');
+            }
+            return;
+        }
+        if (!enumDefinitionId) {
+            throw new BadRequestException('An ENUM field must specify which enum it uses.');
+        }
+        // Rejected rather than supported: a Prisma enum default is an unquoted identifier
+        // (`@default(ACTIVE)`), unlike every other field type's quoted-string default - simplest
+        // to keep the "no default value" rule that already applies to array fields.
+        if (defaultValue) {
+            throw new BadRequestException('An ENUM field cannot have a default value.');
+        }
+        const enumDefinition = await this.prisma.enumDefinition.findUnique({ where: { id: enumDefinitionId } });
+        if (!enumDefinition || enumDefinition.platformId !== platformId) {
+            throw new BadRequestException('Unknown enum for this platform.');
+        }
+    }
+
+    /**
      * Helper: Ensures a platform exists or throws a 404 error.
      */
     private async findPlatformOrThrow(platformId: string) {
@@ -263,8 +320,9 @@ export class FieldsService {
         if (platform.ownerId === actor.userId) return platform;
         if (actor.permissions.includes(permission)) return platform;
 
-        const membership = await this.getMembership(actor.userId, platformId);
-        if (membership?.role === 'ADMIN') return platform;
+        // Platform-level check: ADMIN implicitly, or a custom role carrying `field.manage`.
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.FIELD_MANAGE)) return platform;
 
         throw new ForbiddenException(
             'You must be the owner, a platform administrator, or possess the required permission.',

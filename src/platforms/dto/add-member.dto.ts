@@ -1,22 +1,19 @@
-import { IsUUID, IsEnum } from 'class-validator';
-import { PlatformRole } from '@prismamodels/client';
+import { IsUUID } from 'class-validator';
 
 /**
- * Data Transfer Object (DTO) used when adding a new member to a platform 
- * or assigning specific access roles (e.g., ADMIN, MEMBER, VIEWER).
+ * Data Transfer Object (DTO) used when adding a new member to a platform or assigning them a
+ * specific access role. `platformRoleId` points to one of that platform's own `PlatformRole`
+ * rows (the system "ADMIN" role, or a custom role created via `PlatformRolesController`) - see
+ * `PlatformsService.assertCanGrantRole()` for the rules on who can grant which role.
  */
 export class AddMemberDto {
-    /**
-     * The unique identifier (UUID v4) of the target user to add.
-     * Enforces strict UUID validation using `class-validator`.
-     */
+
+    /** The unique identifier (UUID v4) of the target user to add. */
     @IsUUID()
     userId!: string;
 
-    /**
-     * The platform-level role assigned to the user.
-     * Validates that the input value strictly matches an allowed enum value from `PlatformRole`.
-     */
-    @IsEnum(PlatformRole)
-    role!: PlatformRole;
+    /** The id of the `PlatformRole` (on this same platform) to assign the user. */
+    @IsUUID()
+    platformRoleId!: string;
+
 }

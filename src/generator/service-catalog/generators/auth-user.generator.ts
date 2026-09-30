@@ -177,6 +177,26 @@ export async function generateAuthUserFiles(
             }
         `,
 
+        'src/auth/dto/create-internal-account.dto.ts': String.raw`
+            import { IsString, MaxLength, MinLength } from 'class-validator';
+            import { Transform } from 'class-transformer';
+
+            /**
+             * Grants internal (administrator) access on this backend to a BackOS user, identified by
+             * their BackOS username. Only an existing internal account may do this (see
+             * InternalOnlyGuard on the controller route) - there is no bootstrap problem because the
+             * platform owner (and whoever triggered the generation) already have one, seeded at
+             * start-up from INTERNAL_ACCOUNTS.
+             */
+            export class CreateInternalAccountDto {
+                @Transform(({ value }) => (typeof value === 'string' ? value.trim() : value))
+                @IsString()
+                @MinLength(1)
+                @MaxLength(100)
+                username!: string;
+            }
+        `,
+
         'src/auth/dto/refresh-token.dto.ts': String.raw`
             import { IsString } from 'class-validator';
 
@@ -216,6 +236,7 @@ export async function generateAuthUserFiles(
 
         'src/auth/backos-verifier.service.ts': String.raw`
             import { Injectable, Logger, ServiceUnavailableException, UnauthorizedException } from '@nestjs/common';
+            import { createHash, timingSafeEqual } from 'crypto';
 
             export interface VerifiedIdentity {
                 userId: string;
@@ -243,6 +264,94 @@ export async function generateAuthUserFiles(
                  */
                 async assertStillAuthorized(backosUserId: string): Promise<void> {
                     await this.post('session-check', { userId: backosUserId });
+                }
+
+                /**
+                 * Resolves a BackOS username to that person's BackOS user id - but ONLY if they
+                 * currently own or belong to THIS platform in BackOS. Used when granting internal
+                 * access to someone: BackOS is the single source of truth for who is actually part of
+                 * the platform, so this backend never has to keep its own copy of that membership list.
+                 * Returns \`null\` for an unknown username or someone no longer on the platform, rather
+                 * than throwing - that is an expected, common outcome here, not a failure.
+                 */
+                async lookupMember(username: string): Promise<VerifiedIdentity | null> {
+                    const baseUrl = (process.env.BACKOS_URL ?? '').replace(/\/+$/, '');
+                    const platformId = process.env.BACKOS_PLATFORM_ID;
+                    const internalKey = process.env.INTERNAL_AUTH_KEY;
+                    if (!baseUrl || !platformId || !internalKey) {
+                        throw new ServiceUnavailableException('Internal authentication is not configured on this backend.');
+                    }
+
+                    let response: Response;
+                    try {
+                        response = await fetch(baseUrl + '/api/internal/generated-auth/lookup-member', {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'X-Backos-Platform-Id': platformId,
+                                'X-Backos-Internal-Key': internalKey,
+                            },
+                            body: JSON.stringify({ username }),
+                            signal: AbortSignal.timeout(8000),
+                        });
+                    } catch (error) {
+                        this.logger.error('BackOS is unreachable at ' + baseUrl + ': ' + (error instanceof Error ? error.message : String(error)));
+                        throw new ServiceUnavailableException('Could not reach BackOS to look up this member.');
+                    }
+
+                    if (response.status === 404) return null;
+                    if (response.status === 401 || response.status === 403) {
+                        throw new ServiceUnavailableException('This backend is not authorized to query BackOS.');
+                    }
+                    if (!response.ok) {
+                        throw new ServiceUnavailableException('Could not reach BackOS to look up this member.');
+                    }
+                    return (await response.json()) as VerifiedIdentity;
+                }
+
+                /**
+                 * The CURRENT list of people who hold an internal account on this backend, straight
+                 * from BackOS (the owner, every ADMIN and every holder of a role with data
+                 * permissions). Returns \`null\` when BackOS cannot be reached or refuses, so a
+                 * caller never wipes accounts because of a mere outage.
+                 */
+                async listInternalAccounts(): Promise<VerifiedIdentity[] | null> {
+                    const baseUrl = (process.env.BACKOS_URL ?? '').replace(/\/+$/, '');
+                    const platformId = process.env.BACKOS_PLATFORM_ID;
+                    const internalKey = process.env.INTERNAL_AUTH_KEY;
+                    if (!baseUrl || !platformId || !internalKey) return null;
+
+                    try {
+                        const response = await fetch(baseUrl + '/api/internal/generated-auth/internal-accounts', {
+                            method: 'POST',
+                            headers: {
+                                'X-Backos-Platform-Id': platformId,
+                                'X-Backos-Internal-Key': internalKey,
+                            },
+                            signal: AbortSignal.timeout(8000),
+                        });
+                        if (!response.ok) {
+                            this.logger.warn('BackOS answered ' + response.status + ' when listing internal accounts.');
+                            return null;
+                        }
+                        const accounts = (await response.json()) as VerifiedIdentity[];
+                        return Array.isArray(accounts) ? accounts : null;
+                    } catch (error) {
+                        this.logger.warn('BackOS is unreachable at ' + baseUrl + ': ' + (error instanceof Error ? error.message : String(error)));
+                        return null;
+                    }
+                }
+
+                /**
+                 * Proves the caller of a "resync" ping is BackOS: the presented key must equal this
+                 * backend's INTERNAL_AUTH_KEY (constant-time comparison). Throws otherwise.
+                 */
+                assertCallerIsBackos(presentedKey: string | undefined): void {
+                    const expectedKey = process.env.INTERNAL_AUTH_KEY;
+                    if (!expectedKey || !presentedKey) throw new UnauthorizedException('Invalid credentials.');
+                    const expected = createHash('sha256').update(expectedKey).digest();
+                    const presented = createHash('sha256').update(presentedKey).digest();
+                    if (!timingSafeEqual(expected, presented)) throw new UnauthorizedException('Invalid credentials.');
                 }
 
                 private async post(route: 'verify' | 'session-check', body: Record<string, unknown>): Promise<VerifiedIdentity> {
@@ -376,15 +485,20 @@ export async function generateAuthUserFiles(
         `,
 
         'src/auth/internal-auth.service.ts': String.raw`
-            import { Injectable, Logger, OnModuleInit, UnauthorizedException } from '@nestjs/common';
+            import { BadRequestException, Injectable, Logger, NotFoundException, OnModuleInit, UnauthorizedException } from '@nestjs/common';
             import { PrismaService } from '../prisma/prisma.service';
             import { BackosVerifierService } from './backos-verifier.service';
             import { TokenService } from './token.service';
             import { InternalLoginDto } from './dto/internal-login.dto';
+            import { CreateInternalAccountDto } from './dto/create-internal-account.dto';
 
             /**
-             * Internal accounts: the BackOS people (owner + whoever generated this backend) who may
-             * administer it. Log in with BackOS username + current authenticator code.
+             * Internal accounts: the BackOS people who may work on this backend - the owner, every
+             * ADMIN of the platform and every member whose role has data permissions. BackOS is
+             * the source of truth: the list is pulled from it at start-up and again each time BackOS
+             * pings \`POST /auth/internal/sync\` after a role change, so accounts appear (or are
+             * revoked) immediately, without restarting or regenerating this backend.
+             * Log in with BackOS username + current authenticator code.
              */
             @Injectable()
             export class InternalAuthService implements OnModuleInit {
@@ -397,7 +511,44 @@ export async function generateAuthUserFiles(
                 ) {}
 
                 async onModuleInit() {
-                    await this.seedInternalAccounts();
+                    // The live list from BackOS wins. INTERNAL_ACCOUNTS (written at generation time)
+                    // is only the fallback when BackOS cannot be reached at start-up.
+                    const synced = await this.syncFromBackos();
+                    if (!synced) await this.seedInternalAccounts();
+                }
+
+                /**
+                 * Reconciles this backend's internal accounts with BackOS's live list: creates or
+                 * reactivates everyone on it, and deactivates (soft, audit trail kept) anyone no
+                 * longer on it. Idempotent. Returns \`false\`, changing nothing, when BackOS could not
+                 * be reached - an outage must never lock people out or wipe accounts.
+                 */
+                async syncFromBackos(): Promise<boolean> {
+                    const accounts = await this.backos.listInternalAccounts();
+                    if (!accounts) return false;
+
+                    for (const account of accounts) {
+                        try {
+                            await this.prisma.appInternalAccount.upsert({
+                                where: { backosUserId: account.userId },
+                                update: { username: account.username, isActive: true },
+                                create: { backosUserId: account.userId, username: account.username },
+                            });
+                        } catch (error) {
+                            this.logger.error('Could not sync the internal account "' + account.username + '": ' + (error instanceof Error ? error.message : String(error)));
+                        }
+                    }
+
+                    // An empty list would deactivate everyone - treat it as "nothing to trust".
+                    if (accounts.length > 0) {
+                        await this.prisma.appInternalAccount.updateMany({
+                            where: { isActive: true, backosUserId: { notIn: accounts.map((account) => account.userId) } },
+                            data: { isActive: false },
+                        });
+                    }
+
+                    this.logger.log('Internal accounts synced with BackOS (' + accounts.length + ').');
+                    return true;
                 }
 
                 async login(dto: InternalLoginDto) {
@@ -410,6 +561,54 @@ export async function generateAuthUserFiles(
                     await this.backos.verifyTotp(account.backosUserId, dto.code);
 
                     return this.tokens.issue({ kind: 'internal', id: account.id, username: account.username });
+                }
+
+                /** Every internal account on this backend - the "Users" tab's internal list. */
+                async list() {
+                    return this.prisma.appInternalAccount.findMany({
+                        select: { id: true, username: true, isActive: true, createdAt: true },
+                        orderBy: { createdAt: 'asc' },
+                    });
+                }
+
+                /**
+                 * Grants internal access to a BackOS user by username. Only reachable by an existing
+                 * internal account (see InternalOnlyGuard on the controller route) - the platform
+                 * owner and whoever triggered the last generation always have one already, seeded at
+                 * start-up, so there is no bootstrap gap. \`BackosVerifierService.lookupMember()\` is
+                 * what actually confirms the username belongs to this platform before an account is
+                 * created for it.
+                 *
+                 * Upserts by BackOS user id rather than blindly inserting: granting access again to
+                 * someone previously deactivated simply reactivates their existing account (and
+                 * refreshes their username, in case it changed) instead of erroring or duplicating.
+                 */
+                async createAccount(dto: CreateInternalAccountDto) {
+                    const identity = await this.backos.lookupMember(dto.username);
+                    if (!identity) {
+                        throw new BadRequestException('No member of this platform has that BackOS username.');
+                    }
+
+                    const account = await this.prisma.appInternalAccount.upsert({
+                        where: { backosUserId: identity.userId },
+                        update: { username: identity.username, isActive: true },
+                        create: { backosUserId: identity.userId, username: identity.username },
+                    });
+                    this.logger.log('Internal account granted: ' + account.username);
+                    return account;
+                }
+
+                /**
+                 * Revokes internal access. Soft (\`isActive: false\`), not a delete: keeps the account's
+                 * audit trail (refresh tokens, references) intact, and \`TokenService.refresh()\`
+                 * already refuses an inactive account, so this takes effect immediately - the person
+                 * cannot renew their session even if their current access token has not expired yet.
+                 */
+                async deactivate(id: string) {
+                    const account = await this.prisma.appInternalAccount.findUnique({ where: { id } });
+                    if (!account) throw new NotFoundException('Internal account not found.');
+                    await this.prisma.appInternalAccount.update({ where: { id }, data: { isActive: false } });
+                    return { message: 'Internal access revoked.' };
                 }
 
                 /**
@@ -447,16 +646,19 @@ export async function generateAuthUserFiles(
         `,
 
         'src/auth/auth.controller.ts': String.raw`
-            import { Body, Controller, HttpCode, Post, UseGuards } from '@nestjs/common';
-            import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+            import { Body, Controller, Delete, Get, Headers, HttpCode, Param, Post, UseGuards } from '@nestjs/common';
+            import { ApiBearerAuth, ApiExcludeEndpoint, ApiTags } from '@nestjs/swagger';
             import { InternalAuthService } from './internal-auth.service';
+            import { BackosVerifierService } from './backos-verifier.service';
             import { TokenService } from './token.service';
             import { InternalLoginDto } from './dto/internal-login.dto';
             import { RefreshTokenDto } from './dto/refresh-token.dto';
+            import { CreateInternalAccountDto } from './dto/create-internal-account.dto';
             import { AuthenticatedUser } from './auth.types';
             import { Public } from '../common/decorators/public.decorator';
             import { CurrentUser } from '../common/decorators/current-user.decorator';
             import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+            import { InternalOnlyGuard } from '../common/guards/internal-only.guard';
 
             @ApiTags('Auth')
             @Controller('auth')
@@ -464,7 +666,23 @@ export async function generateAuthUserFiles(
                 constructor(
                     private readonly internalAuth: InternalAuthService,
                     private readonly tokens: TokenService,
+                    private readonly backos: BackosVerifierService,
                 ) {}
+
+                /**
+                 * Machine-to-machine ping from BackOS (never a browser): "a member or role changed,
+                 * pull the internal accounts again". Carries no data - the accounts always come from
+                 * BackOS's own answer, so a forged ping can at worst trigger a harmless re-read.
+                 * Authenticated by the INTERNAL_AUTH_KEY header, not a user session.
+                 */
+                @Public()
+                @ApiExcludeEndpoint()
+                @Post('internal/sync')
+                @HttpCode(200)
+                async syncInternalAccounts(@Headers('x-backos-internal-key') presentedKey: string | undefined) {
+                    this.backos.assertCallerIsBackos(presentedKey);
+                    return { synced: await this.internalAuth.syncFromBackos() };
+                }
 
                 /** Internal login: BackOS username + the 6-digit code from your authenticator app. */
                 @Public()
@@ -487,6 +705,34 @@ export async function generateAuthUserFiles(
                 @HttpCode(200)
                 logout(@CurrentUser() user: AuthenticatedUser, @Body() dto: RefreshTokenDto) {
                     return this.tokens.revoke(dto.refreshToken, user);
+                }
+
+                /**
+                 * Every route below manages INTERNAL accounts (administrators of this backend) and is
+                 * reserved to existing internal accounts - never to an external user, whatever entity
+                 * permissions they might otherwise have. The platform owner and whoever triggered the
+                 * last generation always have one already (seeded at start-up), so this is never a
+                 * bootstrap dead end.
+                 */
+                @UseGuards(JwtAuthGuard, InternalOnlyGuard)
+                @ApiBearerAuth('access-token')
+                @Get('internal/accounts')
+                listInternalAccounts() {
+                    return this.internalAuth.list();
+                }
+
+                @UseGuards(JwtAuthGuard, InternalOnlyGuard)
+                @ApiBearerAuth('access-token')
+                @Post('internal/accounts')
+                createInternalAccount(@Body() dto: CreateInternalAccountDto) {
+                    return this.internalAuth.createAccount(dto);
+                }
+
+                @UseGuards(JwtAuthGuard, InternalOnlyGuard)
+                @ApiBearerAuth('access-token')
+                @Delete('internal/accounts/:id')
+                deactivateInternalAccount(@Param('id') id: string) {
+                    return this.internalAuth.deactivate(id);
                 }
             }
         `,
@@ -528,7 +774,7 @@ export async function generateAuthUserFiles(
         `,
 
         'src/users/users.service.ts': buildUsersService(externalUsers, profileFields),
-        'src/users/users.controller.ts': buildUsersController(profileFields.length > 0),
+        'src/users/users.controller.ts': buildUsersController(profileFields.length > 0, externalUsers),
     };
 
     if (externalUsers) {
@@ -876,15 +1122,16 @@ function buildUpdateProfileDto(profileFields: ReturnType<typeof readProfileField
         `;
 }
 
-function buildUsersController(hasProfile: boolean): string {
+function buildUsersController(hasProfile: boolean, externalUsers: boolean): string {
     return `
-            import { Controller, Get${hasProfile ? ', Patch, Body' : ''}, UseGuards } from '@nestjs/common';
+            import { Controller, Get${hasProfile ? ', Patch, Body' : ''}, Query, UseGuards } from '@nestjs/common';
             import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
             import { UsersService } from './users.service';
             ${hasProfile ? "import { UpdateProfileDto } from './dto/update-profile.dto';" : ''}
             import { AuthenticatedUser } from '../auth/auth.types';
             import { CurrentUser } from '../common/decorators/current-user.decorator';
             import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+            ${externalUsers ? "import { InternalOnlyGuard } from '../common/guards/internal-only.guard';" : ''}
 
             @ApiTags('Users')
             @ApiBearerAuth('access-token')
@@ -903,6 +1150,14 @@ function buildUsersController(hasProfile: boolean): string {
                 @Patch('me/profile')
                 updateProfile(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateProfileDto) {
                     return this.usersService.updateProfile(user, dto);
+                }
+                ` : ''}
+                ${externalUsers ? `
+                /** Every external user (visitor / customer) of this platform - the "Users" tab's external list. Internal accounts only. */
+                @UseGuards(InternalOnlyGuard)
+                @Get('external')
+                listExternal(@Query('page') page?: string, @Query('limit') limit?: string) {
+                    return this.usersService.listExternal(Number(page) || 1, Number(limit) || 25);
                 }
                 ` : ''}
             }
@@ -925,6 +1180,21 @@ function buildUsersService(externalUsers: boolean, profileFields: ReturnType<typ
     const externalMethods = !externalUsers
         ? ''
         : `
+                async listExternal(page: number, limit: number) {
+                    const safePage = Math.max(1, page);
+                    const safeLimit = Math.min(100, Math.max(1, limit));
+                    const [items, total] = await Promise.all([
+                        this.prisma.appUser.findMany({
+                            select: { id: true, email: true, firstName: true, lastName: true, isActive: true, createdAt: true },
+                            orderBy: { createdAt: 'desc' },
+                            skip: (safePage - 1) * safeLimit,
+                            take: safeLimit,
+                        }),
+                        this.prisma.appUser.count(),
+                    ]);
+                    return { items, total, page: safePage, limit: safeLimit };
+                }
+
                 private async getExternalMe(userId: string) {
                     const user = await this.prisma.appUser.findUnique({
                         where: { id: userId },

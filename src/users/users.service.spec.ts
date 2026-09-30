@@ -33,6 +33,7 @@ describe('UsersService', () => {
             roleHierarchyMock,
             auditLogMock,
             authServiceMock,
+            {} as any, // platformAccess - unused by the methods under test
         );
     });
 

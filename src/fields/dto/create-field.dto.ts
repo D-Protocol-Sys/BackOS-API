@@ -1,5 +1,5 @@
 import {
-    IsString, IsEnum, IsOptional, IsBoolean, IsInt, Min, MinLength, MaxLength,
+    IsString, IsEnum, IsOptional, IsBoolean, IsInt, IsUUID, Min, MinLength, MaxLength,
 } from 'class-validator';
 import { FieldType } from '@prismamodels/client';
 
@@ -60,6 +60,14 @@ export class CreateFieldDto {
     @IsOptional()
     @IsBoolean()
     isArray?: boolean;
+
+    /**
+     * Required (and only meaningful) when `type` is `ENUM`: the id of the `EnumDefinition` this
+     * field picks its values from. Must belong to the same platform.
+     */
+    @IsOptional()
+    @IsUUID()
+    enumDefinitionId?: string;
 
     /**
      * Optional default value assigned automatically when creating new entity records.

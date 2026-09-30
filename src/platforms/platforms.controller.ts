@@ -119,6 +119,16 @@ export class PlatformsController {
     // ---- Member Management Endpoints ----
 
     /**
+     * The caller's own effective access on a platform (owner / ADMIN / role name / permission keys).
+     * Scoped to the caller by construction - it never reveals anyone else's access.
+     * * @route GET /platforms/:id/my-access
+     */
+    @Get(':id/my-access')
+    getMyAccess(@CurrentUser() actor: Actor, @Param('id') id: string) {
+        return this.platformsService.getMyAccess(actor, id);
+    }
+
+    /**
      * Lists all assigned members for a given platform.
      * * @route GET /platforms/:id/members
      */

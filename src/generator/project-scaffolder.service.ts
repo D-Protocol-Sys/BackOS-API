@@ -1,3 +1,4 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
 import { Injectable, Logger, BadRequestException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
@@ -10,7 +11,6 @@ import { SERVICE_FILE_GENERATORS } from './service-catalog/service-file-generato
 import { PrismaService } from '../prisma/prisma.service';
 import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate, healthControllerTemplate, healthModuleTemplate, dockerfileTemplate, dockerignoreTemplate, npmrcTemplate, pnpmWorkspaceYamlTemplate, uploadsControllerTemplate, uploadsModuleTemplate, uploadsMulterConfigTemplate, uploadsPolicyGuardTemplate } from './templates/generated-project.templates';
 import { computeRelationFieldsByEntity } from '../common/utils/relation-metadata.util';
-import { UserStatus } from '@prismamodels/enums';
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
 
@@ -29,6 +29,7 @@ export class ProjectScaffolderService {
         private readonly serviceCatalog: ServiceCatalog,
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
+        private readonly platformAccess: PlatformAccessService,
     ) {
         this.warnIfGeneratedRootIsUnsafe();
     }
@@ -181,7 +182,7 @@ export class ProjectScaffolderService {
             if (activeServices.some((service) => service.serviceKey === 'auth-user')) {
                 extraEnvVars.backosUrl = this.resolveBackosUrl();
                 extraEnvVars.backosPlatformId = params.platformId;
-                extraEnvVars.internalAccounts = await this.buildInternalAccountsEnv(params.platformId, params.triggeredById);
+                extraEnvVars.internalAccounts = await this.buildInternalAccountsEnv(params.platformId);
             }
 
             // Build dynamic Prisma schema and fetch entity definitions
@@ -347,29 +348,21 @@ export class ProjectScaffolderService {
 
     /**
      * The BackOS people who get an internal account on the generated backend, as a base64 JSON
-     * list for the `INTERNAL_ACCOUNTS` variable: the platform owner, plus whoever triggered this
-     * generation. Only people who can actually authenticate through BackOS for this platform (the
-     * owner or a member, and still ACTIVE) are listed - an account nobody can log in to would
-     * only be confusing. The generated backend creates / refreshes the accounts at start-up.
+     * list for the `INTERNAL_ACCOUNTS` variable. An "internal user" is someone allowed to work
+     * on the generated backend's records, so the list is derived from ROLES, not from whoever
+     * happened to click "generate":
+     * - the platform owner (always);
+     * - every member holding the system ADMIN role;
+     * - every member whose custom role carries at least one `data.*` permission (create / read /
+     *   update / delete records) - e.g. a "Data Operator".
+     * Members whose role has no data permission (say an "RH" role limited to members/planning)
+     * get no internal account. Only ACTIVE users are listed - an account nobody can log in to
+     * would only be confusing. The generated backend creates / refreshes the accounts at
+     * start-up, so a role change is reflected on the next generation (or backend restart with a
+     * refreshed environment).
      */
-    private async buildInternalAccountsEnv(platformId: string, triggeredById?: string): Promise<string> {
-        const platform = await this.prisma.platform.findUnique({
-            where: { id: platformId },
-            select: { ownerId: true, members: { select: { userId: true } } },
-        });
-
-        const memberIds = new Set((platform?.members ?? []).map((member) => member.userId));
-        const candidateIds = Array.from(new Set([platform?.ownerId, triggeredById].filter((id): id is string => Boolean(id))));
-        const eligibleIds = candidateIds.filter((id) => id === platform?.ownerId || memberIds.has(id));
-
-        const users = eligibleIds.length
-            ? await this.prisma.user.findMany({
-                  where: { id: { in: eligibleIds }, status: UserStatus.ACTIVE },
-                  select: { id: true, username: true },
-              })
-            : [];
-
-        const accounts = users.map((user) => ({ userId: user.id, username: user.username }));
+    private async buildInternalAccountsEnv(platformId: string): Promise<string> {
+        const accounts = await this.platformAccess.listInternalAccounts(platformId);
         return Buffer.from(JSON.stringify(accounts), 'utf8').toString('base64');
     }
 

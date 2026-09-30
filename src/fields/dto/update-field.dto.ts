@@ -1,5 +1,5 @@
 import {
-    IsString, IsEnum, IsOptional, IsBoolean, MinLength, MaxLength,
+    IsString, IsEnum, IsOptional, IsBoolean, IsUUID, MinLength, MaxLength,
 } from 'class-validator';
 import { FieldType } from '@prismamodels/client';
 
@@ -60,6 +60,11 @@ export class UpdateFieldDto {
     @IsOptional()
     @IsBoolean()
     isArray?: boolean;
+
+    /** See `CreateFieldDto.enumDefinitionId`. Changing it once the platform is generated is rejected. */
+    @IsOptional()
+    @IsUUID()
+    enumDefinitionId?: string;
 
     /**
      * Optional updated default value assigned to newly created entity records.

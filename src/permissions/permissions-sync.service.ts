@@ -52,8 +52,41 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
             );
         }
 
+        await this.syncOwnerRolePermissions();
+
         this.logger.log(`Permission catalog successfully synchronized (${keys.length} permissions).`);
     
+    }
+
+    /**
+     * Keeps the built-in `owner` role holding EVERY permission of the catalog, at every boot.
+     *
+     * The seed only links permissions to the owner role when it is run, so a permission added to
+     * `PERMISSIONS` later reached the `permissions` table (see above) but never the owner - the
+     * only way to fix that used to be re-running the seed. Doing it here means the owner account
+     * (and everything attached to it) is never recreated: only the missing `role_permissions`
+     * rows are inserted, idempotently (`skipDuplicates`).
+     *
+     * Deliberately limited to the `owner` role: it is `isSystem` (cannot be edited through the
+     * roles API - see `RolesService`), so "owner = all permissions" is an invariant, not a choice.
+     * Other roles (admin, developer, custom ones) are configurable and are never touched here.
+     * On a brand-new database the role doesn't exist yet (the seed creates it), so this is a no-op.
+     */
+    private async syncOwnerRolePermissions() {
+
+        const ownerRole = await this.prisma.role.findUnique({ where: { name: 'owner' } });
+        if (!ownerRole) return;
+
+        const allPermissions = await this.prisma.permission.findMany({ select: { id: true } });
+
+        const result = await this.prisma.rolePermission.createMany({
+            data: allPermissions.map((permission) => ({ roleId: ownerRole.id, permissionId: permission.id })),
+            skipDuplicates: true,
+        });
+
+        if (result.count > 0) {
+            this.logger.log(`Owner role: granted ${result.count} new permission(s) automatically.`);
+        }
     }
     
 }

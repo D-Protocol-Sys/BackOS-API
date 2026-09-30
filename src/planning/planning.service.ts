@@ -1,3 +1,5 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 import {
     BadRequestException,
     ForbiddenException,
@@ -120,7 +122,10 @@ export function validatePlanningEntryPayload(
  */
 @Injectable()
 export class PlanningService {
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly access: PlatformAccessService,
+    ) {}
 
     // =========================================================================
     // PERSONAL PLANNING SECTION
@@ -753,22 +758,15 @@ export class PlanningService {
             return;
         }
 
-        // Grant permission if actor is platform ADMIN
-        const membership = await this.prisma.platformMember.findUnique({
-            where: {
-                platformId_userId: {
-                    platformId,
-                    userId: actor.userId,
-                },
-            },
-        });
-
-        if (membership?.role === 'ADMIN') {
+        // Grant permission if the actor's platform role (ADMIN, or a custom role such as "RH")
+        // carries `planning.manage`.
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.PLANNING_MANAGE)) {
             return;
         }
 
         throw new ForbiddenException(
-            'Only a platform administrator can manage its planning.',
+            'You do not have permission to manage this platform planning.',
         );
     }
 }

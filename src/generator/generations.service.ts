@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 
 /**
@@ -10,14 +10,49 @@ export class GenerationsService {
     constructor(private readonly prisma: PrismaService) {}
 
     /**
-     * Initializes a new generation record with an initial 'PENDING' status.
+     * Initializes a new generation record. 'PENDING' (queued right away) by default, or
+     * 'AWAITING_APPROVAL' when a non-owner ADMIN triggered it and the owner must approve it
+     * first - in that case the caller must NOT enqueue the job yet (see
+     * `GeneratorController.triggerGeneration()` / `approveGeneration()`).
      * * @param platformId - The ID of the target platform being generated.
      * @param triggeredById - The ID of the user or system worker triggering the job.
+     * @param status - Initial status ('PENDING' or 'AWAITING_APPROVAL').
      */
-    async create(platformId: string, triggeredById: string) {
+    async create(platformId: string, triggeredById: string, status: 'PENDING' | 'AWAITING_APPROVAL' = 'PENDING') {
         return this.prisma.generation.create({
-            data: { platformId, triggeredById, status: 'PENDING' },
+            data: { platformId, triggeredById, status },
         });
+    }
+
+    /**
+     * Owner approval of a generation waiting in 'AWAITING_APPROVAL': moves it to 'PENDING' and
+     * records who approved it and when. The caller is responsible for enqueueing the job right
+     * after. Throws if the generation isn't awaiting approval (already approved, rejected,
+     * cancelled...), so a double-click or a stale UI can never enqueue the same job twice.
+     */
+    async approve(generationId: string, approverId: string) {
+        const result = await this.prisma.generation.updateMany({
+            where: { id: generationId, status: 'AWAITING_APPROVAL' },
+            data: { status: 'PENDING', approvedById: approverId, approvedAt: new Date() },
+        });
+        if (result.count === 0) {
+            throw new BadRequestException('This generation is not awaiting approval.');
+        }
+        return this.getById(generationId);
+    }
+
+    /**
+     * Owner rejection (or requester cancellation) of a generation still waiting for approval.
+     * Only valid from 'AWAITING_APPROVAL'; the generation ends as FAILED with the given message.
+     */
+    async rejectAwaiting(generationId: string, errorMsg: string) {
+        const result = await this.prisma.generation.updateMany({
+            where: { id: generationId, status: 'AWAITING_APPROVAL' },
+            data: { status: 'FAILED', errorMsg, finishedAt: new Date() },
+        });
+        if (result.count === 0) {
+            throw new BadRequestException('This generation is not awaiting approval.');
+        }
     }
 
     /**
@@ -99,9 +134,15 @@ export class GenerationsService {
      * longer be used to detect "is something already generating for this platform" - this
      * queries the actual source of truth (the Generation records themselves) instead.
      */
-    async hasActiveGeneration(platformId: string): Promise<boolean> {
+    async hasActiveGeneration(platformId: string, excludeGenerationId?: string): Promise<boolean> {
         const inFlight = await this.prisma.generation.findFirst({
-            where: { platformId, status: { in: ['PENDING', 'RUNNING'] } },
+            where: {
+                platformId,
+                // AWAITING_APPROVAL counts too: only one generation request may exist at a time
+                // per platform, so a second ADMIN can't pile up requests behind the first.
+                status: { in: ['AWAITING_APPROVAL', 'PENDING', 'RUNNING'] },
+                ...(excludeGenerationId ? { id: { not: excludeGenerationId } } : {}),
+            },
             select: { id: true },
         });
         return !!inFlight;

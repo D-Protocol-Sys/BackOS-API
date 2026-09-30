@@ -19,6 +19,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { CleanupModule } from './cleanup/cleanup.module';
 import { EntitiesModule } from './entities/entities.module';
 import { FieldsModule } from './fields/fields.module';
+import { EnumDefinitionsModule } from './enum-definitions/enum-definitions.module';
 import { GeneratorModule } from './generator/generator.module';
 import { PlatformsModule } from './platforms/platforms.module';
 import { ProjectsModule } from './projects/projects.module';
@@ -110,6 +111,7 @@ import { ClientsModule } from './clients/clients.module';
         EntitiesModule,
 
         FieldsModule,
+        EnumDefinitionsModule,
 
         GeneratorModule,
 

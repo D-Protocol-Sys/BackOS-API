@@ -1,3 +1,5 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 import {
     Injectable,
     BadRequestException,
@@ -35,6 +37,7 @@ export class PlatformServicesService {
         private readonly catalog: ServiceCatalog,
         private readonly configService: ConfigService,
         private readonly cryptoService: CryptoService,
+        private readonly access: PlatformAccessService,
     ) {}
 
     /**
@@ -389,12 +392,10 @@ export class PlatformServicesService {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(permission)) return;
 
-        const membership = await this.prisma.platformMember.findUnique({
-            where: { platformId_userId: { platformId, userId: actor.userId } },
-            select: { role: true },
-        });
-
-        if (membership?.role === 'ADMIN') return;
+        // Platform-level check: ADMIN implicitly, or a custom role carrying `platform.update`
+        // (enabling/configuring a service is a change to the platform's own configuration).
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.PLATFORM_UPDATE)) return;
 
         throw new ForbiddenException('You must be the owner, a platform administrator, or possess required permissions.');
     }

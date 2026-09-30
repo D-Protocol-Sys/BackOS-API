@@ -53,12 +53,6 @@ enum RuntimeStatus {
   CRASHED
 }
 
-enum PlatformRole {
-  VIEWER
-  EDITOR
-  ADMIN
-}
-
 enum FieldType {
   STRING
   TEXT
@@ -71,9 +65,11 @@ enum FieldType {
   MEDIA
   URL
   JSON
+  ENUM
 }
 
 enum GenerationStatus {
+  AWAITING_APPROVAL
   PENDING
   RUNNING
   SUCCESS
@@ -197,7 +193,8 @@ model User {
   refreshTokens           RefreshToken[]
   userRoles               UserRole[]
   platformOwned           Platform[]              @relation("PlatformOwner")
-  generations             Generation[]
+  generations             Generation[]            @relation("GenerationTriggeredBy")
+  generationsApproved     Generation[]            @relation("GenerationApprovedBy")
   auditLogs               AuditLog[]              @relation("AuditActor")
   managedProjects         Project[]               @relation("ProjectManager")
   statusHistory           UserStatusHistory[]     @relation("UserStatusHistorySubject")
@@ -438,8 +435,10 @@ model Platform {
   channel          Conversation?
   planning         Planning?         @relation("PlatformPlanning")
   entities         Entity[]
+  enumDefinitions  EnumDefinition[]
   generations      Generation[]
   members          PlatformMember[]
+  roles            PlatformRole[]
   services         PlatformService[]
   relations        Relation[]
   clients          Client[]          @relation("PlatformClients")
@@ -475,7 +474,9 @@ model PlatformMember {
   userId               String
   user                 User         @relation("PlatformMemberUser", fields: [userId], references: [id], onDelete: Cascade)
 
-  role                 PlatformRole
+  platformRoleId       String
+  platformRole         PlatformRole @relation(fields: [platformRoleId], references: [id], onDelete: Restrict)
+
   removalRequestedAt   DateTime?
   removalRequestedById String?
   removalRequestedBy   User?        @relation("PlatformMemberRemovalRequestedBy", fields: [removalRequestedById], references: [id], onDelete: SetNull)
@@ -485,7 +486,49 @@ model PlatformMember {
 
   @@unique([platformId, userId])
   @@index([userId])
+  @@index([platformRoleId])
   @@map("platform_members")
+}
+
+model PlatformRole {
+  id          String   @id @default(uuid())
+  name        String
+  isSystem    Boolean  @default(false)
+
+  platformId  String
+  platform    Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  members         PlatformMember[]
+  rolePermissions PlatformRolePermission[]
+
+  @@unique([platformId, name])
+  @@index([platformId])
+  @@map("platform_roles")
+}
+
+model PlatformPermission {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  description String?
+
+  rolePermissions PlatformRolePermission[]
+
+  @@map("platform_permissions")
+}
+
+model PlatformRolePermission {
+  id                   String             @id @default(uuid())
+  platformRoleId       String
+  platformRole         PlatformRole       @relation(fields: [platformRoleId], references: [id], onDelete: Cascade)
+
+  platformPermissionId String
+  platformPermission   PlatformPermission @relation(fields: [platformPermissionId], references: [id], onDelete: Cascade)
+
+  @@unique([platformRoleId, platformPermissionId])
+  @@map("platform_role_permissions")
 }
 
 model PlatformService {
@@ -507,6 +550,23 @@ model PlatformService {
 // ----------------------------------------------------------
 // ENTITIES & FIELDS
 // ----------------------------------------------------------
+
+model EnumDefinition {
+  id         String   @id @default(uuid())
+  name       String
+  values     String[] @default([])
+
+  platformId String
+  platform   Platform @relation(fields: [platformId], references: [id], onDelete: Cascade)
+
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  fields     Field[]
+
+  @@unique([platformId, name])
+  @@map("enum_definitions")
+}
 
 model Entity {
   id                String   @id @default(uuid())
@@ -536,20 +596,23 @@ model Entity {
 }
 
 model Field {
-  id           String    @id @default(uuid())
-  name         String
-  column       String
-  type         FieldType
-  required     Boolean   @default(false)
-  unique       Boolean   @default(false)
-  isArray      Boolean   @default(false)
-  defaultValue String?
-  config       Json?
-  isArchived   Boolean   @default(false)
-  order        Int       @default(0)
+  id              String          @id @default(uuid())
+  name            String
+  column          String
+  type            FieldType
+  required        Boolean         @default(false)
+  unique          Boolean         @default(false)
+  isArray         Boolean         @default(false)
+  defaultValue    String?
+  config          Json?
+  isArchived      Boolean         @default(false)
+  order           Int             @default(0)
 
-  entityId     String
-  entity       Entity    @relation(fields: [entityId], references: [id], onDelete: Cascade)
+  enumDefinitionId String?
+  enumDefinition   EnumDefinition? @relation(fields: [enumDefinitionId], references: [id], onDelete: Restrict)
+
+  entityId        String
+  entity          Entity          @relation(fields: [entityId], references: [id], onDelete: Cascade)
 
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
@@ -596,12 +659,17 @@ model Generation {
   platform      Platform         @relation(fields: [platformId], references: [id], onDelete: Cascade)
 
   triggeredById String?
-  triggeredBy   User?            @relation(fields: [triggeredById], references: [id], onDelete: SetNull)
+  triggeredBy   User?            @relation("GenerationTriggeredBy", fields: [triggeredById], references: [id], onDelete: SetNull)
+
+  approvedById  String?
+  approvedBy    User?            @relation("GenerationApprovedBy", fields: [approvedById], references: [id], onDelete: SetNull)
+  approvedAt    DateTime?
 
   startedAt     DateTime         @default(now())
   finishedAt    DateTime?
 
   @@index([platformId])
+  @@index([status])
   @@map("generations")
 }
 
@@ -957,9 +1025,6 @@ model Client {
   testimonialToken          String?         @unique
   testimonialTokenExpiresAt DateTime?
 
-  // Set the instant the client is archived, cleared the instant it is restored - mirrors
-  // Platform.archivedAt exactly. See ClientsService.archive()/restore()/purgeExpiredArchives()
-  // and CleanupService.cleanupArchivedClients().
   archivedAt                DateTime?
 
   customServiceScope        String?

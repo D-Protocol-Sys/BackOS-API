@@ -1,4 +1,5 @@
 import { 
+    BadRequestException,
     Body, 
     Controller, 
     Delete, 
@@ -7,7 +8,13 @@ import {
     Patch, 
     Post,
     Req,
+    Res,
+    UploadedFile,
+    UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
+import { avatarUploadOptions } from './avatar-upload.config';
 import type { Request } from 'express';
 import { ApiTags, ApiBearerAuth, ApiOperation, ApiOkResponse } from '@nestjs/swagger';
 
@@ -101,6 +108,46 @@ export class UsersController {
     @Get('me/export')
     exportMe(@CurrentUser() user: { userId: string }) {
         return this.usersService.exportUserData(user.userId);
+    }
+
+    /**
+     * Uploads (or replaces) the authenticated user's own profile photo. The client is expected
+     * to have already cropped the image (see `AvatarCropModal` on the frontend) - this endpoint
+     * accepts whatever square-ish image it receives and stores it as-is, it does not crop or
+     * resize server-side.
+     */
+    @ApiOperation({ summary: "Upload the current user's avatar" })
+    @ApiOkResponse({ description: 'Avatar uploaded and profile updated successfully.' })
+    @Post('me/avatar')
+    @UseInterceptors(FileInterceptor('file', avatarUploadOptions))
+    async uploadMyAvatar(@CurrentUser() user: { userId: string }, @UploadedFile() file: Express.Multer.File) {
+        if (!file) {
+            throw new BadRequestException('No file was provided (expected multipart field "file").');
+        }
+        return this.usersService.saveAvatar(user.userId, file);
+    }
+
+    /**
+     * Streams a user's avatar image. Any authenticated BackOS user may view any other user's
+     * avatar - equivalent to a company directory photo, not sensitive data - so this route
+     * intentionally carries no `@RequirePermissions`, only the global authentication guard.
+     */
+    @ApiOperation({ summary: "Get a user's avatar image" })
+    @Get(':id/avatar')
+    async getAvatar(@Param('id') id: string, @Res() res: Response) {
+        await this.usersService.streamAvatar(id, res);
+    }
+
+    /**
+     * Lists every platform the target user owns or is a member of, with their effective role -
+     * shown on a user's detail page so an admin can see at a glance what they have access to.
+     */
+    @ApiOperation({ summary: 'List platforms a user owns or belongs to' })
+    @ApiOkResponse({ description: "User's linked platforms retrieved successfully." })
+    @RequirePermissions(PERMISSIONS.USERS_READ)
+    @Get(':id/platforms')
+    getUserPlatforms(@Param('id') id: string) {
+        return this.usersService.getUserPlatforms(id);
     }
 
     /**
@@ -283,14 +330,16 @@ export class UsersController {
     }
 
     /**
-     * Exports a target user's personal data for administrative GDPR compliance response.
+     * Exports a target user's personal data (GDPR right of access). No blanket permission gate
+     * anymore: access is decided in `UsersService.exportUserDataAs()` - the user themselves (via
+     * `me/export`), a global USERS_EXPORT holder (the BackOS owner), or the owner / an ADMIN of
+     * a platform the target user belongs to.
      */
     @ApiOperation({ summary: 'Export target user data for GDPR compliance' })
     @ApiOkResponse({ description: 'Target user personal data exported successfully.' })
-    @RequirePermissions(PERMISSIONS.USERS_EXPORT)
     @Get(':id/export')
-    exportUser(@Param('id') id: string) {
-        return this.usersService.exportUserData(id);
+    exportUser(@CurrentUser() actor: { userId: string; permissions: string[] }, @Param('id') id: string) {
+        return this.usersService.exportUserDataAs(actor, id);
     }
 
     /**

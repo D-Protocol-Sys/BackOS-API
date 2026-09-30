@@ -49,9 +49,10 @@ export class ProjectsController {
     list(
         @CurrentUser() actor: Actor,
         @Query('platformId') platformId?: string,
+        @Query('clientId') clientId?: string,
         @Query('status') status?: ProjectStatus,
     ) {
-        return this.projectsService.list(actor, { platformId, status });
+        return this.projectsService.list(actor, { platformId, clientId, status });
     }
 
     /**

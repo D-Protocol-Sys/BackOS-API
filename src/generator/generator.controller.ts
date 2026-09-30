@@ -14,6 +14,8 @@ import { GenerationCancellationRegistry } from './generation-cancellation.regist
 import { RuntimeManagerService } from './runtime-manager.service';
 import { ApiManifestService, type ApiManifest, } from './api-manifest.service';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 
 /**
  * Type representing the authenticated user context (actor) triggering or viewing generations.
@@ -35,6 +37,7 @@ export class GeneratorController {
         private readonly cancellationRegistry: GenerationCancellationRegistry,
         private readonly runtimeManager: DockerRuntimeManagerService,
         private readonly apiManifest: ApiManifestService,
+        private readonly access: PlatformAccessService,
     ) {}
 
     /**
@@ -63,20 +66,82 @@ export class GeneratorController {
 
         // Prevent race conditions or overlapping jobs on the same platform. Deliberately NOT
         // `platform.status === 'GENERATING'` anymore - see GenerationsService.hasActiveGeneration()'s
-        // doc comment for why that field can no longer be trusted for this check.
+        // doc comment for why that field can no longer be trusted for this check. A generation
+        // still waiting for the owner's approval counts as active too.
         if (await this.generations.hasActiveGeneration(platformId)) {
-            throw new ForbiddenException('A generation process is already running for this platform.');
+            throw new ForbiddenException('A generation process is already running or awaiting approval for this platform.');
+        }
+
+        // The owner (and global GENERATOR_EXECUTE holders, i.e. BackOS staff) generate directly.
+        // Anyone else who holds the platform-level generator permission (ADMIN, or a custom role
+        // that includes it) only files a REQUEST: recorded as AWAITING_APPROVAL, NOT enqueued,
+        // until the owner approves it - same request/confirm pattern as member removal.
+        if (this.needsOwnerApproval(actor, platform)) {
+            const request = await this.generations.create(platformId, actor.userId, 'AWAITING_APPROVAL');
+            return {
+                message: 'Generation requested. Waiting for the platform owner to approve it.',
+                generationId: request.id,
+                status: request.status,
+            };
         }
 
         // Create the tracking entity and dispatch the background job to the Redis queue
         const generation = await this.generations.create(platformId, actor.userId);
-        await this.queue.add('generate', {
-            platformId,
-            slug: platform.slug,
-            generationId: generation.id,
-        }, { jobId: generation.id });
+        await this.enqueue(platform, generation.id);
 
-        return { message: 'Generation started.', generationId: generation.id };
+        return { message: 'Generation started.', generationId: generation.id, status: generation.status };
+    }
+
+    /**
+     * Owner approval of a generation request filed by an ADMIN (status AWAITING_APPROVAL): the
+     * job is moved to PENDING and enqueued exactly as if the owner had triggered it directly.
+     * Reserved to the platform owner (or a global GENERATOR_EXECUTE holder).
+     */
+    @UseGuards(ThrottlerGuard)
+    @Throttle({ default: { limit: 5, ttl: 60_000 } })
+    @Post('generations/:generationId/approve')
+    async approveGeneration(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Param('generationId') generationId: string,
+    ) {
+        const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
+        if (!platform) throw new NotFoundException('Platform not found.');
+        this.assertOwnerOrGlobalGenerator(actor, platform);
+
+        const generation = await this.generations.getById(generationId);
+        if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
+
+        // Nothing else may be queued/running (the request itself is excluded from this check).
+        if (await this.generations.hasActiveGeneration(platformId, generationId)) {
+            throw new ForbiddenException('Another generation is already running for this platform.');
+        }
+
+        await this.generations.approve(generationId, actor.userId);
+        await this.enqueue(platform, generationId);
+
+        return { message: 'Generation approved and started.', generationId };
+    }
+
+    /**
+     * Owner rejection of a generation request that is still AWAITING_APPROVAL. Nothing was ever
+     * queued, so the platform itself (status, running version) is untouched.
+     */
+    @Post('generations/:generationId/reject')
+    async rejectGeneration(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Param('generationId') generationId: string,
+    ) {
+        const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
+        if (!platform) throw new NotFoundException('Platform not found.');
+        this.assertOwnerOrGlobalGenerator(actor, platform);
+
+        const generation = await this.generations.getById(generationId);
+        if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
+
+        await this.generations.rejectAwaiting(generationId, 'Rejected by the platform owner.');
+        return { message: 'Generation request rejected.' };
     }
 
     /**
@@ -95,6 +160,14 @@ export class GeneratorController {
         await this.assertCanGenerate(actor, platform);
 
         const generation = await this.generations.getById(generationId);
+        if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
+
+        // Case 0: request still waiting for the owner's approval - never queued, so there is
+        // nothing to remove from BullMQ and the platform status must not be touched.
+        if (generation.status === 'AWAITING_APPROVAL') {
+            await this.generations.rejectAwaiting(generationId, 'Cancelled before approval.');
+            return { message: 'Generation request cancelled.' };
+        }
 
         // Case 1: Task is queued but hasn't started execution yet
         if (generation.status === 'PENDING') {
@@ -138,7 +211,7 @@ export class GeneratorController {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         
-        await this.assertCanView(actor, platform);
+        await this.assertCanReadGenerations(actor, platform);
 
         return this.generations.listForPlatform(platformId);
     }
@@ -159,7 +232,7 @@ export class GeneratorController {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         
-        await this.assertCanView(actor, platform);
+        await this.assertCanReadGenerations(actor, platform);
 
         return this.generations.getById(generationId);
     }
@@ -274,45 +347,78 @@ export class GeneratorController {
     }
 
     /**
-     * Access Control Assertion Helper.
-     * Educational Note: Implements multi-tiered authorization evaluation checking:
-     * 1. Resource Ownership (Direct Owner)
-     * 2. System-wide Role/Permission Override (Global PERMISSIONS.RUNTIME_MANAGE)
-     * 3. Contextual Organization/Platform Membership Role (ADMIN role)
+     * Access Control Assertion Helper for runtime start/stop.
+     * Allowed for the owner, a global RUNTIME_MANAGE holder, or a platform member whose role
+     * (ADMIN or custom) includes the platform-level `runtime.manage` permission.
      */
     private async assertCanManageRuntime(actor: Actor, platform: { id: string; ownerId: string }) {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(PERMISSIONS.RUNTIME_MANAGE)) return;
 
-        const membership = await this.prisma.platformMember.findUnique({
-            where: { platformId_userId: { platformId: platform.id, userId: actor.userId } },
-        });
-        if (membership?.role === 'ADMIN') return;
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.RUNTIME_MANAGE)) return;
 
         throw new ForbiddenException("You don't have authorization to manage this platform's runtime.");
     }
 
     /**
-     * Authorization guard checking if the actor has permissions to trigger a generation job.
+     * Authorization guard checking if the actor may FILE a generation (directly or as a request).
      * Access is granted if:
      * 1. The actor is the owner of the platform.
      * 2. The actor possesses global GENERATOR_EXECUTE permissions.
-     * 3. The actor holds an ADMIN role on the specific platform membership.
+     * 3. The actor's role on the platform (ADMIN or custom) includes `generator.execute`.
+     * Whether the run is immediate or needs the owner's approval is `needsOwnerApproval()`.
      */
     private async assertCanGenerate(actor: Actor, platform: { id: string; ownerId: string }) {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(PERMISSIONS.GENERATOR_EXECUTE)) return;
 
-        const membership = await this.prisma.platformMember.findUnique({
-            where: { platformId_userId: { platformId: platform.id, userId: actor.userId } },
-        });
-        if (membership?.role === 'ADMIN') return;
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.GENERATOR_EXECUTE)) return;
 
         throw new ForbiddenException('You do not have permission to trigger a generation on this platform.');
     }
 
+    /** Only the owner and global generators (BackOS staff) skip the approval step. */
+    private needsOwnerApproval(actor: Actor, platform: { ownerId: string }): boolean {
+        if (platform.ownerId === actor.userId) return false;
+        if (actor.permissions.includes(PERMISSIONS.GENERATOR_EXECUTE)) return false;
+        return true;
+    }
+
+    /** Approve/reject are never available to ADMINs or custom roles - owner (or global) only. */
+    private assertOwnerOrGlobalGenerator(actor: Actor, platform: { ownerId: string }) {
+        if (platform.ownerId === actor.userId) return;
+        if (actor.permissions.includes(PERMISSIONS.GENERATOR_EXECUTE)) return;
+        throw new ForbiddenException('Only the platform owner can approve or reject a generation.');
+    }
+
+    /** Dispatches the generation job to the Redis queue (job id = generation id). */
+    private async enqueue(platform: { id: string; slug: string }, generationId: string) {
+        await this.queue.add('generate', {
+            platformId: platform.id,
+            slug: platform.slug,
+            generationId,
+        }, { jobId: generationId });
+    }
+
     /**
-     * Authorization guard checking if the actor has permissions to view generation details and logs.
+     * Generation history and logs are reserved to the platform owner and the platform's ADMIN
+     * (plus a global GENERATION_READ holder, kept as before) - a plain member, whatever their custom
+     * role, cannot read them. Anyone else gets a 404 so the platform's existence isn't leaked.
+     */
+    private async assertCanReadGenerations(actor: Actor, platform: { id: string; ownerId: string }) {
+        if (platform.ownerId === actor.userId) return;
+        if (actor.permissions.includes(PERMISSIONS.GENERATION_READ)) return;
+
+        const { isAdmin } = await this.access.getEffectivePermissions(actor, platform);
+        if (isAdmin) return;
+
+        throw new NotFoundException('Platform not found.');
+    }
+
+    /**
+     * Authorization guard checking if the actor has permissions to view runtime details (status, logs, manifest).
      * Access is granted if:
      * 1. The actor is the platform owner.
      * 2. The actor possesses global GENERATION_READ permissions.

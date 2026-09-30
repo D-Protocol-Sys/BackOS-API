@@ -55,6 +55,12 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         archive: 'Scoped via CurrentUser + platform membership checked in FieldsService.',
         restore: 'Scoped via CurrentUser + platform membership checked in FieldsService.',
     },
+    'enum-definitions/enum-definitions.controller.ts': {
+        list: 'Scoped via CurrentUser + platform membership checked in EnumDefinitionsService.',
+        create: 'Scoped via CurrentUser + platform membership checked in EnumDefinitionsService.',
+        update: 'Scoped via CurrentUser + platform membership checked in EnumDefinitionsService.',
+        delete: 'Scoped via CurrentUser + platform membership checked in EnumDefinitionsService.',
+    },
     'relations/relations.controller.ts': {
         list: 'Scoped via CurrentUser + platform membership checked in RelationsService.',
         create: 'Scoped via CurrentUser + platform membership checked in RelationsService.',
@@ -69,6 +75,8 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     'generator/generator.controller.ts': {
         triggerGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         cancelGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
+        approveGeneration: 'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may approve, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
+        rejectGeneration: 'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may reject, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
         listGenerations: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         getGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         startRuntime: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
@@ -119,7 +127,10 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         getMyProfileDetails: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
         updateMyProfileDetails: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
         exportMe: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
+        exportUser: "GDPR export of another user: allowed only for a global USERS_EXPORT holder or the owner/ADMIN of a platform the target belongs to, checked in UsersService.exportUserDataAs().",
         deleteMe: "Always scoped to the caller's own userId via CurrentUser, and (audit #3) now additionally requires a fresh step-up TOTP code.",
+        uploadMyAvatar: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
+        getAvatar: 'Any authenticated user may view any team member\'s avatar - equivalent to a company directory photo, not sensitive data (global JwtAuthGuard is sufficient).',
     },
     'auth/auth.controller.ts': {
         logout: 'Requires a valid access token (global JwtAuthGuard); revokes only the caller\'s own refresh token, never another user\'s.',
@@ -130,7 +141,15 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         update: 'Scoped via CurrentUser + manager/visibility checked in ProjectsService.update().',
         remove: 'Scoped via CurrentUser + manager/visibility checked in ProjectsService.delete().',
     },
+    'platforms/platform-roles.controller.ts': {
+        list: 'Scoped via CurrentUser + ownership/membership checked in PlatformRolesService.list().',
+        catalog: 'Scoped via CurrentUser + platform visibility checked in PlatformRolesService.catalog(); only flags what the caller may grant.',
+        create: 'Scoped via CurrentUser + platform.manage-roles permission and the permission-ceiling rule checked in PlatformRolesService.create().',
+        update: 'Scoped via CurrentUser + platform.manage-roles permission and the permission-ceiling rule checked in PlatformRolesService.update().',
+        remove: 'Scoped via CurrentUser + platform.manage-roles permission checked in PlatformRolesService.remove().',
+    },
     'platforms/platforms.controller.ts': {
+        getMyAccess: "Always scoped to the caller's own userId via CurrentUser - never reveals another user's access; visibility checked in PlatformsService.getMyAccess().",
         list: 'Scoped via CurrentUser; PlatformsService.list() returns only platforms the caller owns or is a member of.',
         getById: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.getById().',
         update: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.update().',
@@ -139,7 +158,7 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         purge: 'Scoped via CurrentUser + ownership checked in PlatformsService.purge().',
         transferOwnership: 'Scoped via CurrentUser + current-owner check in PlatformsService.transferOwnership().',
         listMembers: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.listMembers().',
-        addMember: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.addMember().',
+        addMember: 'Scoped via CurrentUser + platform.manage-members permission and role-grant ceiling checked in PlatformsService.addMember().',
         updateMemberRole: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.updateMemberRole().',
         removeMember: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.removeMember().',
         confirmMemberRemoval: 'Scoped via CurrentUser; only the affected member or a platform admin may confirm, checked in PlatformsService.',

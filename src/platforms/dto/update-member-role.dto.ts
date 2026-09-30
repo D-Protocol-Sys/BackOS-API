@@ -1,17 +1,12 @@
-import { IsEnum } from 'class-validator';
-import { PlatformRole } from '@prismamodels/client';
+import { IsUUID } from 'class-validator';
 
 /**
- * Data Transfer Object (DTO) used when updating the access role 
- * of an existing member within a platform or workspace.
+ * Data Transfer Object (DTO) used when updating the access role of an existing member within a
+ * platform. `platformRoleId` must point to a `PlatformRole` row belonging to that same platform.
  */
 export class UpdateMemberRoleDto {
 
-    /**
-     * The updated platform role to assign to the member.
-     * Enforces that the value matches a valid key from the `PlatformRole` database enum.
-     */
-    @IsEnum(PlatformRole)
-    role!: PlatformRole;
-    
+    @IsUUID()
+    platformRoleId!: string;
+
 }

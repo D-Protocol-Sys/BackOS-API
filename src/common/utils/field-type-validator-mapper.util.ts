@@ -31,6 +31,11 @@ export const FIELD_TYPE_VALIDATORS: Record<FieldType, ValidatorSpec> = {
     BOOLEAN: { decorators: ['@IsBoolean()'], eachDecorators: ['@IsBoolean({ each: true })'], tsType: 'boolean', isDateField: false },
     DATE: { decorators: ['@IsDateString()'], eachDecorators: ['@IsDateString({}, { each: true })'], tsType: 'string', isDateField: true },
     JSON: { decorators: ['@IsObject()'], eachDecorators: ['@IsObject({ each: true })'], tsType: 'Record<string, unknown>', isDateField: false },
+    // Never actually read: an ENUM field's decorators/tsType depend on ITS OWN EnumDefinition
+    // (the allowed values, and the Prisma enum type name), so `buildDtoFieldsSource()` and
+    // `SchemaBuilderService` special-case ENUM before consulting this map. Present only so this
+    // Record stays exhaustive over every FieldType.
+    ENUM: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
 };
 
 /**

@@ -20,6 +20,8 @@ interface ManifestFieldShape {
      * each file first, then send the resulting URL(s) here. Absent on every other field.
      */
     upload?: boolean;
+    /** On an ENUM field: the exact allowed values (in order), the same ones `@IsIn()` validates against. */
+    enumValues?: string[];
 }
 
 /**
@@ -51,6 +53,12 @@ export interface ManifestResource {
     tableName: string;
     basePath: string;
     endpoints: ManifestEndpoint[];
+}
+
+/** `'DRAFT' | 'ACTIVE'`, or `('DRAFT' | 'ACTIVE')[]` for an array ENUM field. Mirrors dto-field-builder.util.ts. */
+function enumUnionType(values: string[], isArray: boolean): string {
+    const union = values.length > 0 ? values.map((v) => `'${v}'`).join(' | ') : 'string';
+    return isArray ? `(${union})[]` : union;
 }
 
 /**
@@ -140,7 +148,7 @@ export class ApiManifestService {
             authProtectRead: boolean;
             authProtectUpdate: boolean;
             authProtectDelete: boolean;
-            fields: { column: string; type: string; required: boolean; isArray: boolean }[];
+            fields: { column: string; type: string; required: boolean; isArray: boolean; enumDefinition?: { values: string[] } | null }[];
         },
         relations: RelationFieldMeta[],
     ): ManifestResource {
@@ -215,17 +223,28 @@ export class ApiManifestService {
      * Mirrors `CrudGeneratorService.buildDtoFields()` / `buildRelationDtoFields()`.
      */
     private buildFieldShapes(
-        fields: { column: string; type: string; required: boolean; isArray: boolean }[],
+        fields: {
+            column: string;
+            type: string;
+            required: boolean;
+            isArray: boolean;
+            enumDefinition?: { values: string[] } | null;
+        }[],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {
 
         const shapes: ManifestFieldShape[] = fields.map((field) => ({
             name: toCamelCase(field.column),
-            // `string[]` for an array field, `string` otherwise - mirrors buildDtoFieldsSource().
-            type: tsTypeFor(field.type, field.isArray),
+            // ENUM: a quoted string-literal union of its own values (mirrors buildDtoFieldsSource());
+            // every other type: `string[]` for an array field, `string` (or similar) otherwise.
+            type:
+                field.type === 'ENUM'
+                    ? enumUnionType(field.enumDefinition?.values ?? [], field.isArray)
+                    : tsTypeFor(field.type, field.isArray),
             required: field.required,
             ...(UPLOAD_FIELD_TYPES.has(field.type) ? { upload: true } : {}),
+            ...(field.type === 'ENUM' ? { enumValues: field.enumDefinition?.values ?? [] } : {}),
         }));
 
         for (const relation of relations) {
@@ -259,7 +278,7 @@ export class ApiManifestService {
      * every direct - non many-to-many - relation).
      */
     private buildResponseShapes(
-        fields: { column: string; type: string; required: boolean; isArray: boolean }[],
+        fields: { column: string; type: string; required: boolean; isArray: boolean; enumDefinition?: { values: string[] } | null }[],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {

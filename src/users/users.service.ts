@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { AuthService } from '../auth/auth.service';
+import { PlatformAccessService } from '../platforms/platform-access.service';
 import type { AuditContext } from '../audit/audit-log.service';
 import { RoleHierarchyService } from '../common/services/role-hierarchy.service';
 import { CreateUserDto } from './dto/create-user.dto';
@@ -14,10 +15,17 @@ import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 import { UpdateProfileDetailsDto } from './dto/update-profile-details.dto';
 import { StatusChangeReason, UserStatus } from '@prismamodels/enums';
 import { AuditLogService } from '../audit/audit-log.service';
+import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { AUDIT_ACTIONS } from '../common/constants/audit-actions';
 import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
 import { ChangeUserStatusDto } from './dto/change-status.dto';
 import { ConfigService } from '@nestjs/config';
+import * as fs from 'fs/promises';
+import * as path from 'path';
+import type { Response } from 'express';
+import { resolveUploadDir } from '../files/multer.config';
+import { matchesFileSignature, SIGNATURE_SAMPLE_BYTES } from '../files/file-signature.util';
+import { avatarExtensionFor } from './avatar-upload.config';
 import { ProcessDisabledUserDto, RetentionAction } from './dto/process-disabled-user.dto';
 
 /**
@@ -65,6 +73,7 @@ export class UsersService {
         private readonly roleHierarchy: RoleHierarchyService,
         private readonly auditLog: AuditLogService,
         private readonly authService: AuthService,
+        private readonly platformAccess: PlatformAccessService,
     ) {}
 
     // ---- Account Provisioning & Activation ----
@@ -162,6 +171,100 @@ export class UsersService {
      */
     async getMyProfileDetails(userId: string) {
         return this.prisma.userProfile.findUnique({ where: { userId } });
+    }
+
+    /**
+     * Validates, stores and links a freshly uploaded avatar image.
+     *
+     * Storage convention: `avatars/<userId>.<ext>` - a fixed name per user rather than a random
+     * one, so replacing an avatar never leaves the previous file orphaned on disk (any leftover
+     * file with a DIFFERENT extension from a prior upload is removed explicitly, since switching
+     * from e.g. `.png` to `.jpg` would otherwise leave the old `.png` behind under a new name).
+     *
+     * @throws BadRequestException when the declared MIME type's magic bytes don't match (the
+     * `Content-Type` a multipart field carries is client-controlled and trivially spoofed).
+     */
+    async saveAvatar(userId: string, file: Express.Multer.File) {
+        const extension = avatarExtensionFor(file.mimetype);
+        if (!extension || !matchesFileSignature(file.mimetype, file.buffer.subarray(0, SIGNATURE_SAMPLE_BYTES))) {
+            throw new BadRequestException('This file does not look like a valid PNG, JPEG or WEBP image.');
+        }
+
+        const dir = path.join(resolveUploadDir(), 'avatars');
+        await fs.mkdir(dir, { recursive: true });
+
+        // Clean up a previous avatar stored under a different extension for this user.
+        for (const otherExtension of ['png', 'jpg', 'webp']) {
+            if (otherExtension === extension) continue;
+            await fs.unlink(path.join(dir, `${userId}.${otherExtension}`)).catch(() => undefined);
+        }
+
+        await fs.writeFile(path.join(dir, `${userId}.${extension}`), file.buffer);
+
+        const avatarUrl = `/users/${userId}/avatar`;
+        await this.prisma.userProfile.upsert({
+            where: { userId },
+            update: { avatarUrl },
+            create: { userId, avatarUrl },
+        });
+
+        return { avatarUrl };
+    }
+
+    /**
+     * Streams a user's stored avatar file, whatever its extension turns out to be. `no-store`
+     * because the URL is stable across re-uploads (`avatars/<userId>.<ext>`) - without it, a
+     * browser could keep showing a stale image after someone changes their photo.
+     *
+     * @throws NotFoundException when the user has never uploaded an avatar.
+     */
+    async streamAvatar(userId: string, res: Response): Promise<void> {
+        const dir = path.join(resolveUploadDir(), 'avatars');
+        for (const [extension, mimeType] of [['png', 'image/png'], ['jpg', 'image/jpeg'], ['webp', 'image/webp']] as const) {
+            const diskPath = path.join(dir, `${userId}.${extension}`);
+            if (
+                await fs
+                    .access(diskPath)
+                    .then(() => true)
+                    .catch(() => false)
+            ) {
+                res.setHeader('Content-Type', mimeType);
+                res.setHeader('Cache-Control', 'no-store');
+                res.setHeader('X-Content-Type-Options', 'nosniff');
+                res.sendFile(diskPath);
+                return;
+            }
+        }
+        throw new NotFoundException('This user has no avatar.');
+    }
+
+    /**
+     * Every platform the target user owns or belongs to, with their effective role on each -
+     * used by the user detail page ("what does this person have access to?").
+     */
+    async getUserPlatforms(userId: string) {
+        const [owned, memberships] = await Promise.all([
+            this.prisma.platform.findMany({
+                where: { ownerId: userId },
+                select: { id: true, name: true, slug: true, status: true },
+                orderBy: { name: 'asc' },
+            }),
+            this.prisma.platformMember.findMany({
+                where: { userId },
+                select: {
+                    platformRole: { select: { name: true, isSystem: true } },
+                    platform: { select: { id: true, name: true, slug: true, status: true } },
+                },
+                orderBy: { createdAt: 'asc' },
+            }),
+        ]);
+
+        return [
+            ...owned.map((platform) => ({ platform, role: 'OWNER' as const })),
+            // `role` is the platform role's display name ("ADMIN" for the system role, or the custom
+            // role's own name, e.g. "Data Operator"); `isSystemRole` lets the UI tell them apart.
+            ...memberships.map((m) => ({ platform: m.platform, role: m.platformRole.name, isSystemRole: m.platformRole.isSystem })),
+        ];
     }
 
     /**
@@ -733,6 +836,34 @@ export class UsersService {
     }
 
     // ---- GDPR & Permanent Deletion ----
+
+    /**
+     * Access rule for exporting SOMEONE ELSE's personal data (GDPR right of access). Allowed:
+     * - the user themselves (their own data);
+     * - a holder of the global USERS_EXPORT permission (the BackOS owner);
+     * - the owner or an ADMIN of a platform the target user belongs to (as a member, or as its
+     *   owner) - never a plain member, and never a custom role.
+     * Anyone else gets a 403, so a random authenticated user (or an ADMIN of an unrelated
+     * platform) can never pull another person's data.
+     */
+    async exportUserDataAs(actor: { userId: string; permissions: string[] }, targetUserId: string) {
+        if (actor.userId !== targetUserId && !actor.permissions.includes(PERMISSIONS.USERS_EXPORT)) {
+            const sharedPlatforms = await this.prisma.platform.findMany({
+                where: { OR: [{ ownerId: targetUserId }, { members: { some: { userId: targetUserId } } }] },
+                select: { id: true, ownerId: true },
+            });
+
+            let allowed = false;
+            for (const platform of sharedPlatforms) {
+                const { isOwner, isAdmin } = await this.platformAccess.getEffectivePermissions(actor, platform);
+                if (isOwner || isAdmin) { allowed = true; break; }
+            }
+            if (!allowed) {
+                throw new ForbiddenException("You are not allowed to export this user's data.");
+            }
+        }
+        return this.exportUserData(targetUserId);
+    }
 
     /**
      * Exports all user records for GDPR compliance and data portability.

@@ -16,7 +16,18 @@ interface EntityWithFields {
     authProtectRead: boolean;
     authProtectUpdate: boolean;
     authProtectDelete: boolean;
-    fields: { column: string; type: string; required: boolean; isArray: boolean }[];
+    fields: {
+        column: string;
+        type: string;
+        required: boolean;
+        isArray: boolean;
+        enumDefinition?: { values: string[] } | null;
+    }[];
+}
+
+/** Flattens each field's `enumDefinition.values` into the `enumValues` shape `buildDtoFieldsSource()` expects. */
+function withEnumValues(fields: EntityWithFields['fields']) {
+    return fields.map((field) => ({ ...field, enumValues: field.enumDefinition?.values }));
 }
 
 /**
@@ -101,7 +112,7 @@ export class CrudGeneratorService {
      * Handles both scalar fields and ARRAY fields (`Field.isArray`) - see `buildDtoFieldsSource()`.
      */
     private buildDtoFields(fields: EntityWithFields['fields'], forceOptional: boolean): string {
-        return buildDtoFieldsSource(fields, forceOptional);
+        return buildDtoFieldsSource(withEnumValues(fields), forceOptional);
     }
 
     // ---- DTO fields (Relation FKs / Many-to-Many IDs) ----
@@ -129,7 +140,7 @@ export class CrudGeneratorService {
      * Inspects target fields/relations to deduce required `class-validator` imports dynamically.
      */
     private collectImports(fields: EntityWithFields['fields'], relations: RelationFieldMeta[]): string {
-        const set = collectFieldValidatorImports(fields);
+        const set = collectFieldValidatorImports(withEnumValues(fields));
         if (relations.some((r) => r.hasScalarFk || r.isManyToMany)) set.add('IsUUID');
         if (relations.some((r) => r.isManyToMany)) set.add('IsArray');
         return Array.from(set).sort().join(', ');

@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { FIELD_TYPE_TO_PRISMA } from '../common/utils/field-type-mapper.util';
 import { toPascalCase, toCamelCase } from '../common/utils/case.util';
 import { buildRelationLinesByEntity } from '../common/utils/relation-schema-builder.util';
+import { toEnumPrismaName } from '../common/utils/enum-value.util';
 
 @Injectable()
 export class SchemaBuilderService {
@@ -14,7 +15,16 @@ export class SchemaBuilderService {
     async getActiveEntitiesWithFields(platformId: string) {
         return this.prisma.entity.findMany({
             where: { platformId, isArchived: false },
-            include: { fields: { where: { isArchived: false }, orderBy: { order: 'asc' } } },
+            include: {
+                fields: {
+                    where: { isArchived: false },
+                    orderBy: { order: 'asc' },
+                    // An ENUM field's own allowed values, needed by SchemaBuilderService (which Prisma
+                    // `enum` type it resolves to), CrudGeneratorService and the "Auth & User" generator
+                    // (the `@IsIn([...])` validator and TS union type - see `buildDtoFieldsSource`).
+                    include: { enumDefinition: true },
+                },
+            },
             orderBy: { createdAt: 'asc' },
         });
     }
@@ -32,6 +42,20 @@ export class SchemaBuilderService {
                 'This platform contains no active entities. Add at least one table before generating the schema.',
             );
         }
+
+        // Every EnumDefinition actually referenced by an active ENUM field becomes a genuine
+        // Prisma `enum` block, emitted once (Prisma enums are schema-global, not per-model) even
+        // when several fields - possibly on different entities - share the same one.
+        const usedEnumIds = new Set(
+            entities.flatMap((entity) => entity.fields.filter((f) => f.type === 'ENUM' && f.enumDefinitionId).map((f) => f.enumDefinitionId as string)),
+        );
+        const enumDefinitions = usedEnumIds.size > 0
+            ? await this.prisma.enumDefinition.findMany({ where: { id: { in: Array.from(usedEnumIds) } } })
+            : [];
+        const enumPrismaNameById = new Map(enumDefinitions.map((e) => [e.id, toEnumPrismaName(e.name)]));
+        const enumBlocks = enumDefinitions
+            .map((e) => `enum ${enumPrismaNameById.get(e.id)} {\n${e.values.map((v) => `  ${v}`).join('\n')}\n}`)
+            .join('\n\n');
 
         const relations = await this.prisma.relation.findMany({ where: { platformId } });
         const relationLinesByEntity = buildRelationLinesByEntity(
@@ -53,12 +77,13 @@ export class SchemaBuilderService {
         ].join('\n');
 
         const models = entities
-            .map((entity) => this.buildModel(entity, relationLinesByEntity.get(entity.id) ?? []))
+            .map((entity) => this.buildModel(entity, relationLinesByEntity.get(entity.id) ?? [], enumPrismaNameById))
             .join('\n\n');
 
         const extra = extraPrismaBlocks.join('\n');
+        const enumSection = enumBlocks ? `${enumBlocks}\n\n` : '';
 
-        return `${header}\n\n${models}\n${extra}\n`;
+        return `${header}\n\n${enumSection}${models}\n${extra}\n`;
     }
 
     /**
@@ -75,12 +100,14 @@ export class SchemaBuilderService {
                 unique: boolean;
                 isArray: boolean;
                 defaultValue: string | null;
+                enumDefinitionId?: string | null;
             }[];
         },
         relationLines: string[],
+        enumPrismaNameById: Map<string, string>,
     ): string {
         const modelName = toPascalCase(entity.tableName);
-        const fieldLines = entity.fields.map((field) => this.buildFieldLine(field));
+        const fieldLines = entity.fields.map((field) => this.buildFieldLine(field, enumPrismaNameById));
         const schedulableLines = entity.isSchedulable
             ? ['  publishAt DateTime?', '  unpublishAt DateTime?']
             : [];
@@ -104,16 +131,26 @@ export class SchemaBuilderService {
     /**
      * Maps field attributes to a single line in the Prisma schema definition.
      */
-    private buildFieldLine(field: {
-        column: string;
-        type: string;
-        required: boolean;
-        unique: boolean;
-        isArray: boolean;
-        defaultValue: string | null;
-    }): string {
+    private buildFieldLine(
+        field: {
+            column: string;
+            type: string;
+            required: boolean;
+            unique: boolean;
+            isArray: boolean;
+            defaultValue: string | null;
+            enumDefinitionId?: string | null;
+        },
+        enumPrismaNameById: Map<string, string>,
+    ): string {
         const fieldName = toCamelCase(field.column);
-        const prismaType = FIELD_TYPE_TO_PRISMA[field.type as keyof typeof FIELD_TYPE_TO_PRISMA];
+        // An ENUM field's Prisma type is its OWN EnumDefinition's generated `enum` name, not a
+        // fixed mapping from FieldType - FieldsService guarantees enumDefinitionId is always set
+        // (and valid) on a field of this type, so the lookup below cannot miss.
+        const prismaType =
+            field.type === 'ENUM'
+                ? (enumPrismaNameById.get(field.enumDefinitionId as string) as string)
+                : FIELD_TYPE_TO_PRISMA[field.type as keyof typeof FIELD_TYPE_TO_PRISMA];
 
         // ARRAY fields (tags, image/video galleries, ...) become a native PostgreSQL array
         // column (`TEXT[]`, `DOUBLE PRECISION[]`, `JSONB[]`, ...). Prisma rules that shape this line:

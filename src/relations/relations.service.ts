@@ -1,3 +1,5 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 import {
     Injectable, NotFoundException, ForbiddenException, BadRequestException,
 } from '@nestjs/common';
@@ -18,7 +20,10 @@ type Actor = { userId: string; permissions: string[] };
 @Injectable()
 export class RelationsService {
 
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly access: PlatformAccessService,
+    ) {}
 
     /**
      * Lists all relations defined within a given platform scope.
@@ -141,10 +146,9 @@ export class RelationsService {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(permission)) return;
 
-        const membership = await this.prisma.platformMember.findUnique({
-            where: { platformId_userId: { platformId, userId: actor.userId } },
-        });
-        if (membership?.role === 'ADMIN') return;
+        // Platform-level check: ADMIN implicitly, or a custom role carrying `entity.manage`.
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.ENTITY_MANAGE)) return;
 
         throw new ForbiddenException(
             'You must be the platform owner, an administrator, or hold the required permission.',

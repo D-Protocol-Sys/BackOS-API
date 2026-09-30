@@ -1,3 +1,5 @@
+import { PlatformAccessService } from '../platforms/platform-access.service';
+import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
 import {
     Injectable, NotFoundException, ForbiddenException, BadRequestException,
 } from '@nestjs/common';
@@ -22,7 +24,10 @@ export class EntitiesService {
     /**
      * @param prisma - Database client providing access to Prisma ORM methods.
      */
-    constructor(private readonly prisma: PrismaService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly access: PlatformAccessService,
+    ) {}
 
     /**
      * Retrieves all dynamic entities associated with a specific platform.
@@ -36,7 +41,7 @@ export class EntitiesService {
         
         return this.prisma.entity.findMany({
             where: { platformId, ...(includeArchived ? {} : { isArchived: false }) },
-            include: { fields: { orderBy: { order: 'asc' } } },
+            include: { fields: { orderBy: { order: 'asc' }, include: { enumDefinition: true } } },
             orderBy: { createdAt: 'asc' },
         });
     }
@@ -54,7 +59,7 @@ export class EntitiesService {
         
         return this.prisma.entity.findUnique({
             where: { id: entity.id },
-            include: { fields: { orderBy: { order: 'asc' } } },
+            include: { fields: { orderBy: { order: 'asc' }, include: { enumDefinition: true } } },
         });
     }
 
@@ -222,8 +227,9 @@ export class EntitiesService {
         if (platform.ownerId === actor.userId) return platform;
         if (actor.permissions.includes(permission)) return platform;
 
-        const membership = await this.getMembership(actor.userId, platformId);
-        if (membership?.role === 'ADMIN') return platform;
+        // Platform-level check: ADMIN implicitly, or a custom role carrying `entity.manage`.
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        if (permissions.has(PLATFORM_PERMISSIONS.ENTITY_MANAGE)) return platform;
 
         throw new ForbiddenException(
             'You must be the owner, a platform administrator, or possess the required permission.',
