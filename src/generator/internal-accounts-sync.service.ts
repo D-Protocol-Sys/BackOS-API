@@ -45,7 +45,10 @@ export class InternalAccountsSyncService {
             const internalKey = config?.internalAuthKey;
             if (typeof internalKey !== 'string' || internalKey.length === 0) return;
 
-            const host = this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1');
+            // RT-003: same address as the gateway and the health check - GENERATED_BACKEND_HOST is the
+            // bind address INSIDE the host, unreachable when the orchestrator itself runs in a container.
+            const host = this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST')
+                || this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1');
             const response = await fetch(
                 `http://${host}:${platform.generatedPort}/${GENERATED_BACKEND_API_PREFIX}/auth/internal/sync`,
                 {

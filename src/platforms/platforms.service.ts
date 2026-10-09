@@ -21,6 +21,10 @@ import { DockerRuntimeManagerService } from '../generator/docker-runtime-manager
 import { ProjectScaffolderService } from '../generator/project-scaffolder.service';
 import { PlatformAccessService, Actor } from './platform-access.service';
 import { InternalAccountsSyncService } from '../generator/internal-accounts-sync.service';
+import { ProvisioningService } from '../generator/provisioning.service';
+import { AuditLogService } from '../audit/audit-log.service';
+import { AUDIT_ACTIONS, AuditAction } from '../common/constants/audit-actions';
+import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
 
 /** Name of the system role every platform is seeded with at creation time - see `create()`. */
 export const SYSTEM_ADMIN_ROLE_NAME = 'ADMIN';
@@ -40,7 +44,24 @@ export class PlatformsService {
         private readonly scaffolder: ProjectScaffolderService,
         private readonly access: PlatformAccessService,
         private readonly internalAccountsSync: InternalAccountsSyncService,
+        private readonly provisioning: ProvisioningService,
+        private readonly auditLog: AuditLogService,
     ) {}
+
+    /** SEC-027: platform operations are audited; an audit failure never blocks the operation. */
+    private async audit(actorId: string | null, action: AuditAction, platformId: string, metadata: Record<string, unknown> = {}) {
+        try {
+            await this.auditLog.log({
+                action,
+                actorId,
+                targetType: AUDIT_TARGETS.PLATFORM,
+                targetId: platformId,
+                metadata: metadata as never,
+            });
+        } catch (error) {
+            this.logger.error(`Audit log failed for ${action} on ${platformId}.`, error instanceof Error ? error.stack : String(error));
+        }
+    }
 
     /**
      * Creates a new platform entity owned by the requesting actor, and seeds its system "ADMIN"
@@ -67,6 +88,9 @@ export class PlatformsService {
                 data: { platformId: platform.id, name: SYSTEM_ADMIN_ROLE_NAME, isSystem: true },
             });
 
+            return platform;
+        }).then(async (platform) => {
+            await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_CREATE, platform.id, { slug: platform.slug });
             return platform;
         });
     }
@@ -143,10 +167,19 @@ export class PlatformsService {
 
         await this.stopRuntimeBestEffort(platform.id);
 
-        return this.prisma.platform.update({
+        // GEN-005: requests not yet started are abandoned; a RUNNING generation notices the
+        // ARCHIVED status and leaves it untouched when it finishes.
+        await this.prisma.generation.updateMany({
+            where: { platformId: id, status: { in: ['PENDING', 'AWAITING_APPROVAL'] } },
+            data: { status: 'FAILED', errorMsg: 'Platform archived.', finishedAt: new Date() },
+        });
+
+        const archived = await this.prisma.platform.update({
             where: { id },
             data: { status: 'ARCHIVED', archivedAt: new Date() },
         });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_ARCHIVED, id);
+        return archived;
     }
 
     /**
@@ -162,10 +195,12 @@ export class PlatformsService {
         if (platform.status !== 'ARCHIVED') {
             throw new BadRequestException('This platform is not archived.');
         }
-        return this.prisma.platform.update({
+        const restored = await this.prisma.platform.update({
             where: { id },
             data: { status: 'DRAFT', archivedAt: null },
         });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_RESTORED, id);
+        return restored;
     }
 
     /**
@@ -192,6 +227,7 @@ export class PlatformsService {
         }
 
         await this.purgePlatform(platform.id, platform.slug);
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_PURGED, platform.id, { slug: platform.slug });
         return { message: 'Platform permanently deleted.' };
     }
 
@@ -217,6 +253,7 @@ export class PlatformsService {
         for (const platform of expired) {
             try {
                 await this.purgePlatform(platform.id, platform.slug);
+                await this.audit(null, AUDIT_ACTIONS.PLATFORM_PURGED, platform.id, { slug: platform.slug, reason: 'retention' });
                 purgedCount++;
             } catch (error) {
                 this.logger.error(
@@ -237,7 +274,18 @@ export class PlatformsService {
      * whose generated directory was already removed, must not make the overall purge fail.
      */
     private async purgePlatform(platformId: string, slug: string): Promise<void> {
+        // Scenario F of the audit: never delete files and database under a running generation.
+        const running = await this.prisma.generation.count({ where: { platformId, status: 'RUNNING' } });
+        if (running > 0) {
+            throw new ConflictException('A generation is still running for this platform. Cancel it or wait for it to finish.');
+        }
+
         await this.stopRuntimeBestEffort(platformId);
+
+        // DATA FIX (DB-001): drop the platform's PostgreSQL database and role. This method existed
+        // but was never called, so "permanently deleted" platforms kept their end users' data and
+        // a LOGIN role forever. A failure aborts the purge (retried by the next cleanup run).
+        await this.provisioning.deprovisionDatabaseForPlatform(platformId);
 
         try {
             await fs.rm(this.scaffolder.getSlugRootPath(slug), { recursive: true, force: true });
@@ -291,8 +339,32 @@ export class PlatformsService {
             throw new BadRequestException('The new owner is invalid or inactive.');
         }
 
-        const updated = await this.prisma.platform.update({ where: { id }, data: { ownerId: dto.newOwnerId } });
+        if (dto.newOwnerId === platform.ownerId) {
+            throw new BadRequestException('This user already owns the platform.');
+        }
+        // Ownership can only go to someone already working on the platform (no platform can be
+        // pushed onto an arbitrary user, who would then be unable to delete their account).
+        const newOwnerMembership = await this.getMembership(dto.newOwnerId, id);
+        if (!newOwnerMembership) {
+            throw new BadRequestException('The new owner must already be a member of this platform.');
+        }
+        const adminRole = await this.prisma.platformRole.findFirst({ where: { platformId: id, isSystem: true } });
+
+        const updated = await this.prisma.$transaction(async (tx) => {
+            await tx.platformMember.delete({ where: { id: newOwnerMembership.id } });
+            const result = await tx.platform.update({ where: { id }, data: { ownerId: dto.newOwnerId } });
+            // The previous owner keeps working on the platform as ADMIN instead of losing all access.
+            if (adminRole) {
+                await tx.platformMember.upsert({
+                    where: { platformId_userId: { platformId: id, userId: platform.ownerId } },
+                    update: { platformRoleId: adminRole.id },
+                    create: { platformId: id, userId: platform.ownerId, platformRoleId: adminRole.id },
+                });
+            }
+            return result;
+        });
         // The new owner gets an internal account on the generated backend right away.
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_OWNERSHIP_TRANSFERRED, id, { from: platform.ownerId, to: dto.newOwnerId });
         void this.internalAccountsSync.notify(id);
         return updated;
     }
@@ -356,6 +428,8 @@ export class PlatformsService {
         if (!targetUser || targetUser.status !== UserStatus.ACTIVE) {
             throw new BadRequestException('Invalid or inactive user.');
         }
+        // SEC-006: `upsert` also changes the role of an EXISTING member.
+        await this.assertCanManageExistingMember(actor, platform, dto.userId);
 
         const member = await this.prisma.platformMember.upsert({
             where: { platformId_userId: { platformId, userId: dto.userId } },
@@ -364,6 +438,7 @@ export class PlatformsService {
         });
         // Immediate effect on the generated backend: an ADMIN / data-role member gets their
         // internal account created now (no restart, no regeneration) - see InternalAccountsSyncService.
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ADDED, platformId, { userId: dto.userId, platformRoleId: role.id });
         void this.internalAccountsSync.notify(platformId);
         return member;
     }
@@ -381,12 +456,14 @@ export class PlatformsService {
             where: { platformId_userId: { platformId, userId: targetUserId } },
         });
         if (!membership) throw new NotFoundException('This member is not part of the platform.');
+        await this.assertCanManageExistingMember(actor, platform, targetUserId);
 
         const updated = await this.prisma.platformMember.update({
             where: { id: membership.id },
             data: { platformRoleId: role.id },
         });
         // Gaining OR losing data access changes who holds an internal account.
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ROLE_CHANGED, platformId, { userId: targetUserId, platformRoleId: role.id });
         void this.internalAccountsSync.notify(platformId);
         return updated;
     }
@@ -409,8 +486,13 @@ export class PlatformsService {
             platform.ownerId === actor.userId ||
             actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
 
+        if (!isOwnerOrGlobal) {
+            await this.assertCanManageExistingMember(actor, platform, targetUserId);
+        }
+
         if (isOwnerOrGlobal) {
             await this.prisma.platformMember.delete({ where: { id: membership.id } });
+            await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED, platformId, { userId: targetUserId });
             void this.internalAccountsSync.notify(platformId);
             return { message: 'Member removed.', status: 'removed' };
         }
@@ -424,6 +506,7 @@ export class PlatformsService {
             data: { removalRequestedAt: new Date(), removalRequestedById: actor.userId },
         });
 
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED, platformId, { userId: targetUserId });
         return { ...updated, status: 'pending_approval' };
     
     }
@@ -445,6 +528,7 @@ export class PlatformsService {
         }
 
         await this.prisma.platformMember.delete({ where: { id: membership.id } });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED, platformId, { userId: targetUserId, confirmed: true });
         // Their internal account on the generated backend is revoked right away.
         void this.internalAccountsSync.notify(platformId);
         return { message: 'Removal confirmed, member deleted.' };
@@ -574,6 +658,36 @@ export class PlatformsService {
     /**
      * Generates a unique, URL-safe slug by appending numerical suffixes on collisons.
      */
+    /**
+     * SECURITY FIX (SEC-006): member management used to check only the NEW role being assigned,
+     * never the CURRENT one of the target - a member holding `platform.manage-members` could
+     * demote the platform's ADMIN. Outside the owner and global managers, an actor can only act
+     * on members whose current permissions are a subset of their own, and never on an ADMIN.
+     */
+    private async assertCanManageExistingMember(
+        actor: Actor,
+        platform: { id: string; ownerId: string },
+        targetUserId: string,
+    ): Promise<void> {
+        if (platform.ownerId === actor.userId) return;
+        if (actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS)) return;
+        if (targetUserId === actor.userId) {
+            throw new ForbiddenException('You cannot change your own membership.');
+        }
+
+        const target = await this.access.getEffectivePermissions({ userId: targetUserId, permissions: [] }, platform);
+        if (target.isAdmin) {
+            throw new ForbiddenException('Only the platform owner can change or remove an ADMIN.');
+        }
+        const mine = await this.access.getEffectivePermissions(actor, platform);
+        const exceeding = Array.from(target.permissions).filter((key) => !mine.permissions.has(key));
+        if (exceeding.length > 0) {
+            throw new ForbiddenException(
+                `You cannot manage a member holding permission(s) you do not have: ${exceeding.join(', ')}.`,
+            );
+        }
+    }
+
     private async generateUniqueSlug(name: string): Promise<string> {
         const base = slugify(name);
         let candidate = base;

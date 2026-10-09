@@ -4,6 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { GenerationStatus, Prisma } from '@prismamodels/client';
 import * as fs from 'fs/promises';
 import * as path from 'path';
+import { Client } from 'pg';
+import { resolveUploadDir } from '../files/multer.config';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlatformsService } from '../platforms/platforms.service';
 import { ClientsService } from '../clients/clients.service';
@@ -31,6 +33,13 @@ export class CleanupService {
      */
     @Cron(CronExpression.EVERY_DAY_AT_3AM)
     async runDailyCleanup(): Promise<void> {
+        // RELIABILITY FIX (multi-instance): with several replicas every instance used to run the
+        // same purge at 03:00 concurrently (double deletions, racing Docker/disk removals). A
+        // cluster-wide PostgreSQL advisory lock now lets exactly one instance run it.
+        await this.withClusterLock('backos:daily-cleanup', () => this.runCleanupSteps());
+    }
+
+    private async runCleanupSteps(): Promise<void> {
         const startedAt = Date.now();
         this.logger.log('Starting daily cleanup...');
 
@@ -45,6 +54,7 @@ export class CleanupService {
         totalDeleted += await this.cleanupArchivedPlatforms();
         totalDeleted += await this.cleanupArchivedClients();
         totalDeleted += await this.cleanupArchivedContracts();
+        totalDeleted += await this.cleanupOrphanUploads();
 
         const durationMs = Date.now() - startedAt;
         this.logger.log(
@@ -422,6 +432,103 @@ export class CleanupService {
         } catch (error) {
             this.logCleanupError('backup dumps', error);
             return 0;
+        }
+    }
+
+    /**
+     * FILE FIX: removes upload files left on disk without any `FileAsset` row (a crash between
+     * the disk write and the database insert, or a row deleted by a cascade that never touched
+     * the disk). Only top-level files named like the ones Multer writes (`<uuid>.<ext>`) and
+     * older than 24 h are considered, so an upload in progress is never touched and avatars
+     * (in the `avatars/` sub-directory) are ignored.
+     */
+    private async cleanupOrphanUploads(): Promise<number> {
+        try {
+            const uploadDir = resolveUploadDir();
+            let entries: string[];
+            try {
+                entries = await fs.readdir(uploadDir);
+            } catch (error) {
+                if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 0;
+                throw error;
+            }
+
+            const pattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,10}$/i;
+            const candidates = entries.filter((entry) => pattern.test(entry));
+            if (candidates.length === 0) return 0;
+
+            const cutoffMs = Date.now() - 24 * 60 * 60 * 1000;
+            let deletedCount = 0;
+
+            for (let offset = 0; offset < candidates.length; offset += 500) {
+                const batch = candidates.slice(offset, offset + 500);
+                const known = await this.prisma.fileAsset.findMany({
+                    where: { storedName: { in: batch } },
+                    select: { storedName: true },
+                });
+                const knownNames = new Set(known.map((file) => file.storedName));
+
+                for (const entry of batch) {
+                    if (knownNames.has(entry)) continue;
+                    const fullPath = path.join(uploadDir, entry);
+                    try {
+                        const stats = await fs.stat(fullPath);
+                        if (!stats.isFile() || stats.mtimeMs >= cutoffMs) continue;
+                        await fs.unlink(fullPath);
+                        deletedCount++;
+                    } catch (error) {
+                        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+                    }
+                }
+            }
+
+            if (deletedCount > 0) {
+                this.logger.log(`Orphan upload cleanup: ${deletedCount} file(s) deleted.`);
+            } else {
+                this.logger.debug('Orphan upload cleanup: nothing to delete.');
+            }
+            return deletedCount;
+        } catch (error) {
+            this.logCleanupError('orphan uploads', error);
+            return 0;
+        }
+    }
+
+    /**
+     * Runs `task` only if this instance obtains the cluster-wide advisory lock `key`; another
+     * instance already holding it means the job is running elsewhere, so this one skips it.
+     */
+    private async withClusterLock(key: string, task: () => Promise<void>): Promise<void> {
+        const connectionString = this.configService.get<string>('database.url') ?? process.env.DATABASE_URL;
+        if (!connectionString) {
+            await task();
+            return;
+        }
+
+        const client = new Client({ connectionString, connectionTimeoutMillis: 10_000 });
+        try {
+            await client.connect();
+        } catch (error) {
+            this.logCleanupError('cluster lock acquisition', error);
+            return;
+        }
+
+        try {
+            const result = await client.query<{ locked: boolean }>(
+                'SELECT pg_try_advisory_lock(hashtext($1)) AS locked',
+                [key],
+            );
+            if (!result.rows[0]?.locked) {
+                this.logger.log(`Skipping "${key}": already running on another instance.`);
+                return;
+            }
+            try {
+                await task();
+            } finally {
+                await client.query('SELECT pg_advisory_unlock(hashtext($1))', [key]).catch(() => undefined);
+            }
+        } finally {
+            await client.end().catch(() => undefined);
         }
     }
 

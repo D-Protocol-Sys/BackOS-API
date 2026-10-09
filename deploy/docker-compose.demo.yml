@@ -37,6 +37,10 @@ volumes:
 # SERVICES
 # Defines containerized components composing the demo application stack.
 # ------------------------------------------------------------------------------
+  uploads_data:
+    name: ${PROJECT_NAME}-demo-uploads
+  backups_data:
+    name: ${PROJECT_NAME}-demo-backups
 services:
 
   # ----------------------------------------------------------------------------
@@ -52,6 +56,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
       POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+      # SECURITY FIX (DB-005): dedicated non-superuser application role, see docker/postgres-init/02-app-role.sh
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data            # Mounts persistent data directory
       - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro # Mounts read-only initialization scripts
@@ -124,17 +131,32 @@ services:
       # "demo container" to "things running on this Docker host", including the LAN/prod stack.
       # Removing it does not break anything: the demo role's permissions already block every
       # code path that would need it.
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
-      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      # SECURITY FIX (DB-005): the application no longer connects as the cluster superuser.
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_PROVISIONING_ROLE}:${POSTGRES_PROVISIONING_PASSWORD}@postgres:5432/postgres
       PROVISION_HOST: postgres
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # CONFIG FIX (QUEUE-001): Redis runs with --requirepass, the orchestrator must send it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # FILE-001: uploads and dumps live on named volumes (they used to be lost on every re-create).
+      UPLOAD_DIR: /app/uploads
+      BACKUP_OUTPUT_DIR: /app/backups
+      # SEC-011: exactly one trusted reverse-proxy hop (Traefik) in front of this stack.
+      TRUST_PROXY_HOPS: 1
       GENERATED_BACKEND_DOCKER_DB_HOST: postgres
       GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-demo-postgres
       GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-demo-gen-net
       GENERATED_PROJECTS_ROOT: ${GENERATED_PROJECTS_HOST_PATH}
       RUN_DEMO_SEED: 1            # Triggers automated population of demo data on startup
+      # The server-side read-only guard (DemoReadOnlyGuard) is keyed on this e-mail. It is required
+      # here on purpose: without it the guard would silently switch itself off while the demo
+      # account keeps existing, leaving routes without @RequirePermissions writable by anyone
+      # holding the (public) demo code.
+      DEMO_WORKEMAIL: ${DEMO_WORKEMAIL:?DEMO_WORKEMAIL must be set in .env.demo (the demo account e-mail)}
     volumes:
+      - uploads_data:/app/uploads
+      - backups_data:/app/backups
       - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
     networks:
       - edge                     # Connected to external proxy network for web traffic
@@ -162,7 +184,7 @@ services:
           
     healthcheck:
       # Validates application health by querying HTTP endpoint via Node.js
-      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||4803)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       start_period: 30s          # Allows Node.js application startup time

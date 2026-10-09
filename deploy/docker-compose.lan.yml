@@ -8,9 +8,10 @@
 # Différences volontaires par rapport à docker-compose.prod.yml :
 #   - Pas de réseau "edge" / Traefik : le port de l'appli est publié directement
 #     sur l'hôte (PC1), donc accessible via http://<IP-LAN-de-PC1>:4803
-#   - Pas de DOCKER_HOST / socket Docker : la génération de backends via Docker
-#     (DockerRuntimeManagerService) n'est PAS activée par défaut dans ce repo -
-#     inutile de s'en soucier pour un premier déploiement.
+#   - Accès Docker : cette pile embarque son PROPRE docker-socket-proxy (service
+#     "docker-proxy", réseau privé "docker_api"). L'orchestrateur en a besoin pour
+#     construire/lancer les backends générés (DockerRuntimeManagerService). Il n'est
+#     volontairement PAS dans la pile edge : la démo publique ne doit jamais pouvoir l'atteindre.
 #   - "generated_projects" est un volume Docker nommé au lieu d'un bind-mount
 #     de chemin hôte, pour éviter les soucis de chemins Windows.
 # ==============================================================================
@@ -21,14 +22,44 @@ networks:
   internal:
     name: ${PROJECT_NAME}-lan-internal
     driver: bridge
+  # Réservé à orchestrateur <-> docker-proxy. "internal: true" = aucun accès sortant.
+  docker_api:
+    name: ${PROJECT_NAME}-lan-docker-api
+    driver: bridge
+    internal: true
 
 volumes:
   postgres_data:
     name: ${PROJECT_NAME}-lan-postgres-data
   generated_projects:
     name: ${PROJECT_NAME}-lan-generated-projects
+  uploads_data:
+    name: ${PROJECT_NAME}-lan-uploads
+  backups_data:
+    name: ${PROJECT_NAME}-lan-backups
 
 services:
+
+  # Proxy filtré vers le socket Docker de l'hôte (Tecnativa). Seul l'orchestrateur le voit.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: ${PROJECT_NAME}-lan-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      BUILD: 1
+      NETWORKS: 1
+      INFO: 1
+      PING: 1
+      POST: 1
+      # Bloqués (0 par défaut) : VOLUMES, EXEC, SWARM, SERVICES, SECRETS, SYSTEM...
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker_api
+    security_opt:
+      - "no-new-privileges:true"
 
   postgres:
     image: postgres:16-alpine
@@ -40,6 +71,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
       POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+      # SECURITY FIX (DB-005): dedicated non-superuser application role, see docker/postgres-init/02-app-role.sh
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -75,6 +109,8 @@ services:
     restart: unless-stopped
 
     depends_on:
+      docker-proxy:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -83,16 +119,41 @@ services:
     env_file:
       - ../.env.lan
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
-      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      # SECURITY FIX (DB-005): the application no longer connects as the cluster superuser.
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_PROVISIONING_ROLE}:${POSTGRES_PROVISIONING_PASSWORD}@postgres:5432/postgres
       PROVISION_HOST: postgres
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      # CONFIG FIX (QUEUE-001): Redis runs with --requirepass, the orchestrator must send it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # FILE-001: uploads and dumps live on named volumes (they used to be lost on every re-create).
+      UPLOAD_DIR: /app/uploads
+      BACKUP_OUTPUT_DIR: /app/backups
       GENERATED_PROJECTS_ROOT: /app/generated
-      # Un seul hop devant l'appli ici (rien, en fait - pas de Traefik) donc 0.
-      TRUST_PROXY_HOPS: 0
+      # 1 hop de confiance : Traefik (pile edge) relaie /generated/* vers ce port quand tu actives
+      # la route publique optionnelle (docs/DEPLOIEMENT_COMBINE_LAN_DEMO_WIREGUARD.md §6). Sans ça,
+      # tous les visiteurs publics partagent l'IP de Traefik (un seul quota du rate limiter).
+      # Un client du LAN pourrait forger X-Forwarded-For sur l'API d'admin (IP d'audit
+      # falsifiable) : risque limité à ton propre réseau local.
+      TRUST_PROXY_HOPS: 1
+
+      # --- Génération / runtime des backends via Docker (via docker-proxy) ---
+      DOCKER_HOST: tcp://docker-proxy:2375
+      # Nom sous lequel Postgres est joignable depuis le réseau dédié de chaque backend généré
+      # (enregistré comme alias réseau par DockerRuntimeManagerService).
+      GENERATED_BACKEND_DOCKER_DB_HOST: postgres
+      GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-lan-postgres
+      GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-lan-gen-net
+      # Les backends générés publient leur port sur 127.0.0.1 de l'HÔTE. Depuis ce conteneur,
+      # 127.0.0.1 = lui-même : le gateway et le health check passent donc par l'hôte.
+      GENERATED_BACKEND_GATEWAY_HOST: host.docker.internal
+      # Uploads dans un volume Docker nommé (aucun chemin hôte identique dans cette pile).
+      GENERATED_BACKEND_UPLOADS_USE_VOLUME: "true"
 
     volumes:
+      - uploads_data:/app/uploads
+      - backups_data:/app/backups
       - generated_projects:/app/generated
 
     # ⚠️ C'est cette ligne qui rend le backend accessible depuis PC2 :
@@ -101,8 +162,13 @@ services:
     ports:
       - "4803:4803"
 
+    # Résout host.docker.internal aussi sous Linux (intégré à Docker Desktop sous Windows).
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
     networks:
       - internal
+      - docker_api
 
     security_opt:
       - "no-new-privileges:true"
@@ -110,7 +176,7 @@ services:
       - ALL
 
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||4803)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       start_period: 30s

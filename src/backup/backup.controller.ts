@@ -7,6 +7,11 @@ import { BackupService } from './backup.service';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { buildContentDisposition } from '../common/utils/content-disposition.util';
+import { streamFileToResponse } from '../common/utils/stream-file.util';
+import { CurrentUser } from '../common/decorators/current-user.decorator';
+import { AuditLogService } from '../audit/audit-log.service';
+import { AUDIT_ACTIONS } from '../common/constants/audit-actions';
+import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
 
 /**
  * Admin-only endpoints to export ("dump") a database to a downloadable, gzip-compressed SQL
@@ -31,7 +36,17 @@ import { buildContentDisposition } from '../common/utils/content-disposition.uti
 @ApiBearerAuth('access-token')
 @Controller('backup')
 export class BackupController {
-    constructor(private readonly backupService: BackupService) {}
+    constructor(
+        private readonly backupService: BackupService,
+        private readonly auditLog: AuditLogService,
+    ) {}
+
+    /** SEC-027: every database export is audited. */
+    private async audit(actorId: string, scope: string, fileName?: string) {
+        await this.auditLog
+            .log({ action: AUDIT_ACTIONS.BACKUP_EXPORTED, actorId, targetType: AUDIT_TARGETS.BACKUP, targetId: scope, metadata: { fileName: fileName ?? null } })
+            .catch(() => undefined);
+    }
 
     /**
      * Dumps and downloads the orchestrator's own database (users, platforms, permissions,
@@ -39,8 +54,9 @@ export class BackupController {
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Post('orchestrator')
-    async dumpOrchestrator(@Res() res: Response) {
+    async dumpOrchestrator(@CurrentUser('userId') actorId: string, @Res() res: Response) {
         const dump = await this.backupService.dumpOrchestratorDatabase();
+        await this.audit(actorId, 'orchestrator', dump.fileName);
         await this.streamAndCleanup(dump.filePath, dump.fileName, res);
     }
 
@@ -49,8 +65,9 @@ export class BackupController {
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Post('platforms/:platformId')
-    async dumpPlatform(@Param('platformId') platformId: string, @Res() res: Response) {
+    async dumpPlatform(@CurrentUser('userId') actorId: string, @Param('platformId') platformId: string, @Res() res: Response) {
         const dump = await this.backupService.dumpPlatformDatabase(platformId);
+        await this.audit(actorId, `platform:${platformId}`, dump.fileName);
         await this.streamAndCleanup(dump.filePath, dump.fileName, res);
     }
 
@@ -73,8 +90,9 @@ export class BackupController {
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Post('platforms')
-    async dumpAllPlatforms() {
+    async dumpAllPlatforms(@CurrentUser('userId') actorId: string) {
         const { succeeded, failed } = await this.backupService.dumpAllPlatformDatabases();
+        await this.audit(actorId, 'all-platforms');
         return {
             dumps: succeeded.map((d) => ({ fileName: d.fileName, sizeBytes: d.sizeBytes, createdAt: d.createdAt })),
             failures: failed,
@@ -89,8 +107,9 @@ export class BackupController {
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Get('download')
-    async download(@Query('fileName') fileName: string, @Res() res: Response) {
+    async download(@CurrentUser('userId') actorId: string, @Query('fileName') fileName: string, @Res() res: Response) {
         const filePath = this.backupService.resolveDumpPath(fileName);
+        await this.audit(actorId, 'download', fileName);
         await this.streamAndCleanup(filePath, fileName, res);
     }
 
@@ -112,13 +131,10 @@ export class BackupController {
             'X-Content-Type-Options': 'nosniff',
         });
 
-        const stream = fs.createReadStream(filePath);
-        stream.pipe(res);
-
-        // Cleanup runs once the response is fully sent (or the connection drops) - either way
-        // the file has already been handed off (or abandoned) and doesn't need to linger.
+        // Delete the dump once the response is finished (downloaded or aborted).
         res.on('close', () => {
             void this.backupService.deleteDump(filePath);
         });
+        await streamFileToResponse(filePath, res);
     }
 }

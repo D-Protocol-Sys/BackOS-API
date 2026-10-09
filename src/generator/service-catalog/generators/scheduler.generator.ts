@@ -343,9 +343,12 @@ export async function generateSchedulerFiles(
                     BullModule.forRootAsync({
                         useFactory: () => ({
                             connection: {
-                            host: process.env.REDIS_HOST || 'localhost',
-                            port: Number(process.env.REDIS_PORT) || 6379,
+                                host: process.env.REDIS_HOST || 'localhost',
+                                port: Number(process.env.REDIS_PORT) || 6379,
+                                ...(process.env.REDIS_PASSWORD ? { password: process.env.REDIS_PASSWORD } : {}),
                             },
+                            // Keys of this platform never mix with another tenant's (or BackOS's own) queues.
+                            prefix: process.env.REDIS_KEY_PREFIX || 'bull',
                         }),
                     }),
                     BullModule.registerQueue({ name: TASKS_QUEUE_NAME }),

@@ -108,7 +108,7 @@ export function validatePlanningEntryPayload(
 
     // Ensure no forbidden fields are populated for this item type
     for (const field of rules.forbidden) {
-        if (payload[field] !== undefined) {
+        if (payload[field] !== undefined && payload[field] !== null) {
             throw new BadRequestException(
                 `The field "${field}" is not allowed for an item of type ${type}.`,
             );

@@ -24,8 +24,15 @@ export class PrismaService
      * Connection string is dynamically read from environment variables.
      */
     constructor() {
+        // DB-009: the pool size is explicit and tunable (DATABASE_POOL_MAX, default 10) instead of
+        // relying on the driver default, so several replicas can be sized against
+        // PostgreSQL's max_connections.
+        const poolMax = Number.parseInt(process.env.DATABASE_POOL_MAX ?? '', 10);
         const adapter = new PrismaPg({
             connectionString: process.env.DATABASE_URL,
+            max: Number.isFinite(poolMax) && poolMax > 0 ? poolMax : 10,
+            connectionTimeoutMillis: 10_000,
+            idleTimeoutMillis: 30_000,
         });
 
         super({ adapter });

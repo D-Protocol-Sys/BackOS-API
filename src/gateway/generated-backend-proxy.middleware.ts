@@ -77,6 +77,18 @@ export function createGeneratedBackendProxyMiddleware(
             return target ? `http://${target.host}:${target.port}` : undefined;
         },
         on: {
+            // SECURITY MITIGATION (SEC-017): generated backends are served on the orchestrator's
+            // own origin. Any HTML they return (API docs, a tenant-uploaded file...) is sandboxed
+            // into an opaque origin, so its scripts can never read BackOS cookies / storage or
+            // call the BackOS API as the logged-in user. JSON and binary responses are untouched.
+            // A dedicated domain for generated backends remains the recommended long-term setup.
+            proxyRes: (proxyRes) => {
+                const contentType = String(proxyRes.headers['content-type'] ?? '');
+                if (contentType.includes('html') || contentType.includes('svg') || contentType.includes('xml')) {
+                    proxyRes.headers['content-security-policy'] = 'sandbox allow-scripts allow-forms allow-popups allow-downloads';
+                }
+                proxyRes.headers['x-content-type-options'] = 'nosniff';
+            },
             error: (err, req, res) => {
                 logger.warn(`Proxy error for ${req.url}: ${err.message}`);
                 if (res && 'writeHead' in res && !res.headersSent) {
@@ -105,6 +117,6 @@ export function createGeneratedBackendProxyMiddleware(
             return;
         }
 
-        proxy(req, res, next);
+        void proxy(req, res, next);
     };
 }

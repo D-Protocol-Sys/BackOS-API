@@ -1,9 +1,13 @@
-import { Controller, Post, Get, Param, ForbiddenException, NotFoundException, BadRequestException, Query, UseGuards, Res } from '@nestjs/common';
+import { Controller, Post, Get, Param, Body, ForbiddenException, NotFoundException, BadRequestException, ConflictException, ServiceUnavailableException, Query, UseGuards, Res, Logger } from '@nestjs/common';
 import type { Response } from 'express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
-import { GENERATION_QUEUE_NAME } from './generator-queue.module';
+import { GENERATION_QUEUE_NAME, GENERATION_JOB_RETENTION } from './generator-queue.module';
+import { GenerateOptionsDto } from './dto/generate-options.dto';
+import { AuditLogService } from '../audit/audit-log.service';
+import { AUDIT_ACTIONS, AuditAction } from '../common/constants/audit-actions';
+import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
 import { GenerationsService } from './generations.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
@@ -11,7 +15,6 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 import type { GenerationJobData } from './generation.processor';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
-import { RuntimeManagerService } from './runtime-manager.service';
 import { ApiManifestService, type ApiManifest, } from './api-manifest.service';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 import { PlatformAccessService } from '../platforms/platform-access.service';
@@ -30,6 +33,8 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('platforms/:platformId')
 export class GeneratorController {
+    private readonly logger = new Logger(GeneratorController.name);
+
     constructor(
         @InjectQueue(GENERATION_QUEUE_NAME) private readonly queue: Queue<GenerationJobData>,
         private readonly generations: GenerationsService,
@@ -38,7 +43,15 @@ export class GeneratorController {
         private readonly runtimeManager: DockerRuntimeManagerService,
         private readonly apiManifest: ApiManifestService,
         private readonly access: PlatformAccessService,
+        private readonly auditLog: AuditLogService,
     ) {}
+
+    /** SEC-027: generation and runtime operations are audited (never blocking). */
+    private async audit(actorId: string, action: AuditAction, platformId: string, metadata: Record<string, unknown> = {}) {
+        await this.auditLog
+            .log({ action, actorId, targetType: AUDIT_TARGETS.PLATFORM, targetId: platformId, metadata: metadata as never })
+            .catch((error) => this.logger.error(`Audit log failed for ${action}.`, error instanceof Error ? error.stack : String(error)));
+    }
 
     /**
      * Triggers a new generation pipeline for a specified platform.
@@ -57,37 +70,52 @@ export class GeneratorController {
     @UseGuards(ThrottlerGuard)
     @Throttle({ default: { limit: 5, ttl: 60_000 } })
     @Post('generate')
-    async triggerGeneration(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
+    async triggerGeneration(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Body() options: GenerateOptionsDto = {},
+    ) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
+        if (platform.status === 'ARCHIVED') {
+            throw new ConflictException('An archived platform cannot be generated. Restore it first.');
+        }
 
         // Enforce authorization rules before triggering a new build
         await this.assertCanGenerate(actor, platform);
 
-        // Prevent race conditions or overlapping jobs on the same platform. Deliberately NOT
-        // `platform.status === 'GENERATING'` anymore - see GenerationsService.hasActiveGeneration()'s
-        // doc comment for why that field can no longer be trusted for this check. A generation
-        // still waiting for the owner's approval counts as active too.
-        if (await this.generations.hasActiveGeneration(platformId)) {
-            throw new ForbiddenException('A generation process is already running or awaiting approval for this platform.');
+        const needsApproval = this.needsOwnerApproval(actor, platform);
+        if (options.allowDestructiveMigration && needsApproval) {
+            throw new ForbiddenException('Only the platform owner can allow destructive migrations.');
         }
 
-        // The owner (and global GENERATOR_EXECUTE holders, i.e. BackOS staff) generate directly.
-        // Anyone else who holds the platform-level generator permission (ADMIN, or a custom role
-        // that includes it) only files a REQUEST: recorded as AWAITING_APPROVAL, NOT enqueued,
-        // until the owner approves it - same request/confirm pattern as member removal.
-        if (this.needsOwnerApproval(actor, platform)) {
-            const request = await this.generations.create(platformId, actor.userId, 'AWAITING_APPROVAL');
+        // CONCURRENCY FIX (DB-005): "no active generation" check and creation now happen in one
+        // transaction holding a per-platform advisory lock - two simultaneous clicks (or two
+        // instances) can no longer both create a generation.
+        const generation = await this.generations.createIfNoneActive(
+            platformId,
+            actor.userId,
+            needsApproval ? 'AWAITING_APPROVAL' : 'PENDING',
+        );
+        if (!generation) {
+            throw new ConflictException('A generation process is already running or awaiting approval for this platform.');
+        }
+
+        await this.audit(actor.userId, AUDIT_ACTIONS.GENERATION_REQUESTED, platformId, {
+            generationId: generation.id,
+            awaitingApproval: needsApproval,
+            allowDestructiveMigration: options.allowDestructiveMigration === true,
+        });
+
+        if (needsApproval) {
             return {
                 message: 'Generation requested. Waiting for the platform owner to approve it.',
-                generationId: request.id,
-                status: request.status,
+                generationId: generation.id,
+                status: generation.status,
             };
         }
 
-        // Create the tracking entity and dispatch the background job to the Redis queue
-        const generation = await this.generations.create(platformId, actor.userId);
-        await this.enqueue(platform, generation.id);
+        await this.enqueue(platform, generation.id, options.allowDestructiveMigration === true);
 
         return { message: 'Generation started.', generationId: generation.id, status: generation.status };
     }
@@ -104,6 +132,7 @@ export class GeneratorController {
         @CurrentUser() actor: Actor,
         @Param('platformId') platformId: string,
         @Param('generationId') generationId: string,
+        @Body() options: GenerateOptionsDto = {},
     ) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
@@ -113,12 +142,19 @@ export class GeneratorController {
         if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
 
         // Nothing else may be queued/running (the request itself is excluded from this check).
+        if (platform.status === 'ARCHIVED') {
+            throw new ConflictException('An archived platform cannot be generated. Restore it first.');
+        }
         if (await this.generations.hasActiveGeneration(platformId, generationId)) {
-            throw new ForbiddenException('Another generation is already running for this platform.');
+            throw new ConflictException('Another generation is already running for this platform.');
         }
 
         await this.generations.approve(generationId, actor.userId);
-        await this.enqueue(platform, generationId);
+        await this.enqueue(platform, generationId, options.allowDestructiveMigration === true);
+        await this.audit(actor.userId, AUDIT_ACTIONS.GENERATION_APPROVED, platformId, {
+            generationId,
+            allowDestructiveMigration: options.allowDestructiveMigration === true,
+        });
 
         return { message: 'Generation approved and started.', generationId };
     }
@@ -141,6 +177,7 @@ export class GeneratorController {
         if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
 
         await this.generations.rejectAwaiting(generationId, 'Rejected by the platform owner.');
+        await this.audit(actor.userId, AUDIT_ACTIONS.GENERATION_REJECTED, platformId, { generationId });
         return { message: 'Generation request rejected.' };
     }
 
@@ -194,6 +231,7 @@ export class GeneratorController {
                 throw new BadRequestException('Cannot cancel: No active task runner found for this generation.');
             }
             controller.abort();
+            await this.audit(actor.userId, AUDIT_ACTIONS.GENERATION_CANCELLED, platformId, { generationId });
             return { message: 'Cancellation requested, stopping process...' };
         }
 
@@ -216,6 +254,14 @@ export class GeneratorController {
         return this.generations.listForPlatform(platformId);
     }
 
+    /** Guards `limit`-style query params (RT-001 / API-002). */
+    private parseBoundedInt(raw: string | undefined, fallback: number, max: number): number {
+        if (raw === undefined) return fallback;
+        const value = Number.parseInt(raw, 10);
+        if (!Number.isFinite(value) || value < 1) throw new BadRequestException('Invalid numeric parameter.');
+        return Math.min(value, max);
+    }
+
     /**
      * Retrieves details and logs for a single generation task execution.
      *
@@ -234,13 +280,17 @@ export class GeneratorController {
         
         await this.assertCanReadGenerations(actor, platform);
 
-        return this.generations.getById(generationId);
+        // SECURITY FIX (SEC-003): the generation must belong to the platform the caller was
+        // authorized on - any generation id used to be returned (cross-tenant logs leak).
+        const generation = await this.generations.getById(generationId);
+        if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
+        return generation;
     }
     
     /**
      * Triggers the start of a platform's isolated runtime container or process.
      *
-     * RATE LIMITING: spawns a real OS child process (see `RuntimeManagerService.start()`).
+     * RATE LIMITING: spawns a real OS child process (see `DockerRuntimeManagerService.start()`).
      * Throttled explicitly for the same reason as `POST .../generate` above.
      */
     @UseGuards(ThrottlerGuard)
@@ -253,7 +303,9 @@ export class GeneratorController {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanManageRuntime(actor, platform);
-        return this.runtimeManager.start(platformId);
+        const result = await this.runtimeManager.start(platformId);
+        await this.audit(actor.userId, AUDIT_ACTIONS.RUNTIME_STARTED, platformId);
+        return result;
     }
     
     /**
@@ -271,7 +323,9 @@ export class GeneratorController {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanManageRuntime(actor, platform);
-        return this.runtimeManager.stop(platformId);
+        const result = await this.runtimeManager.stop(platformId);
+        await this.audit(actor.userId, AUDIT_ACTIONS.RUNTIME_STOPPED, platformId);
+        return result;
     }
     
     /**
@@ -299,8 +353,9 @@ export class GeneratorController {
     ) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
-        await this.assertCanView(actor, platform);
-        return this.runtimeManager.getLogs(platformId, lines ? Number(lines) : undefined);
+        // SEC-030: runtime logs can contain end users' data - restricted to runtime managers.
+        await this.assertCanManageRuntime(actor, platform);
+        return this.runtimeManager.getLogs(platformId, this.parseBoundedInt(lines, 200, 2000));
     }
 
     /**
@@ -394,12 +449,26 @@ export class GeneratorController {
     }
 
     /** Dispatches the generation job to the Redis queue (job id = generation id). */
-    private async enqueue(platform: { id: string; slug: string }, generationId: string) {
-        await this.queue.add('generate', {
-            platformId: platform.id,
-            slug: platform.slug,
-            generationId,
-        }, { jobId: generationId });
+    /**
+     * RELIABILITY FIX (QUEUE-002): if Redis is unavailable, the generation is marked FAILED
+     * instead of staying PENDING forever (which blocked every later generation of the platform).
+     */
+    private async enqueue(platform: { id: string; slug: string }, generationId: string, allowDestructiveMigration = false) {
+        try {
+            await this.queue.add('generate', {
+                platformId: platform.id,
+                slug: platform.slug,
+                generationId,
+                ...(allowDestructiveMigration ? { allowDestructiveMigration: true } : {}),
+            } satisfies GenerationJobData, { jobId: generationId, ...GENERATION_JOB_RETENTION });
+        } catch (error) {
+            this.logger.error(
+                `Could not enqueue generation ${generationId}.`,
+                error instanceof Error ? error.stack : String(error),
+            );
+            await this.generations.markFailed(generationId, 'Queue unavailable - please retry in a moment.').catch(() => undefined);
+            throw new ServiceUnavailableException('The generation queue is temporarily unavailable. Please retry.');
+        }
     }
 
     /**

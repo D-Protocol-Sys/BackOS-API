@@ -1,0 +1,36 @@
+# ==============================================================================
+# EXEMPLE (opt-in) : exposer les backends générés sur Internet via Traefik
+# ------------------------------------------------------------------------------
+# Rend joignable  https://<TON_DOMAINE_API>/generated/<slug>/...  et RIEN d'autre.
+# Traefik relaie vers la passerelle (gateway) de l'orchestrateur LAN, qui redirige vers le
+# bon backend généré.
+#
+# Pour l'activer :
+#   1. Copie ce fichier dans deploy/traefik-dynamic/ (ex. generated-gateway.yml).
+#   2. Remplace api.REPLACE_ME.duckdns.org par TON domaine d'API (un second nom DuckDNS
+#      pointant vers la même IP publique suffit).
+#   3. Si Traefik ne le prend pas en compte (surveillance des fichiers peu fiable avec les
+#      dossiers montés sous Docker Desktop/Windows) : redémarre la pile edge.
+#
+# Ce qui n'est volontairement PAS routé : /api (l'API d'administration BackOS), Swagger, tout
+# le reste. La règle = Host + PathPrefix("/generated/") et rien de plus. Teste après activation :
+#   https://<domaine-api>/api/health          -> doit répondre 404
+#   https://<domaine-api>/generated/<slug>/... -> doit répondre depuis le backend
+# ==============================================================================
+
+http:
+  routers:
+    generated-gateway:
+      rule: "Host(`api.REPLACE_ME.duckdns.org`) && PathPrefix(`/generated/`)"
+      entryPoints:
+        - websecure
+      service: lan-orchestrator
+      tls:
+        certResolver: letsencrypt
+
+  services:
+    lan-orchestrator:
+      loadBalancer:
+        servers:
+          # L'orchestrateur LAN publie 4803 sur l'hôte (docker-compose.lan.yml).
+          - url: "http://host.docker.internal:4803"

@@ -30,13 +30,22 @@ export class PortAllocatorService {
         const usedSet = new Set(usedPorts.map((p) => p.generatedPort));
 
         // Find the lowest available port within the configured network port range
+        // CONCURRENCY FIX (DB-004): `generatedPort` is now UNIQUE in the database. If another
+        // allocation grabbed the same port in between (P2002), the next free one is tried.
         for (let port = rangeStart; port <= rangeEnd; port++) {
-            if (!usedSet.has(port)) {
-                await this.prisma.platform.update({ 
-                    where: { id: platformId }, 
+            if (usedSet.has(port)) continue;
+            try {
+                await this.prisma.platform.update({
+                    where: { id: platformId },
                     data: { generatedPort: port },
                 });
                 return port;
+            } catch (error) {
+                if ((error as { code?: string })?.code === 'P2002') {
+                    usedSet.add(port);
+                    continue;
+                }
+                throw error;
             }
         }
 

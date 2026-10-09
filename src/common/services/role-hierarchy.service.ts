@@ -176,6 +176,15 @@ export class RoleHierarchyService {
      * @throws ForbiddenException if the actor's rank is not strictly senior to the role's.
      */
     async assertCanDeleteRole(actorUserId: string, roleId: string): Promise<void> {
+        await this.assertCanManageRole(actorUserId, roleId, 'delete');
+    }
+
+    /**
+     * SECURITY FIX (SEC-007): the actor must strictly outrank a role to rename it, change its
+     * permissions or delete it. `RolesService.update()` / `replacePermissions()` used to skip
+     * this check, so a holder of `roles.update` could strip or alter a more powerful role.
+     */
+    async assertCanManageRole(actorUserId: string, roleId: string, action = 'modify'): Promise<void> {
         const actorLevel = await this.getBestLevel(actorUserId);
         const role = await this.prisma.role.findUnique({ where: { id: roleId } });
 
@@ -183,7 +192,7 @@ export class RoleHierarchyService {
 
         if (actorLevel === null || actorLevel >= role.level) {
             throw new ForbiddenException(
-                'Cannot delete a role of equal or higher rank than yourself.',
+                `Cannot ${action} a role of equal or higher rank than yourself.`,
             );
         }
     }

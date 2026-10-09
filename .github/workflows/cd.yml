@@ -2,6 +2,15 @@
 # PIPELINE OVERVIEW: Continuous Deployment (CD)
 # This workflow automates building, scanning, signing, and deploying container 
 # images following DevSecOps best practices.
+#
+# TO USE THIS ON YOUR OWN FORK (nothing to edit in this file) - Settings > Secrets and variables:
+#   Secrets   : DEPLOY_HOST, DEPLOY_USER, DEPLOY_SSH_KEY, DEPLOY_PATH   (SSH access to your server,
+#               DEPLOY_PATH = folder where the repository is cloned)
+#               GHCR_USER + GHCR_TOKEN   (only if the image package is private: a token with
+#               "read:packages", used by the server to pull the image)
+#   Variables : DEMO_URL and/or PROD_URL   (public base URL, e.g. https://demo.example.com)
+# Without them the deploy jobs are skipped with a warning (the image is still built and pushed).
+# Full walkthrough: docs/README_DEPLOIEMENT.md, section "CI/CD".
 # ============================================================================
 
 name: CD
@@ -62,6 +71,10 @@ jobs:
       # Step 1: Download repository source code to the runner
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Registry image names must be lowercase; a GitHub account/repo name may contain capitals.
+      - name: Compute lowercase image name
+        run: echo "IMAGE_NAME=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_ENV"
 
       # Step 2: Initialize Docker Buildx for advanced build capabilities (caching, multi-platform)
       - name: Set up Docker Buildx
@@ -142,10 +155,10 @@ jobs:
     uses: ./.github/workflows/reusable-deploy.yml
     with:
       environment: demo              # Targets the GitHub Environment named 'demo'
-      target_url: https://demo.example.com
+      target_url: ${{ vars.DEMO_URL }}          # Repository variable (Settings > Variables)
       image_tag: ${{ needs.build-and-push.outputs.image_tag }}
       env_file: .env.demo
-      health_check_url: https://demo.example.com/api/health
+      health_check_url: ${{ vars.DEMO_URL }}/api/health
     secrets: inherit                 # Automatically pass secrets to the child workflow
 
   # ============================================================================
@@ -155,14 +168,21 @@ jobs:
     name: Deploy -> PROD
     needs: [build-and-push, deploy-demo] # Sequential dependency: run only after build and demo deploy pass
     
-    # Run only on official version release tags OR if manually triggered with the prod flag enabled
-    if: startsWith(github.ref, 'refs/tags/v') || inputs.deploy_prod == true
+    # Run only on official version release tags OR if manually triggered with the prod flag enabled.
+    # The explicit result checks matter: on a tag push the demo job is SKIPPED (it only runs on
+    # 'main'), and a job whose dependency was skipped is skipped too unless its condition says
+    # otherwise - without this, tagging a release never deployed to production.
+    if: >-
+      ${{ !cancelled()
+      && needs.build-and-push.result == 'success'
+      && (needs.deploy-demo.result == 'success' || needs.deploy-demo.result == 'skipped')
+      && (startsWith(github.ref, 'refs/tags/v') || inputs.deploy_prod == true) }}
     
     uses: ./.github/workflows/reusable-deploy.yml
     with:
       environment: production        # Targets the GitHub Environment named 'production' (can require manual approvals)
-      target_url: https://api.example.com
+      target_url: ${{ vars.PROD_URL }}          # Repository variable (Settings > Variables)
       image_tag: ${{ needs.build-and-push.outputs.image_tag }}
       env_file: .env.production
-      health_check_url: https://api.example.com/api/health
+      health_check_url: ${{ vars.PROD_URL }}/api/health
     secrets: inherit

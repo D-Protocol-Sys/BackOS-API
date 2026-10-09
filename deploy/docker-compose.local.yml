@@ -37,11 +37,44 @@ networks:
     name: ${PROJECT_NAME}-local-internal
     driver: bridge
 
+  # SECURITY FIX (SEC-010): private network orchestrator <-> docker-proxy, no outbound access.
+  docker_api:
+    name: ${PROJECT_NAME}-local-docker-api
+    driver: bridge
+    internal: true
+
 volumes:
   postgres_data:
     name: ${PROJECT_NAME}-local-postgres-data
+  uploads_data:
+    name: ${PROJECT_NAME}-local-uploads
+  backups_data:
+    name: ${PROJECT_NAME}-local-backups
 
 services:
+
+  # SECURITY FIX (SEC-010): the orchestrator used to mount the raw /var/run/docker.sock
+  # (read-write) - i.e. root on the host for anyone who compromises it. It now goes through the
+  # same filtered docker-socket-proxy as the prod and LAN stacks.
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    container_name: ${PROJECT_NAME}-local-docker-proxy
+    restart: unless-stopped
+    environment:
+      CONTAINERS: 1
+      IMAGES: 1
+      BUILD: 1
+      NETWORKS: 1
+      INFO: 1
+      PING: 1
+      POST: 1
+      # Blocked by default (0): SWARM, SERVICES, SECRETS, VOLUMES, SYSTEM, EXEC
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks:
+      - docker_api
+    security_opt:
+      - "no-new-privileges:true"
 
   postgres:
     image: postgres:16-alpine
@@ -53,6 +86,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE}
       POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD}
+      # SECURITY FIX (DB-005): dedicated non-superuser application role, see docker/postgres-init/02-app-role.sh
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:?POSTGRES_APP_USER must be set}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:?POSTGRES_APP_PASSWORD must be set}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ../docker/postgres-init:/docker-entrypoint-initdb.d:ro
@@ -88,6 +124,8 @@ services:
     restart: unless-stopped
 
     depends_on:
+      docker-proxy:
+        condition: service_started
       postgres:
         condition: service_healthy
       redis:
@@ -96,27 +134,31 @@ services:
     env_file:
       - ../.env.local
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
-      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/postgres
+      # SECURITY FIX (DB-005): the application no longer connects as the cluster superuser.
+      DATABASE_URL: postgresql://${POSTGRES_APP_USER}:${POSTGRES_APP_PASSWORD}@postgres:5432/${POSTGRES_DB}?schema=public
+      POSTGRES_PROVISIONING_URL: postgresql://${POSTGRES_PROVISIONING_ROLE}:${POSTGRES_PROVISIONING_PASSWORD}@postgres:5432/postgres
       PROVISION_HOST: postgres
       REDIS_HOST: redis
       REDIS_PORT: 6379
-      # No shared docker-proxy here (that's an `edge`-stack-only concept) - the
-      # generator's "start/stop runtime" feature talks directly to this host's own
-      # Docker daemon via the socket mounted below.
+      # CONFIG FIX (QUEUE-001): Redis runs with --requirepass, the orchestrator must send it.
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      # FILE-001: uploads and dumps live on named volumes (they used to be lost on every re-create).
+      UPLOAD_DIR: /app/uploads
+      BACKUP_OUTPUT_DIR: /app/backups
+      # The generator's "start/stop runtime" feature talks to this host's Docker daemon
+      # through the stack's own filtered docker-socket-proxy.
+      DOCKER_HOST: tcp://docker-proxy:2375
       GENERATED_BACKEND_DOCKER_DB_HOST: postgres
       GENERATED_BACKEND_DB_CONTAINER_NAME: ${PROJECT_NAME}-local-postgres
       GENERATED_BACKEND_DOCKER_NETWORK: ${PROJECT_NAME}-local-gen-net
       GENERATED_PROJECTS_ROOT: ${GENERATED_PROJECTS_HOST_PATH}
     volumes:
+      - uploads_data:/app/uploads
+      - backups_data:/app/backups
       - ${GENERATED_PROJECTS_HOST_PATH}:${GENERATED_PROJECTS_HOST_PATH}
-      # Grants the generator feature (start/stop/inspect generated platform runtimes)
-      # access to this machine's own Docker daemon - the direct equivalent of what the
-      # shared `docker-proxy` service provides for demo/prod. Fine for a single-machine,
-      # single-tenant internal deployment; revisit if this ever needs to be multi-tenant.
-      - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - internal
+      - docker_api
     ports:
       # Reachable at http://localhost:${LOCAL_PORT} from this machine, or
       # http://<this-machine's-LAN-IP>:${LOCAL_PORT} from another device on your network.
@@ -124,9 +166,11 @@ services:
 
     security_opt:
       - "no-new-privileges:true"
+    cap_drop:
+      - ALL
 
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:'+(process.env.PORT||4803)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s
       timeout: 3s
       start_period: 30s

@@ -98,10 +98,13 @@ export class CryptoService {
 
         const [ivHex, tagHex, encryptedHex] = parts;
 
+        // SEC-021: the authentication tag length is enforced (16 bytes) - Node otherwise accepts
+        // truncated tags down to 4 bytes.
         const decipher = createDecipheriv(
             this.algorithm,
             this.derivedKey,
             Buffer.from(ivHex, 'hex'),
+            { authTagLength: 16 },
         );
 
         // Set auth tag to verify data integrity before decryption
@@ -136,7 +139,7 @@ export class CryptoService {
      * @returns A colon-separated string containing the IV, authentication tag, and ciphertext.
      */
     encryptWithRawKey(plainText: string, encryptionKeyHex: string): string {
-        const key = Buffer.from(encryptionKeyHex, 'hex');
+        const key = this.parseRawKey(encryptionKeyHex);
         const iv = randomBytes(12);
         const cipher = createCipheriv(this.algorithm, key, iv);
 
@@ -154,13 +157,13 @@ export class CryptoService {
      * @throws BadRequestException if the input string format is invalid.
      */
     decryptWithRawKey(payload: string, encryptionKeyHex: string): string {
-        const key = Buffer.from(encryptionKeyHex, 'hex');
+        const key = this.parseRawKey(encryptionKeyHex);
         const [ivB64, authTagB64, dataB64] = payload.split(':');
         if (!ivB64 || !authTagB64 || !dataB64) {
             throw new BadRequestException('Invalid ciphertext format. Expected IV:TAG:DATA (base64).');
         }
 
-        const decipher = createDecipheriv(this.algorithm, key, Buffer.from(ivB64, 'base64'));
+        const decipher = createDecipheriv(this.algorithm, key, Buffer.from(ivB64, 'base64'), { authTagLength: 16 });
         decipher.setAuthTag(Buffer.from(authTagB64, 'base64'));
 
         const decrypted = Buffer.concat([
@@ -168,5 +171,13 @@ export class CryptoService {
             decipher.final(),
         ]);
         return decrypted.toString('utf8');
+    }
+
+    /** SEC-021: a malformed key (non-hex, wrong length) fails loudly instead of being silently truncated. */
+    private parseRawKey(encryptionKeyHex: string): Buffer {
+        if (!/^[0-9a-fA-F]{64}$/.test(encryptionKeyHex)) {
+            throw new Error('ENCRYPTION_KEY must be exactly 64 hexadecimal characters.');
+        }
+        return Buffer.from(encryptionKeyHex, 'hex');
     }
 }

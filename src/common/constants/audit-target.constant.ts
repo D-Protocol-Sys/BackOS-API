@@ -52,6 +52,8 @@ export const AUDIT_TARGETS = {
      * Target type for actions affecting Generation jobs or assets.
      */
     GENERATION: 'Generation',
+
+    BACKUP: 'Backup',
 } as const;
 
 /**

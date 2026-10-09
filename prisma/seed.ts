@@ -1,5 +1,7 @@
 import 'dotenv/config';
 import * as crypto from 'crypto';
+import * as fs from 'fs';
+import * as path from 'path';
 import * as bcrypt from 'bcrypt';
 import { PrismaClient, UserStatus } from './generated/prisma/client';
 import { PrismaPg } from '@prisma/adapter-pg';
@@ -154,11 +156,26 @@ async function main() {
             },
         });
 
-        console.log('\n🔑 Initial Owner account created — Complete activation using the details below:');
-        console.log(`   Work Email     : ${genesisUser.workEmail}`);
-        console.log(`   Personal Email : ${genesisUser.personalEmail}`);
-        console.log(`   Activation Link: ${appConf.frontendUrl}/activate?token=${rawToken}`);
-        console.log(`   OTP Code       : ${code}\n`);
+        const activationDetails = [
+            '🔑 Initial Owner account created — Complete activation using the details below:',
+            `   Work Email     : ${genesisUser.workEmail}`,
+            `   Personal Email : ${genesisUser.personalEmail}`,
+            `   Activation Link: ${appConf.frontendUrl}/activate?token=${rawToken}`,
+            `   OTP Code       : ${code}`,
+        ].join('\n');
+
+        // SECURITY FIX (SEC-031): in production the activation secrets used to be printed to
+        // stdout, i.e. into container logs kept by Docker / the log pipeline. They are now written
+        // to a 0600 file (SEED_ACTIVATION_FILE, default ./owner-activation.txt) that the operator
+        // reads once and deletes. Outside production (dev, tests - the e2e setup parses stdout)
+        // they are still printed.
+        if (process.env.NODE_ENV === 'production') {
+            const target = path.resolve(process.env.SEED_ACTIVATION_FILE || 'owner-activation.txt');
+            fs.writeFileSync(target, activationDetails + '\n', { mode: 0o600 });
+            console.log(`\n🔑 Initial Owner account created. Activation details written to ${target} (mode 0600) - read it, then delete it.\n`);
+        } else {
+            console.log(`\n${activationDetails}\n`);
+        }
     }
 
     console.log('✅ Database seed completed: Permissions, roles, and initial system user created.');

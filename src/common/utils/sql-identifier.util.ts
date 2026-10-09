@@ -32,3 +32,18 @@ export function toSqlIdentifier(input: string, fallbackPrefix: 'entity' | 'field
     return result || fallbackPrefix;
     
 }
+/**
+ * GEN-006: table names that would collide with folders/files or Prisma models written by the
+ * generator itself (core modules and optional services). An entity whose name maps to one of
+ * them gets a suffix, instead of silently overwriting generated security code (e.g. an entity
+ * called "users" used to overwrite the Auth & User service's `src/users/*`).
+ */
+export const RESERVED_TABLE_NAMES = new Set([
+    'app', 'main', 'auth', 'common', 'mail', 'tasks', 'users', 'health', 'uploads', 'prisma', 'generated',
+    'app_user', 'app_users', 'app_user_profile', 'app_user_profiles', 'app_internal_account', 'app_internal_accounts',
+    'app_signup_request', 'app_signup_requests', 'app_otp_code', 'app_otp_codes', 'app_refresh_token',
+    'app_refresh_tokens', 'scheduled_task', 'scheduled_tasks',
+]);
+
+/** GEN-006: Prisma field names always generated on every model. */
+export const RESERVED_FIELD_NAMES = new Set(['id', 'createdAt', 'updatedAt', 'publishAt', 'unpublishAt']);

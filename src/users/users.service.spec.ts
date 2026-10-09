@@ -20,12 +20,20 @@ describe('UsersService', () => {
         prismaMock = {
             user: { findUnique: jest.fn(), delete: jest.fn().mockResolvedValue({}) },
             userRole: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn() },
-            planning: { count: jest.fn() },
+            planning: { 
+                count: jest.fn(), 
+                deleteMany: jest.fn().mockResolvedValue({ count: 0 })
+            },
             planningEntry: { count: jest.fn() },
+            // hardDeleteUser() now also removes the user's uploaded files from disk (FILE-002).
+            fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
+            $transaction: jest.fn().mockImplementation((cb) => 
+                Array.isArray(cb) ? Promise.all(cb) : cb(prismaMock)
+            ),
         };
         roleHierarchyMock = { assertSeniorToTarget: jest.fn().mockResolvedValue(undefined) };
         auditLogMock = { log: jest.fn().mockResolvedValue(undefined) };
-        authServiceMock = { verifyStepUpTotp: jest.fn() };
+        authServiceMock = { verifyStepUpTotp: jest.fn(), revokeAllRefreshTokens: jest.fn().mockResolvedValue(0) };
 
         service = new UsersService(
             prismaMock,

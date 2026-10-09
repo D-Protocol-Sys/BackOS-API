@@ -7,7 +7,8 @@ import { Prisma } from '@prismamodels/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateFieldDto } from './dto/create-field.dto';
 import { UpdateFieldDto } from './dto/update-field.dto';
-import { toSqlIdentifier } from '../common/utils/sql-identifier.util';
+import { toSqlIdentifier, RESERVED_FIELD_NAMES } from '../common/utils/sql-identifier.util';
+import { toCamelCase } from '../common/utils/case.util';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 
 /**
@@ -67,6 +68,7 @@ export class FieldsService {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.FIELD_CREATE);
         await this.findEntityOrThrow(platformId, entityId);
 
+        this.assertSafeDefaultValue(dto.defaultValue);
         this.assertArrayFieldIsCoherent(dto.isArray ?? false, dto.unique ?? false, dto.defaultValue);
         await this.assertEnumFieldIsCoherent(platformId, dto.type, dto.enumDefinitionId, dto.defaultValue);
 
@@ -128,6 +130,7 @@ export class FieldsService {
         }
 
         // Validate the RESULTING field (current values overlaid with this patch), not just the patch.
+        this.assertSafeDefaultValue(dto.defaultValue);
         this.assertArrayFieldIsCoherent(
             dto.isArray ?? field.isArray,
             dto.unique ?? field.unique,
@@ -219,6 +222,17 @@ export class FieldsService {
      * scalar list is not supported, and a custom default cannot be expressed through the single-
      * value `defaultValue` string (an empty list is always the implicit default).
      */
+    /**
+     * A default value is written into `schema.prisma` as a string literal: control characters
+     * (a newline in particular) broke the generated schema and every later generation.
+     */
+    private assertSafeDefaultValue(defaultValue: string | null | undefined): void {
+        // eslint-disable-next-line no-control-regex -- matching control characters is the point
+        if (typeof defaultValue === 'string' && /[\u0000-\u001f\u007f]/.test(defaultValue)) {
+            throw new BadRequestException('A default value cannot contain line breaks or control characters.');
+        }
+    }
+
     private assertArrayFieldIsCoherent(isArray: boolean, unique: boolean, defaultValue: string | null | undefined): void {
         if (!isArray) return;
         if (unique) {
@@ -351,12 +365,17 @@ export class FieldsService {
      */
     private async generateUniqueColumn(entityId: string, name: string): Promise<string> {
         const base = toSqlIdentifier(name, 'field');
+
+        // GEN-006: the generated Prisma field is the camelCase of the column, so `field_2a` and
+        // `field2a` (or a user column `created_at` vs the built-in `createdAt`) used to produce a
+        // duplicated field and a broken build. Uniqueness is now checked on the Prisma name too.
+        const existing = await this.prisma.field.findMany({ where: { entityId }, select: { column: true } });
+        const takenColumns = new Set(existing.map((field) => field.column));
+        const takenFieldNames = new Set([...RESERVED_FIELD_NAMES, ...existing.map((field) => toCamelCase(field.column))]);
+
         let candidate = base;
         let counter = 2;
-        
-        while (
-            await this.prisma.field.findUnique({ where: { entityId_column: { entityId, column: candidate } } })
-        ) {
+        while (takenColumns.has(candidate) || takenFieldNames.has(toCamelCase(candidate))) {
             candidate = `${base}_${counter}`;
             counter++;
         }

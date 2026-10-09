@@ -3,6 +3,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prismamodels/client';
 import { AuditAction } from '../common/constants/audit-actions';
 import { AuditTarget } from '../common/constants/audit-target.constant';
+import { currentRequestId } from '../common/request-context/request-context';
 
 /**
  * Interface representing HTTP and network metadata associated with a request.
@@ -85,7 +86,8 @@ export class AuditLogService {
                 metadata: entry.metadata ?? {},
                 ipAddress: entry.context?.ipAddress,
                 userAgent: entry.context?.userAgent,
-                requestId: entry.requestId,
+                // SEC-027: correlated with the HTTP request that caused it.
+                requestId: entry.requestId ?? currentRequestId(),
             },
         });
     }

@@ -6,7 +6,8 @@ import {
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEntityDto } from './dto/create-entity.dto';
 import { UpdateEntityDto } from './dto/update-entity.dto';
-import { toSqlIdentifier } from '../common/utils/sql-identifier.util';
+import { toSqlIdentifier, RESERVED_TABLE_NAMES } from '../common/utils/sql-identifier.util';
+import { toPascalCase } from '../common/utils/case.util';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 
 /**
@@ -255,16 +256,19 @@ export class EntitiesService {
      * (`_2`, `_3`, etc.) upon detecting existing name collisions within the same platform scope.
      */
     private async generateUniqueTableName(platformId: string, name: string): Promise<string> {
-        const base = toSqlIdentifier(name, 'entity');
+        let base = toSqlIdentifier(name, 'entity');
+        // GEN-006: never reuse a name owned by the generator (see RESERVED_TABLE_NAMES).
+        if (RESERVED_TABLE_NAMES.has(base)) base = `${base}_entity`;
+
+        // GEN-006: uniqueness is checked on the table name AND on the Prisma model name derived
+        // from it - `post_2` and `post2` are different tables but the same model `Post2`.
+        const existing = await this.prisma.entity.findMany({ where: { platformId }, select: { tableName: true } });
+        const takenTables = new Set(existing.map((entity) => entity.tableName));
+        const takenModels = new Set(existing.map((entity) => toPascalCase(entity.tableName)));
+
         let candidate = base;
         let counter = 2;
-        
-        // Loop terminates when a unique table name candidate is found in the database index
-        while (
-            await this.prisma.entity.findUnique({ 
-                where: { platformId_tableName: { platformId, tableName: candidate } }, 
-            })
-        ) {
+        while (takenTables.has(candidate) || takenModels.has(toPascalCase(candidate)) || RESERVED_TABLE_NAMES.has(candidate)) {
             candidate = `${base}_${counter}`;
             counter++;
         }

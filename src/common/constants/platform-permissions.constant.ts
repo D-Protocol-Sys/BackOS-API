@@ -40,22 +40,11 @@ export const PLATFORM_PERMISSIONS = {
     PLANNING_READ: 'planning.read',
     PLANNING_MANAGE: 'planning.manage',
 
-    // Clients & contracts
-    CLIENT_CREATE: 'client.create',
-    CLIENT_READ: 'client.read',
-    CLIENT_UPDATE: 'client.update',
-    CLIENT_DELETE: 'client.delete',
-    CLIENT_MANAGE_TESTIMONIALS: 'client.manage-testimonials',
-    CONTRACT_CREATE: 'contract.create',
-    CONTRACT_READ: 'contract.read',
-    CONTRACT_UPDATE: 'contract.update',
-    CONTRACT_DELETE: 'contract.delete',
-
-    // Projects
-    PROJECT_CREATE: 'project.create',
-    PROJECT_READ: 'project.read',
-    PROJECT_UPDATE: 'project.update',
-    PROJECT_DELETE: 'project.delete',
+    // ARCH-001: the client.*, contract.* and project.* keys were removed. Clients, contracts and
+    // projects are GLOBAL resources guarded by global permissions (see permissions.constant.ts);
+    // no code ever checked these per-platform keys, so granting them in a custom role had no
+    // effect and was misleading. PlatformPermissionsSyncService prunes them from the database
+    // (and from every custom role) on the next boot.
 
 } as const;
 
@@ -81,21 +70,6 @@ export const PLATFORM_PERMISSION_DESCRIPTIONS: Record<PlatformPermissionKey, str
     [PLATFORM_PERMISSIONS.FILE_MANAGE]: 'Delete or manage any uploaded file on this platform, regardless of ownership',
     [PLATFORM_PERMISSIONS.PLANNING_READ]: "View this platform's planning, regardless of membership",
     [PLATFORM_PERMISSIONS.PLANNING_MANAGE]: 'Create, edit, or delete this platform planning entries',
-
-    [PLATFORM_PERMISSIONS.CLIENT_CREATE]: 'Create a new client profile on this platform',
-    [PLATFORM_PERMISSIONS.CLIENT_READ]: 'View client profile details on this platform',
-    [PLATFORM_PERMISSIONS.CLIENT_UPDATE]: 'Update client profile details on this platform',
-    [PLATFORM_PERMISSIONS.CLIENT_DELETE]: 'Permanently delete a client profile on this platform',
-    [PLATFORM_PERMISSIONS.CLIENT_MANAGE_TESTIMONIALS]: 'Approve, edit, or toggle visibility of client testimonials on this platform',
-    [PLATFORM_PERMISSIONS.CONTRACT_CREATE]: 'Draft and create a new contract on this platform',
-    [PLATFORM_PERMISSIONS.CONTRACT_READ]: 'View contract details on this platform',
-    [PLATFORM_PERMISSIONS.CONTRACT_UPDATE]: 'Update contract parameters on this platform',
-    [PLATFORM_PERMISSIONS.CONTRACT_DELETE]: 'Delete a contract record on this platform',
-
-    [PLATFORM_PERMISSIONS.PROJECT_CREATE]: 'Create a new project on this platform',
-    [PLATFORM_PERMISSIONS.PROJECT_READ]: "View any project's details on this platform",
-    [PLATFORM_PERMISSIONS.PROJECT_UPDATE]: "Update any project's details on this platform",
-    [PLATFORM_PERMISSIONS.PROJECT_DELETE]: 'Delete a project on this platform',
 
 };
 

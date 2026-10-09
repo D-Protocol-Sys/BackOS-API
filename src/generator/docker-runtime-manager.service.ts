@@ -6,9 +6,14 @@ import * as fsp from 'fs/promises';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlatformGatewayService } from '../gateway/platform-gateway.service';
 import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from './generated-backend.constants';
+import { redactSecrets } from '../common/utils/command-runner.util';
+
+const DOCKER_COMMAND_TIMEOUT_MS = 60_000;
+const DOCKER_BUILD_TIMEOUT_MS = 15 * 60_000;
+const MAX_CAPTURED_OUTPUT = 2 * 1024 * 1024;
 
 /**
- * Drop-in alternative to `RuntimeManagerService` (same public method shapes: `start`, `stop`,
+ * Docker-based runtime manager (formerly a drop-in alternative to the removed native-process runtime; same public method shapes: `start`, `stop`,
  * `getStatus`, `getLogs`) that runs every generated platform backend as its OWN Docker
  * container instead of a bare `child_process.spawn` on the shared host.
  *
@@ -24,12 +29,9 @@ import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from '
  *   - Still ONLY reachable via `127.0.0.1:<allocatedPort>` on the host - identical external
  *     contract to the process-based runtime, so `PlatformGatewayService` needs no changes.
  *
- * NOT WIRED IN BY DEFAULT: swapping this in for `RuntimeManagerService` is an infrastructure
- * decision (requires Docker installed on the host, and the orchestrator process to have access
- * to the Docker socket/CLI) that shouldn't happen silently as part of a bug-fix pass. To enable
- * it, bind this class instead of `RuntimeManagerService` wherever it's injected
- * (`GeneratorController`, `GeneratorModule`) - the method signatures are intentionally
- * identical so that swap is the only change needed.
+ * This is THE runtime implementation: every runtime route (GeneratorController), the
+ * generation pipeline and the platform purge use it. (The former native-process
+ * RuntimeManagerService was never routed to and has been removed - ARCH-005.)
  *
  * PREREQUISITE: the `docker` CLI must be on PATH and usable by the user running this Node
  * process (either in the `docker` group, or via rootless Docker - avoid giving the orchestrator
@@ -97,14 +99,23 @@ export class DockerRuntimeManagerService {
     private async ensureDatabaseReachableOnNetwork(networkName: string): Promise<void> {
         const dbContainerName = this.configService.get<string>('GENERATED_BACKEND_DB_CONTAINER_NAME', '');
         if (!dbContainerName) return;
-        await this.runDockerCommand(['network', 'connect', networkName, dbContainerName], undefined, { ignoreFailure: true });
+        // The DB is attached under its CONTAINER name only, but the generated project's DATABASE_URL
+        // may carry a different hostname (e.g. the Compose service name `postgres`, from
+        // PROVISION_HOST) - that alias only exists on the orchestrator's own Compose network, not on
+        // this per-platform one. Registering GENERATED_BACKEND_DOCKER_DB_HOST as a network-scoped
+        // alias makes that hostname resolvable here too. (Networks created by an earlier version
+        // keep their old attachment: recreate the network once - `docker network rm <name>` after
+        // stopping the platform - to pick the alias up.)
+        const dbAlias = this.configService.get<string>('GENERATED_BACKEND_DOCKER_DB_HOST');
+        const aliasArgs = dbAlias && dbAlias !== 'host.docker.internal' && dbAlias !== dbContainerName ? ['--alias', dbAlias] : [];
+        await this.runDockerCommand(['network', 'connect', ...aliasArgs, networkName, dbContainerName], undefined, { ignoreFailure: true });
     }
 
     /**
      * BUGFIX (generated backend unreachable ONLY under Docker, works fine under
-     * `RuntimeManagerService`): `envTemplate()` writes `DATABASE_URL`/`SHADOW_DATABASE_URL` into
+     * `DockerRuntimeManagerService`): `envTemplate()` writes `DATABASE_URL`/`SHADOW_DATABASE_URL` into
      * the generated project's `.env` using `database.provisioningHost`, which defaults to
-     * `localhost` - correct for `RuntimeManagerService`, whose child process shares the
+     * `localhost` - correct for `DockerRuntimeManagerService`, whose child process shares the
      * orchestrator's own network namespace (spawned directly on the host). A Docker container on
      * its own bridge network does NOT share that namespace: its own `localhost` resolves to the
      * container itself, not wherever Postgres actually lives. The generated backend's Prisma
@@ -145,18 +156,33 @@ export class DockerRuntimeManagerService {
      * reachability (see `dockerReachableDatabaseUrl()`) without needing to re-derive either value
      * from the database/provisioning layer itself.
      */
-    private async readEnvDatabaseUrls(projectPath: string): Promise<{ databaseUrl?: string; shadowDatabaseUrl?: string }> {
-        const envPath = path.join(projectPath, '.env');
-        const content = await fsp.readFile(envPath, 'utf-8');
-        const result: { databaseUrl?: string; shadowDatabaseUrl?: string } = {};
-        for (const line of content.split('\n')) {
-            const match = line.match(/^(DATABASE_URL|SHADOW_DATABASE_URL)=(.*)$/);
+    /**
+     * Parses the generated project's `.env` (written by `envTemplate()`, where values needing
+     * quotes are JSON-encoded) into plain key/value pairs.
+     */
+    private async readProjectEnv(projectPath: string): Promise<Record<string, string>> {
+        const content = await fsp.readFile(path.join(projectPath, '.env'), 'utf-8');
+        const env: Record<string, string> = {};
+        for (const rawLine of content.split('\n')) {
+            const line = rawLine.trim();
+            if (!line || line.startsWith('#')) continue;
+            const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
             if (!match) continue;
-            const value = match[2].trim().replace(/^"(.*)"$/, '$1');
-            if (match[1] === 'DATABASE_URL') result.databaseUrl = value;
-            if (match[1] === 'SHADOW_DATABASE_URL') result.shadowDatabaseUrl = value;
+            let value = match[2];
+            if (value.startsWith('"') && value.endsWith('"') && value.length >= 2) {
+                try {
+                    value = JSON.parse(value);
+                } catch {
+                    value = value.slice(1, -1);
+                }
+            }
+            if (/[\r\n]/.test(value)) {
+                this.logger.warn(`Skipping multi-line environment value "${match[1]}" (unsupported by Docker env files).`);
+                continue;
+            }
+            env[match[1]] = value;
         }
-        return result;
+        return env;
     }
 
     /**
@@ -170,9 +196,29 @@ export class DockerRuntimeManagerService {
      * START is a reasonable follow-up, but touches the core generation pipeline rather than
      * just the runtime layer, so it is deliberately left out of this pass.
      */
-    private async buildImage(platformId: string, slug: string, projectPath: string): Promise<void> {
+    private async buildImage(platformId: string, slug: string, projectPath: string, schemaVersion: number): Promise<void> {
         const tag = this.imageTag(slug);
-        await this.runDockerCommand(['build', '-t', tag, projectPath], platformId);
+        // PERF FIX (RT-001): the image used to be rebuilt on every start, synchronously inside the
+        // HTTP request. It is now rebuilt only when missing or built from an older generation
+        // (schema version label). `buildImageForGeneration()` also pre-builds it right after a
+        // successful generation.
+        const builtVersion = await this.runDockerCommand(
+            ['image', 'inspect', '-f', '{{ index .Config.Labels "backos.schema-version" }}', tag],
+            undefined,
+            { capture: true, ignoreFailure: true },
+        );
+        if (builtVersion?.trim() === String(schemaVersion)) return;
+
+        await this.runDockerCommand(
+            ['build', '--label', `backos.schema-version=${schemaVersion}`, '-t', tag, projectPath],
+            platformId,
+            { timeoutMs: DOCKER_BUILD_TIMEOUT_MS },
+        );
+    }
+
+    /** Pre-builds the image of a freshly generated platform (called by the generation pipeline). */
+    async buildImageForGeneration(platformId: string, slug: string, schemaVersion: number): Promise<void> {
+        await this.buildImage(platformId, slug, this.resolveProjectPath(slug), schemaVersion);
     }
 
     /**
@@ -209,7 +255,7 @@ export class DockerRuntimeManagerService {
         }
 
         const projectPath = this.resolveProjectPath(platform.slug);
-        await this.buildImage(platformId, platform.slug, projectPath);
+        await this.buildImage(platformId, platform.slug, projectPath, platform.schemaVersion);
 
         const name = this.containerName(platform.slug);
         // Remove any stale, stopped container left over from a previous run under the same
@@ -227,6 +273,7 @@ export class DockerRuntimeManagerService {
         const boundHost = this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1');
         const memoryLimit = this.configService.get<string>('GENERATED_BACKEND_MEMORY_LIMIT', '256m');
         const cpuLimit = this.configService.get<string>('GENERATED_BACKEND_CPU_LIMIT', '0.5');
+        const apiDocsEnabled = this.isApiDocsEnabled();
 
         // SECURITY: dedicated per-platform network - see ensurePlatformNetwork()'s doc comment
         // for why this replaced a single network shared by every tenant's generated backend.
@@ -239,64 +286,83 @@ export class DockerRuntimeManagerService {
         // rootfs, and why this must be a bind mount rather than relying on the container's own
         // filesystem (anything written to a plain container-internal path would be silently
         // lost on the next `docker rm` in `start()`/`stop()`).
+        //
+        // GENERATED_BACKEND_UPLOADS_USE_VOLUME=true swaps the bind mount for a Docker NAMED volume
+        // (`<container>-uploads`). Needed when the orchestrator itself runs in a container without
+        // a host-path-identical mount (e.g. the Windows/LAN stack, where `generated_projects` is a
+        // named volume): the `-v <path>` source is resolved by the DOCKER DAEMON, not by this
+        // process, so a container-internal path would silently become a fresh root-owned directory
+        // on the daemon's side and every upload would fail with a permission error. A named volume
+        // has no host path at all, and is initialised with the ownership of `/app/uploads` in the
+        // image (see dockerfileTemplate()).
+        const useUploadsVolume =
+            String(this.configService.get<string | boolean>('GENERATED_BACKEND_UPLOADS_USE_VOLUME', false)) === 'true';
         const uploadsHostDir = path.join(projectPath, 'uploads');
-        await fsp.mkdir(uploadsHostDir, { recursive: true });
+        if (!useUploadsVolume) await fsp.mkdir(uploadsHostDir, { recursive: true });
         // Bind mounts keep the HOST directory's ownership/permissions inside the container -
         // the image's non-root `app` user (see dockerfileTemplate()) has no guarantee its UID
         // matches whatever created this directory on the host, so without this the container
         // could get a permission-denied error on every upload despite the mount being `rw`.
         // The directory only ever holds already-validated, randomly-named uploads served back
         // read-only by everyone except this container, so the broadened permission is low-risk.
-        await fsp.chmod(uploadsHostDir, 0o777);
+        if (!useUploadsVolume) await fsp.chmod(uploadsHostDir, 0o777);
 
         // BUGFIX: see dockerReachableDatabaseUrl() - the .env file's DATABASE_URL/SHADOW_DATABASE_URL
-        // point at `localhost`, which is only correct for RuntimeManagerService's host-spawned
+        // point at `localhost`, which is only correct for DockerRuntimeManagerService's host-spawned
         // process, not for this container. Rewritten here and passed as explicit `-e` overrides
         // below (same pattern as the existing PORT/HOST overrides).
-        const envDbUrls = await this.readEnvDatabaseUrls(projectPath);
-        const dockerEnvOverrides: string[] = [];
-        if (envDbUrls.databaseUrl) {
-            dockerEnvOverrides.push('-e', `DATABASE_URL=${this.dockerReachableDatabaseUrl(envDbUrls.databaseUrl)}`);
+        // RELIABILITY FIX (GEN-008): the project's `.env` quotes some values (JSON-style), but
+        // `docker --env-file` takes values literally - quotes included - so secrets containing
+        // special characters reached the container altered. The file is parsed here and
+        // rewritten in Docker's own literal format into a short-lived, owner-only file.
+        const containerEnv = await this.readProjectEnv(projectPath);
+        delete containerEnv.SHADOW_DATABASE_URL; // never needed at runtime
+        if (containerEnv.DATABASE_URL) {
+            containerEnv.DATABASE_URL = this.dockerReachableDatabaseUrl(containerEnv.DATABASE_URL);
         }
-        if (envDbUrls.shadowDatabaseUrl) {
-            dockerEnvOverrides.push('-e', `SHADOW_DATABASE_URL=${this.dockerReachableDatabaseUrl(envDbUrls.shadowDatabaseUrl)}`);
-        }
+        Object.assign(containerEnv, {
+            PORT: String(GENERATED_BACKEND_CONTAINER_PORT),
+            HOST: '0.0.0.0',
+            API_DOCS_ENABLED: String(apiDocsEnabled),
+            UPLOADS_DIR: '/app/uploads',
+        });
+        const dockerEnvFile = path.join(projectPath, '.env.docker');
+        await fsp.writeFile(
+            dockerEnvFile,
+            Object.entries(containerEnv).map(([key, value]) => `${key}=${value}`).join('\n') + '\n',
+            { encoding: 'utf-8', mode: 0o600 },
+        );
 
         const args = [
             'run',
             '-d',
             '--name', name,
-            '--restart', 'unless-stopped',
-            // Loopback-only publish, exactly like the process-based runtime's HOST binding -
-            // the container is never reachable from outside this machine directly.
+            // RT-002: bounded restarts instead of an infinite crash loop.
+            '--restart', 'on-failure:5',
+            // Loopback-only publish: the container is never reachable from outside this machine directly.
             '-p', `${boundHost}:${platform.generatedPort}:${GENERATED_BACKEND_CONTAINER_PORT}`,
             '--network', network,
-            // Makes `host.docker.internal` resolve to the Docker host on Linux too (already
-            // built in on Docker Desktop for Mac/Windows, where this flag is a harmless no-op) -
-            // required for dockerReachableDatabaseUrl()'s rewritten DATABASE_URL to actually
-            // connect when the database lives on the orchestrator's own host machine.
             '--add-host', 'host.docker.internal:host-gateway',
             '--memory', memoryLimit,
             '--cpus', cpuLimit,
+            // RT-002: hardening - no Linux capabilities, bounded process count and log size.
+            '--pids-limit', '256',
+            '--cap-drop', 'ALL',
+            '--log-opt', 'max-size=10m',
+            '--log-opt', 'max-file=3',
             '--read-only',
             '--tmpfs', '/tmp:rw,size=64m',
-            // Docker's `--read-only` only applies to the container's own filesystem layers -
-            // an explicitly bind-mounted path stays writable regardless, which is exactly what
-            // UploadsController needs without weakening the read-only guarantee for everything else.
-            '-v', `${uploadsHostDir}:/app/uploads:rw`,
+            '-v', `${useUploadsVolume ? `${name}-uploads` : uploadsHostDir}:/app/uploads:rw`,
             '--security-opt', 'no-new-privileges',
-            '--env-file', path.join(projectPath, '.env'),
-            // PORT/HOST inside the container are always fixed - see GENERATED_BACKEND_CONTAINER_PORT
-            // - so they are deliberately NOT taken from the (per-platform, host-port-scoped) .env
-            // file. Same defense-in-depth reasoning as RuntimeManagerService.buildChildEnv().
-            '-e', `PORT=${GENERATED_BACKEND_CONTAINER_PORT}`,
-            '-e', 'HOST=0.0.0.0', // bind-all is safe HERE: the container's network is only reachable via the host-side -p mapping above, which is already loopback-scoped.
-            '-e', 'UPLOADS_DIR=/app/uploads', // matches the -v mount above, explicit rather than relying on the WORKDIR-relative default in uploadsMulterConfigTemplate().
-            ...dockerEnvOverrides,
+            '--env-file', dockerEnvFile,
             this.imageTag(platform.slug),
         ];
 
-        await this.runDockerCommand(args, platformId);
+        try {
+            await this.runDockerCommand(args, platformId);
+        } finally {
+            await fsp.rm(dockerEnvFile, { force: true });
+        }
 
         await this.prisma.platform.update({
             where: { id: platformId },
@@ -334,11 +400,25 @@ export class DockerRuntimeManagerService {
         return { message: 'Container stopped successfully.' };
     }
 
+    /**
+     * Whether generated backends should serve their interactive Swagger docs. The image is always
+     * NODE_ENV=production, so the generated main.ts cannot infer this itself - it is passed in as
+     * API_DOCS_ENABLED at container start (see the comment in mainTsTemplate()). Explicit
+     * `GENERATED_BACKEND_API_DOCS_ENABLED` wins; otherwise docs are off in production, on elsewhere.
+     * `getStatus()` reports the same value so the frontend can grey out "Open API docs" instead of
+     * sending the user to a JSON 404.
+     */
+    private isApiDocsEnabled(): boolean {
+        const flag = this.configService.get<string | boolean>('GENERATED_BACKEND_API_DOCS_ENABLED');
+        if (flag === undefined || flag === '') return this.configService.get<string>('NODE_ENV') !== 'production';
+        return String(flag) === 'true';
+    }
+
     async getStatus(platformId: string) {
         const platform = await this.prisma.platform.findUniqueOrThrow({ where: { id: platformId } });
         let status = await this.getLiveStatus(platform.slug, platform.runtimeStatus);
 
-        // BUGFIX: same issue as RuntimeManagerService.getStatus() - pinging only once already
+        // BUGFIX: same issue as DockerRuntimeManagerService.getStatus() - pinging only once already
         // RUNNING means `pingHealth()` (the only thing that ever flips STARTING -> RUNNING in
         // the database) never actually runs, so a freshly-started container stays STARTING
         // forever regardless of how healthy it is. See that file's comment for the full
@@ -354,7 +434,7 @@ export class DockerRuntimeManagerService {
         return {
             status,
             // Containers have no host-visible PID the frontend needs - `pid` is kept for shape
-            // parity with `RuntimeManagerService.getStatus()` (see `RuntimeStatusResponse` in
+            // parity with `DockerRuntimeManagerService.getStatus()` (see `RuntimeStatusResponse` in
             // the frontend's `lib/api/relations.ts`), so switching runtimes never breaks the
             // Runtime tab's type expectations.
             pid: null,
@@ -362,10 +442,12 @@ export class DockerRuntimeManagerService {
             startedAt: platform.runtimeStartedAt,
             port: platform.generatedPort,
             healthy,
+            docsEnabled: this.isApiDocsEnabled(),
         };
     }
 
     async getLogs(platformId: string, tailLines = 200) {
+        tailLines = Math.max(1, Math.min(Math.floor(tailLines) || 200, 2000));
         const platform = await this.prisma.platform.findUniqueOrThrow({ where: { id: platformId } });
         const name = this.containerName(platform.slug);
         try {
@@ -412,7 +494,9 @@ export class DockerRuntimeManagerService {
 
     private async pingHealth(port: number): Promise<boolean> {
         try {
-            const res = await fetch(`http://localhost:${port}/${GENERATED_BACKEND_API_PREFIX}/health`, { signal: AbortSignal.timeout(2000) });
+            // Same address the gateway uses to reach the backend (see GENERATED_BACKEND_GATEWAY_HOST).
+            const host = this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST') || 'localhost';
+            const res = await fetch(`http://${host}:${port}/${GENERATED_BACKEND_API_PREFIX}/health`, { signal: AbortSignal.timeout(2000) });
             if (!res.ok) return false;
             const body = await res.json();
             if (body.status === 'ok') {
@@ -449,19 +533,34 @@ export class DockerRuntimeManagerService {
     private runDockerCommand(
         args: string[],
         platformId: string | undefined,
-        opts: { capture?: boolean; ignoreFailure?: boolean } = {},
+        opts: { capture?: boolean; ignoreFailure?: boolean; timeoutMs?: number } = {},
     ): Promise<string | undefined> {
+        // RELIABILITY FIX (RT-001): every docker call is bounded in time (a hung daemon or build
+        // used to block the request forever) and in captured output (`docker logs` of a chatty
+        // container used to be buffered entirely in memory).
+        const timeoutMs = opts.timeoutMs ?? DOCKER_COMMAND_TIMEOUT_MS;
         return new Promise((resolve, reject) => {
             const child = spawn('docker', args);
             let stdout = '';
             let stderr = '';
-            child.stdout?.on('data', (d) => { stdout += d.toString(); });
-            child.stderr?.on('data', (d) => { stderr += d.toString(); });
+            const append = (current: string, chunk: Buffer) => {
+                const next = current + chunk.toString();
+                return next.length > MAX_CAPTURED_OUTPUT ? next.slice(-MAX_CAPTURED_OUTPUT) : next;
+            };
+            const timer = setTimeout(() => {
+                child.kill('SIGKILL');
+            }, timeoutMs);
+            timer.unref();
+
+            child.stdout?.on('data', (d: Buffer) => { stdout = append(stdout, d); });
+            child.stderr?.on('data', (d: Buffer) => { stderr = append(stderr, d); });
             child.on('error', (err) => {
+                clearTimeout(timer);
                 if (opts.ignoreFailure) return resolve(undefined);
                 reject(err);
             });
-            child.on('close', (code) => {
+            child.on('close', (code, signal) => {
+                clearTimeout(timer);
                 if (code === 0) {
                     resolve(opts.capture ? stdout : undefined);
                     return;
@@ -470,8 +569,9 @@ export class DockerRuntimeManagerService {
                     resolve(undefined);
                     return;
                 }
-                this.logger.error(`docker ${args.join(' ')} failed (exit ${code})${platformId ? ` [platform=${platformId}]` : ''}: ${stderr.trim()}`);
-                reject(new BadRequestException(`Docker command failed: ${stderr.trim() || `exit code ${code}`}`));
+                const reason = signal === 'SIGKILL' ? `timed out after ${timeoutMs} ms` : `exit ${code}`;
+                this.logger.error(`docker ${args[0]} failed (${reason})${platformId ? ` [platform=${platformId}]` : ''}: ${redactSecrets(stderr.trim())}`);
+                reject(new BadRequestException(`Docker command failed: ${redactSecrets(stderr.trim()) || reason}`));
             });
         });
     }

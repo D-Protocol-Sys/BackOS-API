@@ -47,7 +47,9 @@ export class MessagesController {
      */
     @Get('conversations/:id')
     getMessages(@CurrentUser() actor: Actor, @Param('id') id: string, @Query('limit') limit?: string) {
-        return this.messagesService.getMessages(actor, id, limit ? Number(limit) : undefined);
+        // API-002: bounded page size (1-200); invalid values fall back to the default.
+        const parsed = limit ? Number.parseInt(limit, 10) : NaN;
+        return this.messagesService.getMessages(actor, id, Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : undefined);
     }
 
     /**

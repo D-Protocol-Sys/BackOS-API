@@ -1,7 +1,7 @@
 ' backend-tray.vbs
-' Double-clique sur ce fichier (ou mets-en un raccourci sur le bureau /
-' dans le dossier Demarrage de Windows) pour lancer l'icone de zone de
-' notification, sans fenetre PowerShell visible.
+' Double-click this file (or place a shortcut on the desktop /
+' in the Windows Startup folder) to launch the notification area icon,
+' without any visible PowerShell window.
 
 Dim fso, scriptDir, shell
 Set fso = CreateObject("Scripting.FileSystemObject")

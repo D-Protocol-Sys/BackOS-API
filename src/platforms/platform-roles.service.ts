@@ -90,6 +90,7 @@ export class PlatformRolesService {
         if (role.isSystem) {
             throw new ForbiddenException('The system ADMIN role cannot be modified.');
         }
+        await this.assertRoleWithinActorReach(actor, platform, roleId);
 
         if (dto.permissions) {
             await this.assertGrantablePermissions(actor, platform, dto.permissions);
@@ -137,6 +138,7 @@ export class PlatformRolesService {
         if (role.isSystem) {
             throw new ForbiddenException('The system ADMIN role cannot be deleted.');
         }
+        await this.assertRoleWithinActorReach(actor, platform, roleId);
 
         const memberCount = await this.prisma.platformMember.count({ where: { platformRoleId: roleId } });
         if (memberCount > 0) {
@@ -185,6 +187,31 @@ export class PlatformRolesService {
         if (notOwned.length > 0) {
             throw new ForbiddenException(
                 `You cannot grant permission(s) you do not hold yourself: ${notOwned.join(', ')}.`,
+            );
+        }
+    }
+
+    /**
+     * SECURITY FIX (SEC-006): a member with `platform.manage-roles` could rewrite a role carrying
+     * permissions they do not hold (i.e. demote everyone holding it). Outside the owner and the
+     * global managers, only roles whose CURRENT permissions are a subset of the actor's can be
+     * edited or deleted - the actor's own role included.
+     */
+    private async assertRoleWithinActorReach(actor: Actor, platform: { id: string; ownerId: string }, roleId: string) {
+        if (platform.ownerId === actor.userId) return;
+        if (actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS)) return;
+
+        const { permissions } = await this.access.getEffectivePermissions(actor, platform);
+        const current = await this.prisma.platformRolePermission.findMany({
+            where: { platformRoleId: roleId },
+            include: { platformPermission: true },
+        });
+        const exceeding = current
+            .map((row) => row.platformPermission.key)
+            .filter((key) => !permissions.has(key as PlatformPermissionKey));
+        if (exceeding.length > 0) {
+            throw new ForbiddenException(
+                `You cannot change a role holding permission(s) you do not have: ${exceeding.join(', ')}.`,
             );
         }
     }

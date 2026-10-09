@@ -1,0 +1,5 @@
+# Directory monitored by Traefik (file provider, see docker-compose.edge.yml).
+# Empty by default: no additional routes are published. To expose a generated backend
+# (e.g., the API of a portfolio hosted elsewhere), copy ../traefik-generated-gateway.example.yml
+# here under a different name (e.g., generated-gateway.yml) and replace the domain.
+http: {}

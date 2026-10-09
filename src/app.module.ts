@@ -12,6 +12,7 @@ import { AuthModule } from './auth/auth.module';
 import { JwtAuthGuard } from './common/guards/jwt-auth.guard';
 import { UsersModule } from './users/users.module';
 import { PermissionsGuard } from './common/guards/permissions.guard';
+import { DemoReadOnlyGuard } from './common/guards/demo-read-only.guard';
 import { PermissionsModule } from './permissions/permissions.module';
 import { RolesModule } from './roles/roles.module';
 import { CommonModule } from './common/common.module';
@@ -96,7 +97,7 @@ import { ClientsModule } from './clients/clients.module';
         CommonModule,
 
         // Global module resolving generated-platform slugs to their internal loopback
-        // address, and invalidated by RuntimeManagerService on every runtime state change.
+        // address, and invalidated by DockerRuntimeManagerService on every runtime state change.
         // See src/gateway/GATEWAY_README.md.
         GatewayModule,
 
@@ -144,6 +145,7 @@ import { ClientsModule } from './clients/clients.module';
         // that need their own request budget.
         { provide: APP_GUARD, useClass: JwtAuthGuard },
         { provide: APP_GUARD, useClass: PermissionsGuard },
+        { provide: APP_GUARD, useClass: DemoReadOnlyGuard },
         { provide: APP_INTERCEPTOR, useClass: TrackActivityInterceptor },
     ],
 

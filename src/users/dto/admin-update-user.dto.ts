@@ -1,5 +1,5 @@
 import { ApiPropertyOptional } from '@nestjs/swagger';
-import { IsOptional, IsString, IsEmail, MinLength, MaxLength } from 'class-validator';
+import { IsOptional, IsString, IsEmail, MinLength, MaxLength, Matches } from 'class-validator';
 
 /**
  * Data Transfer Object representing the payload for administrative user profile updates.
@@ -60,6 +60,8 @@ export class AdminUpdateUserDto {
     @IsString()
     @MinLength(3)
     @MaxLength(30)
+    // SEC-025: no '@' - a username equal to another account's e-mail made login ambiguous.
+    @Matches(/^[A-Za-z0-9._-]+$/, { message: 'username may only contain letters, digits, ".", "_" and "-".' })
     username?: string;
 
     /**

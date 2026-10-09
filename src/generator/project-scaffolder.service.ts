@@ -94,6 +94,9 @@ export class ProjectScaffolderService {
 
         const projectPath = this.resolveProjectPath(params.slug);
         const migrationsPath = path.join(projectPath, 'prisma', 'migrations');
+        // GEN-002: a previous run that crashed between wiping the project and restoring its
+        // migrations left them in a `.migration-preservation-*` folder - put them back first.
+        await this.recoverOrphanedMigrationBackup(projectPath, migrationsPath);
         const hasExistingMigrations = await this.hasMigrationHistory(migrationsPath);
 
         let preservedMigrationsPath: string | null = null;
@@ -112,6 +115,10 @@ export class ProjectScaffolderService {
         // `prisma/migrations/` above.
         const uploadsPath = path.join(projectPath, 'uploads');
         let preservedUploadsPath = await this.preserveUploadsIfPresent(uploadsPath);
+        // GEN-007: the lockfile is kept across regenerations so dependency versions only change
+        // when the dependency set changes (reproducible builds).
+        const lockfilePath = path.join(projectPath, 'pnpm-lock.yaml');
+        const preservedLockfile = await fs.readFile(lockfilePath, 'utf8').catch(() => null);
 
         try {
             // Clean target directory and recreate basic folder architecture
@@ -127,6 +134,10 @@ export class ProjectScaffolderService {
             if (preservedUploadsPath) {
                 await fs.rename(preservedUploadsPath, uploadsPath);
                 preservedUploadsPath = null;
+            }
+
+            if (preservedLockfile !== null) {
+                await fs.writeFile(lockfilePath, preservedLockfile, 'utf8');
             }
 
             const prismaBlocks: string[] = [];
@@ -154,8 +165,18 @@ export class ProjectScaffolderService {
 
             // Add Redis configuration if scheduler service is active
             if (activeServices.some((service) => service.serviceKey === 'scheduler')) {
-                extraEnvVars.redisHost = this.configService.get<string>('REDIS_HOST', 'localhost');
-                extraEnvVars.redisPort = this.configService.get<number>('REDIS_PORT', 6379);
+                // SECURITY FIX (SEC-015): generated backends used to be pointed at the
+                // ORCHESTRATOR's Redis, where BackOS keeps its own generation queue - a tenant could
+                // read or forge BackOS jobs. A dedicated Redis for generated backends is configured
+                // with GENERATED_BACKEND_REDIS_*; the orchestrator's password is never handed out,
+                // and every platform gets its own key prefix.
+                extraEnvVars.redisHost = this.configService.get<string>('GENERATED_BACKEND_REDIS_HOST')
+                    || this.configService.get<string>('REDIS_HOST', 'localhost');
+                extraEnvVars.redisPort = this.configService.get<number>('GENERATED_BACKEND_REDIS_PORT')
+                    || this.configService.get<number>('REDIS_PORT', 6379);
+                const tenantRedisPassword = this.configService.get<string>('GENERATED_BACKEND_REDIS_PASSWORD');
+                if (tenantRedisPassword) extraEnvVars.redisPassword = tenantRedisPassword;
+                extraEnvVars.redisKeyPrefix = `backos-tenant-${params.slug}`;
             }
 
             // Aggregate Prisma models, dependencies, environment configs, and code generation hooks for active services
@@ -297,20 +318,21 @@ export class ProjectScaffolderService {
             }
             throw error;
         } finally {
-            // Cleanup lingering temporary preservation folder if still present
+            // DATA-SAFETY FIX (GEN-002): this block used to DELETE the preserved folders when they
+            // could not be restored - i.e. destroy the only copy of the platform's migration
+            // history (and its uploads) on a double failure. They are now kept and reported; the
+            // next scaffold recovers the migrations automatically (see
+            // `recoverOrphanedMigrationBackup`).
             if (preservedMigrationsPath) {
-                try {
-                    await fs.rm(preservedMigrationsPath, { recursive: true, force: true });
-                } catch (cleanupError) {
-                    this.logger.error(`Impossible de nettoyer le répertoire temporaire des migrations pour "${params.slug}".`, cleanupError instanceof Error ? cleanupError.stack : String(cleanupError));
-                }
+                this.logger.error(
+                    `Migration history of "${params.slug}" could not be restored and was KEPT at ` +
+                    `"${preservedMigrationsPath}". It will be recovered at the next generation.`,
+                );
             }
             if (preservedUploadsPath) {
-                try {
-                    await fs.rm(preservedUploadsPath, { recursive: true, force: true });
-                } catch (cleanupError) {
-                    this.logger.error(`Impossible de nettoyer le répertoire temporaire des fichiers uploadés pour "${params.slug}".`, cleanupError instanceof Error ? cleanupError.stack : String(cleanupError));
-                }
+                this.logger.error(
+                    `Uploaded files of "${params.slug}" could not be restored and were KEPT at "${preservedUploadsPath}".`,
+                );
             }
         }
     }
@@ -410,6 +432,30 @@ export class ProjectScaffolderService {
     /**
      * Safely moves the migrations folder to a sibling temporary folder outside the current project root.
      */
+    /**
+     * GEN-002: restores the most recent `.migration-preservation-<project>-*` folder when the
+     * project has no migration history of its own (crash between wipe and restore).
+     */
+    private async recoverOrphanedMigrationBackup(projectPath: string, migrationsPath: string): Promise<void> {
+        if (await this.hasMigrationHistory(migrationsPath)) return;
+
+        const parent = path.dirname(projectPath);
+        const prefix = `.migration-preservation-${path.basename(projectPath)}-`;
+        const candidates = (await fs.readdir(parent).catch(() => [] as string[]))
+            .filter((name) => name.startsWith(prefix))
+            .sort();
+        const latest = candidates.at(-1);
+        if (!latest) return;
+
+        const backupPath = path.join(parent, latest);
+        if (!(await this.hasMigrationHistory(backupPath))) return;
+
+        await fs.mkdir(path.join(projectPath, 'prisma'), { recursive: true });
+        await fs.rm(migrationsPath, { recursive: true, force: true });
+        await fs.rename(backupPath, migrationsPath);
+        this.logger.warn(`Recovered migration history of "${path.basename(path.dirname(projectPath))}" from "${backupPath}".`);
+    }
+
     private async preserveMigrations(projectPath: string): Promise<string> {
         const migrationsPath = path.join(projectPath, 'prisma', 'migrations');
         const projectParent = path.dirname(projectPath);

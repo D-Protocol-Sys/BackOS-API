@@ -5,7 +5,7 @@
 # Key Features:
 #   - Automated SSL certificate management via Let's Encrypt (ACME protocol).
 #   - Enforced HTTP-to-HTTPS automatic redirection.
-#   - Secure Docker API Proxy restricting access to the host's Docker socket.
+#   - Optional public routes via traefik-dynamic/ (e.g. one generated backend).
 # ==============================================================================
 
 version: "3.8"
@@ -63,6 +63,12 @@ services:
       - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}" # Email used for SSL expiration notices
       - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json" # Secure storage file for certs
 
+      # File provider (opt-in): routes publiques supplementaires, par exemple exposer UN backend
+      # genere (api de portfolio...) via /generated/<slug>/ - voir deploy/traefik-dynamic/ et
+      # deploy/traefik-generated-gateway.example.yml. Repertoire vide par defaut = aucun effet.
+      - "--providers.file.directory=/etc/traefik/dynamic"
+      - "--providers.file.watch=true"
+
       # Hardening & Operations
       - "--api.dashboard=false"                     # Security: Disables web UI dashboard to eliminate attack surface
       - "--log.level=WARN"                          # Restricts log output to actionable warning and error events
@@ -73,10 +79,16 @@ services:
       
     volumes:
       - traefik_certs:/letsencrypt                  # Mounts persistent volume for certificates
+      - ./traefik-dynamic:/etc/traefik/dynamic:ro   # Routes publiques optionnelles (voir ci-dessus)
       - /var/run/docker.sock:/var/run/docker.sock:ro # Read-only access to Docker socket for container discovery
       
     networks:
       - edge
+
+    # Permet a Traefik de joindre un port publie sur l hote (ex. l orchestrateur LAN sur 4803)
+    # pour les routes du repertoire traefik-dynamic/. Integre a Docker Desktop, host-gateway sous Linux.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
       
     security_opt:
       - "no-new-privileges:true"                     # Restricts container processes from gaining escalated root permissions
@@ -94,37 +106,9 @@ services:
           memory: 256M                              # Enforces 256MB RAM consumption limit
 
   # ----------------------------------------------------------------------------
-  # Security Layer: Docker Socket Proxy (Tecnativa)
+  # NOTE - le Docker Socket Proxy n est PLUS dans cette pile.
+  # Tout conteneur relie au reseau partage "edge" (la demo publique comprise) pouvait l atteindre
+  # par son nom (docker-proxy:2375) : c etait un chemin reseau reel vers l API Docker de l hote,
+  # meme sans DOCKER_HOST. Chaque pile qui a VRAIMENT besoin de Docker (prod, lan) embarque
+  # maintenant son propre proxy sur un reseau prive "docker_api" que ni edge ni demo ne voient.
   # ----------------------------------------------------------------------------
-  docker-proxy:
-    image: tecnativa/docker-socket-proxy:latest
-    container_name: ${PROJECT_NAME}-edge-docker-proxy
-    restart: unless-stopped
-    
-    # Granular access control for the Docker API
-    environment:
-      # Explicitly allow safe read/write endpoints required by the app orchestrator
-      CONTAINERS: 1
-      IMAGES: 1
-      BUILD: 1
-      NETWORKS: 1
-      INFO: 1
-      PING: 1
-      POST: 1
-      # Sensitive administrative endpoints remain blocked by default (value 0):
-      # SWARM=0, SERVICES=0, SECRETS=0, VOLUMES=0, SYSTEM=0, EXEC=0
-      
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro # Mounts host socket read-only to proxy
-      
-    networks:
-      - edge
-      
-    security_opt:
-      - "no-new-privileges:true"
-      
-    deploy:
-      resources:
-        limits:
-          cpus: "0.25"
-          memory: 128M

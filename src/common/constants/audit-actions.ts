@@ -64,6 +64,27 @@ export const SYSTEM_AUDIT_ACTIONS = {
     GENERATION_STARTED: 'generation.started',
     GENERATION_COMPLETED: 'generation.completed',
     GENERATION_FAILED: 'generation.failed',
+
+    // SEC-027: platform, generation, runtime, role and backup operations are now audited too.
+    PLATFORM_ARCHIVED: 'platform.archived',
+    PLATFORM_RESTORED: 'platform.restored',
+    PLATFORM_PURGED: 'platform.purged',
+    PLATFORM_OWNERSHIP_TRANSFERRED: 'platform.ownership-transferred',
+    PLATFORM_MEMBER_ADDED: 'platform.member.added',
+    PLATFORM_MEMBER_ROLE_CHANGED: 'platform.member.role-changed',
+    PLATFORM_MEMBER_REMOVED: 'platform.member.removed',
+    PLATFORM_MEMBER_REMOVAL_REQUESTED: 'platform.member.removal-requested',
+    GENERATION_REQUESTED: 'generation.requested',
+    GENERATION_APPROVED: 'generation.approved',
+    GENERATION_REJECTED: 'generation.rejected',
+    GENERATION_CANCELLED: 'generation.cancelled',
+    RUNTIME_STARTED: 'runtime.started',
+    RUNTIME_STOPPED: 'runtime.stopped',
+    ROLE_CREATED: 'role.created',
+    ROLE_UPDATED: 'role.updated',
+    ROLE_PERMISSIONS_REPLACED: 'role.permissions-replaced',
+    ROLE_DELETED: 'role.deleted',
+    BACKUP_EXPORTED: 'backup.exported',
 } as const;
 
 export type SystemAuditAction = (typeof SYSTEM_AUDIT_ACTIONS)[keyof typeof SYSTEM_AUDIT_ACTIONS];
@@ -75,6 +96,25 @@ export type SystemAuditAction = (typeof SYSTEM_AUDIT_ACTIONS)[keyof typeof SYSTE
  * Human-readable mapping for non-permission audit events.
  */
 export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_ARCHIVED]: 'Platform archived',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_RESTORED]: 'Archived platform restored',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_PURGED]: 'Platform permanently deleted (files, database and role)',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_OWNERSHIP_TRANSFERRED]: 'Platform ownership transferred',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_ADDED]: 'Member added to a platform',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_ROLE_CHANGED]: "A platform member's role was changed",
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED]: 'Member removed from a platform',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED]: 'Removal of a platform member requested (pending owner approval)',
+    [SYSTEM_AUDIT_ACTIONS.GENERATION_REQUESTED]: 'Backend generation triggered or requested',
+    [SYSTEM_AUDIT_ACTIONS.GENERATION_APPROVED]: 'Generation request approved by the owner',
+    [SYSTEM_AUDIT_ACTIONS.GENERATION_REJECTED]: 'Generation request rejected by the owner',
+    [SYSTEM_AUDIT_ACTIONS.GENERATION_CANCELLED]: 'Generation cancelled',
+    [SYSTEM_AUDIT_ACTIONS.RUNTIME_STARTED]: 'Generated backend runtime started',
+    [SYSTEM_AUDIT_ACTIONS.RUNTIME_STOPPED]: 'Generated backend runtime stopped',
+    [SYSTEM_AUDIT_ACTIONS.ROLE_CREATED]: 'Global role created',
+    [SYSTEM_AUDIT_ACTIONS.ROLE_UPDATED]: 'Global role renamed or described',
+    [SYSTEM_AUDIT_ACTIONS.ROLE_PERMISSIONS_REPLACED]: "Global role's permissions replaced",
+    [SYSTEM_AUDIT_ACTIONS.ROLE_DELETED]: 'Global role deleted',
+    [SYSTEM_AUDIT_ACTIONS.BACKUP_EXPORTED]: 'Database dump exported',
     [SYSTEM_AUDIT_ACTIONS.LOGIN]: 'User successfully authenticated into the system',
     [SYSTEM_AUDIT_ACTIONS.LOGIN_FAILED]: 'A login attempt failed (invalid credentials or TOTP code)',
     [SYSTEM_AUDIT_ACTIONS.LOGIN_LOCKED]: 'Account temporarily locked after too many failed login attempts',

@@ -1,5 +1,6 @@
 import { NestFactory } from '@nestjs/core';
-import { ValidationPipe, Logger } from '@nestjs/common';
+import { ValidationPipe, Logger, ConsoleLogger } from '@nestjs/common';
+import { requestContextMiddleware } from './common/request-context/request-context';
 import { ConfigService } from '@nestjs/config';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
@@ -11,7 +12,11 @@ import { createGatewayRateLimiter } from './gateway/gateway-rate-limiter.middlew
 
 async function bootstrap() {
 
-    const app = await NestFactory.create(AppModule);
+    // OPS-007: LOG_FORMAT=json switches to structured JSON logs (one object per line), easier to
+    // ship to a log pipeline; the default human-readable format is kept for development.
+    const app = await NestFactory.create(AppModule, {
+        logger: process.env.LOG_FORMAT === 'json' ? new ConsoleLogger({ json: true }) : undefined,
+    });
 
     // Without this, a SIGTERM (deploy, `docker stop`, `pm2 reload`, ...) kills the process
     // immediately - Nest's `onModuleDestroy`/`beforeApplicationShutdown` hooks never run, which
@@ -39,9 +44,10 @@ async function bootstrap() {
     //      source after the fact.
     // `TRUST_PROXY_HOPS` lets the exact number of trusted reverse-proxy hops be tuned per
     // deployment (Express's `trust proxy` setting - see http://expressjs.com/en/guide/behind-proxies.html);
-    // it defaults to `1`, matching the single-Traefik-hop topology in `docker-compose.prod.yml`.
+    // it defaults to `0` (no proxy trusted: `X-Forwarded-For` cannot be forged), and the prod, demo
+    // and lan compose files set it to `1`, matching the single-Traefik-hop topology.
     // Traefik forwards `X-Forwarded-For` by default, so no Traefik-side change is required.
-    const trustProxyHops = configService.get<number>('TRUST_PROXY_HOPS', 1);
+    const trustProxyHops = configService.get<number>('TRUST_PROXY_HOPS', 0);
     // `app` is typed as the generic `INestApplication`, which doesn't expose Express-specific
     // methods like `.set()` even though Express is what's actually running underneath by
     // default. `getHttpAdapter().getInstance()` is the standard NestJS way to reach the
@@ -50,19 +56,16 @@ async function bootstrap() {
     // in this file).
     app.getHttpAdapter().getInstance().set('trust proxy', trustProxyHops);
 
+    app.use(requestContextMiddleware);
+
     app.use(helmet());
 
-    app.enableCors({
-
-        origin: configService.get<string>(
-            'CORS_ORIGIN',
-            'http://localhost:9173'
-        ),
-
-        credentials: true,
-
-    });
-
+    // ORDER MATTERS: the gateway is mounted BEFORE the orchestrator's own `enableCors()` below.
+    // Express runs middleware in registration order, and `cors()` answers OPTIONS preflights
+    // itself. With CORS first, a browser calling a generated backend from another origin (e.g. a
+    // portfolio front hosted elsewhere) would get its preflight answered with the ORCHESTRATOR's
+    // allowed origin instead of the generated backend's own `CORS_ORIGINS`. Requests under the
+    // gateway prefix are now handled entirely by the generated backend's CORS configuration.
     // ------------------------------------------------------------------------------------
     // GENERATED BACKEND GATEWAY
     // ------------------------------------------------------------------------------------
@@ -82,6 +85,24 @@ async function bootstrap() {
         createGatewayRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 120 }),
     );
     app.use(createGeneratedBackendProxyMiddleware(platformGateway, gatewayPrefix));
+
+    // SECURITY FIX (SEC-020): CORS_ORIGIN accepts a comma-separated list. The wildcard "*" is
+    // only honoured WITHOUT credentials - combining both is refused by browsers anyway and
+    // signalled a misconfiguration (it used to be the LAN default).
+    const corsOrigins = configService
+        .get<string>('CORS_ORIGIN', 'http://localhost:9173')
+        .split(',')
+        .map((origin) => origin.trim())
+        .filter(Boolean);
+    const allowAnyOrigin = corsOrigins.includes('*');
+    if (allowAnyOrigin) {
+        Logger.warn('CORS_ORIGIN="*": any origin may call the API (without credentials). Set explicit origins in production.', 'Bootstrap');
+    }
+    app.enableCors({
+        origin: allowAnyOrigin ? '*' : corsOrigins,
+        credentials: !allowAnyOrigin,
+        exposedHeaders: ['X-Request-Id'],
+    });
 
     app.useGlobalPipes(
 
@@ -123,4 +144,4 @@ async function bootstrap() {
 
 }
 
-bootstrap();
+void bootstrap();

@@ -1,9 +1,9 @@
 # ==============================================================================
-# backend-tray.ps1 — Icône de zone de notification pour piloter le backend
+# backend-tray.ps1 — System tray icon to manage the backend
 # ------------------------------------------------------------------------------
-# Ne pas double-cliquer directement sur ce fichier (ça ouvrirait une fenêtre
-# PowerShell visible). Utilise "backend-tray.vbs" à la place, qui lance ce
-# script en arrière-plan sans aucune fenêtre.
+# Do not double-click directly on this file (it will open a visible PowerShell
+# window). Use "backend-tray.vbs" instead, which launches this script in the
+# background without any window.
 # ==============================================================================
 
 Add-Type -AssemblyName System.Windows.Forms
@@ -14,7 +14,7 @@ $ProjectRoot  = Split-Path -Parent $ScriptDir
 $ComposeFile  = Join-Path $ScriptDir "docker-compose.lan.yml"
 $EnvFile      = Join-Path $ProjectRoot ".env.lan"
 
-# --- Fabrique de petites icônes "pastille de couleur" (aucun fichier .ico requis) ---
+# --- Factory for small "color dot" icons (no .ico file required) ---
 function New-DotIcon([System.Drawing.Color]$color) {
     $bmp = New-Object System.Drawing.Bitmap(16, 16)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
@@ -34,20 +34,20 @@ $IconError   = New-DotIcon ([System.Drawing.Color]::FromArgb(210, 40, 40))
 
 $notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $notifyIcon.Icon = $IconBusy
-$notifyIcon.Text = "Backend : verification..."
+$notifyIcon.Text = "Backend: checking..."
 $notifyIcon.Visible = $true
 
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
-$statusItem = $menu.Items.Add("Statut : verification...")
+$statusItem = $menu.Items.Add("Status : checking...")
 $statusItem.Enabled = $false
 [void]$menu.Items.Add("-")
-$startItem  = $menu.Items.Add("Demarrer")
-$stopItem   = $menu.Items.Add("Arreter")
+$startItem  = $menu.Items.Add("Start")
+$stopItem   = $menu.Items.Add("Stop")
 [void]$menu.Items.Add("-")
-$logsItem   = $menu.Items.Add("Voir les logs")
-$healthItem = $menu.Items.Add("Tester http://localhost:4803/api/health")
+$logsItem   = $menu.Items.Add("View logs")
+$healthItem = $menu.Items.Add("Test http://localhost:4803/api/health")
 [void]$menu.Items.Add("-")
-$exitItem   = $menu.Items.Add("Quitter (masque juste l'icone)")
+$exitItem   = $menu.Items.Add("Exit (only hides the icon)")
 $notifyIcon.ContextMenuStrip = $menu
 
 $script:busy = $false
@@ -80,26 +80,26 @@ function Update-Status {
     switch ($state) {
         "running" {
             $notifyIcon.Icon = $IconRunning
-            $notifyIcon.Text = "Backend : en marche"
-            $statusItem.Text = "Statut : EN MARCHE"
+            $notifyIcon.Text = "Backend: running"
+            $statusItem.Text = "Status: RUNNING"
             $startItem.Enabled = $false; $stopItem.Enabled = $true
         }
         "stopped" {
             $notifyIcon.Icon = $IconStopped
-            $notifyIcon.Text = "Backend : arrete"
-            $statusItem.Text = "Statut : ARRETE"
+            $notifyIcon.Text = "Backend: stopped"
+            $statusItem.Text = "Status: STOPPED"
             $startItem.Enabled = $true; $stopItem.Enabled = $false
         }
         "starting" {
             $notifyIcon.Icon = $IconBusy
-            $notifyIcon.Text = "Backend : demarrage en cours..."
-            $statusItem.Text = "Statut : DEMARRAGE..."
+            $notifyIcon.Text = "Backend: starting..."
+            $statusItem.Text = "Status: STARTING..."
             $startItem.Enabled = $false; $stopItem.Enabled = $false
         }
         default {
             $notifyIcon.Icon = $IconError
-            $notifyIcon.Text = "Backend : erreur, verifie les logs"
-            $statusItem.Text = "Statut : ERREUR (voir logs)"
+            $notifyIcon.Text = "Backend: error, check logs"
+            $statusItem.Text = "Status: ERROR (check logs)"
             $startItem.Enabled = $true; $stopItem.Enabled = $true
         }
     }
@@ -135,11 +135,11 @@ function Invoke-DockerAction([string[]]$DockerArgs, [string]$BusyText, [string]$
 
 $startItem.Add_Click({
     Invoke-DockerAction @("compose","-f",$ComposeFile,"--env-file",$EnvFile,"up","-d","--build") `
-        "Demarrage en cours..." "Backend demarre (ou en train de finir de demarrer)."
+        "Starting..." "Backend started (or finishing startup)."
 })
 $stopItem.Add_Click({
     Invoke-DockerAction @("compose","-f",$ComposeFile,"--env-file",$EnvFile,"stop") `
-        "Arret en cours..." "Backend arrete. Ressources liberees."
+        "Stopping..." "Backend stopped. Resources freed."
 })
 $logsItem.Add_Click({
     Start-Process powershell -ArgumentList "-NoExit","-Command","cd `"$ProjectRoot`"; docker compose -f `"$ComposeFile`" --env-file `"$EnvFile`" logs -f orchestrator"

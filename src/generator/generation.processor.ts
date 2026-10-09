@@ -2,17 +2,20 @@ import { InjectQueue, OnWorkerEvent, Processor, WorkerHost } from '@nestjs/bullm
 import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { Job, Queue } from 'bullmq';
 import { ConfigService } from '@nestjs/config';
-import { GENERATION_QUEUE_NAME } from './generator-queue.module';
+import { GENERATION_QUEUE_NAME, GENERATION_JOB_RETENTION } from './generator-queue.module';
 import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from './provisioning.service';
 import { ProjectScaffolderService } from './project-scaffolder.service';
 import { GenerationsService } from './generations.service';
-import { runCommand, CommandFailedError, CommandCancelledError } from '../common/utils/command-runner.util';
+import { runCommand, CommandFailedError, CommandCancelledError, redactSecrets } from '../common/utils/command-runner.util';
 import { PortAllocatorService } from './port-allocator.service';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
+import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 import * as fsp from 'fs/promises';
 import * as fs from 'fs';
 import * as path from 'path';
+import { Client } from 'pg';
+import { findDestructiveStatements } from './migration-safety.util';
 
 /**
  * Interface defining the payload structure for background project generation jobs handled by BullMQ.
@@ -29,6 +32,13 @@ export interface GenerationJobData {
      * `GENERATION_MAX_AUTO_RESTARTS` so a machine stuck in a crash loop can't retry forever.
      */
     restartCount?: number;
+    /**
+     * GEN-001: set only by the platform owner (or a global generator.execute holder) when they
+     * explicitly accept that this generation applies destructive SQL (DROP COLUMN/TABLE, type
+     * changes...). Absent/false = any destructive statement makes the generation fail BEFORE
+     * anything is applied to the live database.
+     */
+    allowDestructiveMigration?: boolean;
 }
 
 /**
@@ -62,6 +72,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         private readonly portAllocator: PortAllocatorService,
         private readonly configService: ConfigService,
         private readonly cancellationRegistry: GenerationCancellationRegistry,
+        private readonly dockerRuntime: DockerRuntimeManagerService,
         @InjectQueue(GENERATION_QUEUE_NAME) private readonly queue: Queue<GenerationJobData>,
     ) {
         super();
@@ -92,6 +103,8 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
     }
 
     private async reconcileOrphanedGenerations(): Promise<void> {
+        await this.reconcileOrphanedPendingGenerations();
+
         const stuck = await this.prisma.generation.findMany({
             where: { status: 'RUNNING' },
             select: { id: true, platformId: true },
@@ -134,6 +147,33 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
                 generation.platformId,
                 job?.data?.slug ?? platform!.slug,
                 restartCount,
+            );
+        }
+    }
+
+    /**
+     * RELIABILITY FIX (QUEUE-002): a generation row is created PENDING before its job is added to
+     * the queue. If Redis was down at that moment (or the process died in between), the row stayed
+     * PENDING forever and `hasActiveGeneration()` then refused every future generation of that
+     * platform. Such orphans are re-enqueued at boot (same jobId, so never duplicated).
+     */
+    private async reconcileOrphanedPendingGenerations(): Promise<void> {
+        const pending = await this.prisma.generation.findMany({
+            where: { status: 'PENDING' },
+            select: { id: true, platformId: true, platform: { select: { slug: true, status: true } } },
+        });
+        for (const generation of pending) {
+            const job = await this.queue.getJob(generation.id);
+            if (job) continue;
+            if (!generation.platform || generation.platform.status === 'ARCHIVED') {
+                await this.generations.markFailed(generation.id, 'Plateforme archivée ou introuvable : génération abandonnée.').catch(() => undefined);
+                continue;
+            }
+            this.logger.warn(`Re-enqueuing orphaned PENDING generation ${generation.id}.`);
+            await this.queue.add(
+                'generate',
+                { platformId: generation.platformId, slug: generation.platform.slug, generationId: generation.id } satisfies GenerationJobData,
+                { jobId: generation.id, ...GENERATION_JOB_RETENTION },
             );
         }
     }
@@ -208,7 +248,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             await this.queue.add(
                 'generate',
                 { platformId, slug, generationId, restartCount: nextRestartCount } satisfies GenerationJobData,
-                { jobId: generationId },
+                { jobId: generationId, ...GENERATION_JOB_RETENTION },
             );
             // Deliberately left at whatever status it was in (RUNNING) and platform stays
             // GENERATING: from the user's point of view the generation never stopped, it's
@@ -230,59 +270,67 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
     }
 
     /**
-     * Main task processing routine. Orchestrates the 7-step automated project build lifecycle.
+     * Main task processing routine. Orchestrates the automated project build lifecycle.
+     *
+     * CONCURRENCY FIX (QUEUE-004 / DB-005): the whole pipeline now runs under a PostgreSQL
+     * advisory lock scoped to the PLATFORM. A job BullMQ believed stalled while its first worker
+     * was still alive, a second orchestrator instance, or two generations of the same platform can
+     * no longer write the same project directory and database at the same time. After acquiring
+     * the lock, a generation that already reached a terminal state is skipped.
      */
     async process(job: Job<GenerationJobData>): Promise<void> {
+        const { platformId, generationId } = job.data;
+        const lockClient = new Client({ connectionString: this.configService.getOrThrow<string>('database.url') });
+        await lockClient.connect();
+        const lockKey = `generation:${platformId}`;
+        try {
+            await lockClient.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
+
+            const current = await this.prisma.generation.findUnique({ where: { id: generationId }, select: { status: true } });
+            if (!current || current.status === 'SUCCESS' || current.status === 'FAILED') {
+                this.logger.warn(`Skipping job ${job.id}: generation ${generationId} is ${current?.status ?? 'missing'}.`);
+                return;
+            }
+
+            await this.runPipeline(job);
+        } finally {
+            await lockClient.query('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch(() => undefined);
+            await lockClient.end().catch(() => undefined);
+        }
+    }
+
+    private async runPipeline(job: Job<GenerationJobData>): Promise<void> {
         const { platformId, slug, generationId } = job.data;
         const controller = this.cancellationRegistry.register(generationId);
 
         this.logger.log(
             `START generation job=${job.id} generationId=${generationId} platformId=${platformId}`,
         );
-        
-        // Fetch command execution timeout threshold (defaults to 5 minutes / 300,000ms)
+
         const timeoutMs = this.configService.get<number>('GENERATION_COMMAND_TIMEOUT_MS', 300_000);
 
-        // ZERO-DOWNTIME REGENERATION: previously, `platform.status` was unconditionally flipped
-        // to 'GENERATING' right here, before anything risky (pnpm install, build, migrate) had
-        // even run - and PlatformGatewayService.resolveTarget() refuses to route to anything
-        // that isn't 'ACTIVE'. The result: triggering a regeneration made the gateway stop
-        // serving the CURRENT, perfectly healthy, still-running container within its 5s cache
-        // window - a guaranteed outage for the entire duration of the build, success or
-        // failure, even though nothing about the old container/process itself had changed yet.
-        //
-        // A platform whose status is already 'ACTIVE' when a NEW generation starts means there
-        // is a previously-successful version potentially still running right now - see
-        // DockerRuntimeManagerService/RuntimeManagerService, which are never stopped or
-        // restarted by this pipeline. For that case specifically, `platform.status` is
-        // deliberately left untouched (still 'ACTIVE') for the whole duration of this run: the
-        // gateway keeps routing to the OLD version the entire time this NEW one is being built,
-        // and only a genuine problem with the OLD container itself (crash, the operator
-        // stopping it) would ever make it stop serving - never merely "a regeneration is in
-        // progress" or "this regeneration failed". A first-time generation (no working version
-        // to protect) still flips to 'GENERATING' as before, since there is nothing to leave
-        // routable either way.
-        //
-        // NOTE: this does NOT eliminate every risk of a regeneration affecting the live
-        // version - STEP 6 below (`prisma migrate deploy`) still runs against the SAME database
-        // the old version is actively using, so a schema change that isn't backward-compatible
-        // can still break the old version's queries even though nothing "stopped" it. Worth
-        // keeping in mind when writing migrations for a platform you intend to keep serving
-        // traffic through a regeneration.
-        const platformBeforeRun = await this.prisma.platform.findUniqueOrThrow({
+        const platformBeforeRun = await this.prisma.platform.findUnique({
             where: { id: platformId },
             select: { status: true },
         });
+
+        // GEN-005: an archived (or deleted) platform is never generated - generating it used to flip
+        // it back to ACTIVE, routable, and exempt from the archive retention purge.
+        if (!platformBeforeRun || platformBeforeRun.status === 'ARCHIVED') {
+            await this.generations.markFailed(generationId, 'La plateforme est archivée ou supprimée : génération annulée.').catch(() => undefined);
+            this.cancellationRegistry.clear(generationId);
+            return;
+        }
+
+        // ZERO-DOWNTIME REGENERATION: an ACTIVE platform keeps its status (and its running
+        // container stays routable) for the whole duration of a regeneration. A first generation
+        // flips to GENERATING. Note: `migrate deploy` still runs against the database the running
+        // version uses, which is why destructive statements now need explicit approval (GEN-001).
         const hadWorkingVersion = platformBeforeRun.status === 'ACTIVE';
 
-        // Update the generation task and (conditionally) platform record status to notify the
-        // system that processing has started.
         await this.generations.markRunning(generationId);
         if (!hadWorkingVersion) {
-            await this.prisma.platform.update({
-                where: { id: platformId },
-                data: { status: 'GENERATING' },
-            });
+            await this.updatePlatformStatusUnlessArchived(platformId, 'GENERATING');
         } else {
             await this.log(
                 generationId,
@@ -292,7 +340,6 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
 
         try {
             // STEP 1: DATABASE PROVISIONING
-            // Checks whether a database already exists for this platform or provisions a new isolated PostgreSql database.
             await this.log(generationId, '→ Checking database configuration...');
             let databaseUrl: string;
             const existingDatabase = await this.prisma.platformDatabase.findUnique({ where: { platformId } });
@@ -308,12 +355,8 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             }
 
             // STEP 2: PROJECT SCAFFOLDING
-            // Allocates a dedicated port and writes out source files, module definitions, and static configurations to disk.
             await this.log(generationId, '→ Scaffolding project files...');
             const port = await this.portAllocator.getOrAllocatePort(platformId);
-            // Whoever triggered this generation gets an internal account on the generated backend
-            // (Auth & User service) - read from the DB rather than the job payload so it also holds
-            // for jobs restarted by the boot-time reconciliation.
             const triggeredBy = await this.prisma.generation.findUnique({
                 where: { id: generationId },
                 select: { triggeredById: true },
@@ -328,50 +371,43 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
 
             await this.log(generationId, `  Project scaffolded at ${projectPath}`);
             await this.log(generationId, isFirstGeneration ? '  Initial project generation detected.' : '  Re-generation detected: existing migration history preserved.');
-            
+
             const shadowDatabaseUrl = await this.provisioning.ensureShadowDatabaseUrl();
+            // SEC-001: these are the ONLY variables (besides PATH/HOME/proxy settings, see
+            // `buildChildProcessEnv`) the generated project's tooling receives - never the
+            // orchestrator's own secrets.
             const envOverrides = { DATABASE_URL: databaseUrl, SHADOW_DATABASE_URL: shadowDatabaseUrl };
 
-            // STEP 3: INSTALL DEPENDENCIES
-            // Runs `pnpm install`. NOTE: intentionally NOT --frozen-lockfile - scaffold() wipes
-            // and recreates the project directory (including any previous pnpm-lock.yaml) on
-            // every generation, so there is never a pre-existing lockfile to freeze against;
-            // passing that flag here would make every single generation fail on a fresh project.
+            // STEP 3: INSTALL DEPENDENCIES (the previous lockfile is preserved by the scaffolder)
             await this.log(generationId, '→ Installing package dependencies...');
             await this.runStep(generationId, 'pnpm', ['install'], projectPath, timeoutMs, envOverrides, controller.signal);
 
             // STEP 4: GENERATE PRISMA CLIENT
-            // Executes `prisma generate` to construct type-safe TypeScript database client types from the schema.prisma.
             await this.log(generationId, '→ Generating Prisma client...');
             await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'generate'], projectPath, timeoutMs, envOverrides, controller.signal);
 
             // STEP 5: GENERATE A NEW MIGRATION FILE FOR THE CURRENT SCHEMA, IF NEEDED
-            // BUGFIX: nothing in this pipeline used to ever CREATE a migration file - only
-            // `migrate deploy` (STEP 6) ran, which only APPLIES migrations that already exist
-            // on disk. Every regeneration silently left the real Postgres schema stuck at
-            // whatever the very first generation created, while `schema.prisma` (and the
-            // generated CRUD code built against it) kept moving forward - a guaranteed schema
-            // drift the moment anyone edits an entity/field after the first generation.
-            // `migrate diff` needs a shadow database to replay the migration history into (see
-            // `ProvisioningService.ensureShadowDatabaseUrl()`) - deliberately a single, shared,
-            // dedicated database rather than granting CREATEDB to the per-platform DB role,
-            // which would let `migrate dev` work directly but would also hand every generated
-            // backend's own runtime credentials the ability to create arbitrary databases.
             await this.log(generationId, '→ Checking for schema changes to migrate...');
-            await this.generateMigrationIfNeeded(generationId, projectPath, timeoutMs, envOverrides, controller.signal);
+            await this.provisioning.withShadowDatabaseLock(() =>
+                this.generateMigrationIfNeeded(
+                    generationId,
+                    projectPath,
+                    timeoutMs,
+                    envOverrides,
+                    controller.signal,
+                    job.data.allowDestructiveMigration === true,
+                ),
+            );
 
             // STEP 6: DATABASE MIGRATIONS
-            // Applies database structural changes using `prisma migrate deploy`. This non-interactive command applies pending SQL migrations safely.
             await this.log(generationId, '→ Applying Prisma database migrations...');
             await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'migrate', 'deploy'], projectPath, timeoutMs, envOverrides, controller.signal);
 
             // STEP 7: BUILD PROJECT
-            // Compiles TypeScript source files into executable production JavaScript binaries inside the /dist folder.
             await this.log(generationId, '→ Compiling NestJS project...');
             await this.runStep(generationId, 'pnpm', ['run', 'build'], projectPath, timeoutMs, envOverrides, controller.signal);
 
             // STEP 8: SUCCESS COMPLETION
-            // Updates schema versioning and transitions both the generation task and platform record status to active.
             const platform = await this.prisma.platform.findUniqueOrThrow({
                 where: { id: platformId },
                 select: { schemaVersion: true },
@@ -379,24 +415,40 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
 
             const nextSchemaVersion = platform.schemaVersion + 1;
             await this.generations.markSuccess(generationId, nextSchemaVersion);
-            await this.prisma.platform.update({
-                where: { id: platformId },
+            // GEN-005: conditional update - an archive that happened DURING the build wins.
+            const updated = await this.prisma.platform.updateMany({
+                where: { id: platformId, status: { not: 'ARCHIVED' } },
                 data: { status: 'ACTIVE', schemaVersion: nextSchemaVersion },
             });
+            if (updated.count === 0) {
+                await this.log(generationId, 'ℹ The platform was archived during this build - it stays archived.');
+            }
 
             await this.log(generationId, `✅ Generation completed successfully. Updated schema version: ${nextSchemaVersion}.`);
+
+            // RT-001: pre-build the runtime image now, so starting the platform no longer runs a
+            // multi-minute `docker build` inside an HTTP request. Best effort: `start()` rebuilds
+            // it if this failed (e.g. Docker temporarily unavailable).
+            try {
+                await this.log(generationId, '→ Building runtime image...');
+                await this.dockerRuntime.buildImageForGeneration(platformId, slug, nextSchemaVersion);
+                await this.log(generationId, '  Runtime image ready.');
+            } catch (imageError: unknown) {
+                await this.log(generationId, `⚠ Runtime image not pre-built (it will be built at start): ${imageError instanceof Error ? imageError.message : String(imageError)}`);
+            }
         } catch (error: unknown) {
             const isCancelled = error instanceof CommandCancelledError;
-            const message = error instanceof Error ? error.message : String(error);
+            if (isCancelled && this.cancellationRegistry.isShuttingDown()) {
+                // Interrupted by a server shutdown, not by the user: the generation stays RUNNING
+                // and is restarted by `reconcileOrphanedGenerations()` at the next boot.
+                this.logger.warn(`Generation ${generationId} interrupted by shutdown - will resume at next boot.`);
+                return;
+            }
+            const message = redactSecrets(error instanceof Error ? error.message : String(error));
             const failureReason = isCancelled ? 'Cancelled by user.' : message;
 
-            this.logger.error(`Generation job ${generationId} failed.`, error instanceof Error ? error.stack : undefined);
+            this.logger.error(`Generation job ${generationId} failed.`, error instanceof Error ? redactSecrets(error.stack ?? '') : undefined);
 
-            // Each step below is independently try/caught (a failure recording the failure
-            // should never prevent the others from at least being attempted) - this also folds
-            // in what used to be two separate, duplicated attempts at the same three updates
-            // (an if/else block immediately followed by an unconditional "Failure Recovery"
-            // block doing the exact same three calls again) into one.
             try {
                 await this.log(generationId, isCancelled ? '⏹ Generation Cancelled.' : `❌ Generation failed: ${message}`);
             } catch (logError: unknown) {
@@ -409,19 +461,9 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
                 this.logger.error(`Failed to set status to FAILED for generation ${generationId}.`, statusError instanceof Error ? statusError.stack : String(statusError));
             }
 
-            // ZERO-DOWNTIME REGENERATION (continued from the top of this method): only demote
-            // the PLATFORM to 'ERROR' - which the gateway treats as un-routable - when there was
-            // no previously-working version to protect in the first place. When
-            // `hadWorkingVersion` is true, `platform.status` was deliberately left untouched
-            // (still 'ACTIVE') at the start of this run, so there is nothing to revert here: the
-            // old, still-running container/process keeps serving traffic exactly as before,
-            // completely unaffected by this failed regeneration attempt, until someone fixes
-            // the underlying problem and retries. The failed attempt itself is still fully
-            // recorded above (`Generation.status = 'FAILED'`, with `errorMsg`/logs) - only the
-            // platform's own routability is protected.
             if (!hadWorkingVersion) {
                 try {
-                    await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } });
+                    await this.updatePlatformStatusUnlessArchived(platformId, 'ERROR');
                 } catch (platformError: unknown) {
                     this.logger.error(`Failed to set status to ERROR for platform ${platformId}.`, platformError instanceof Error ? platformError.stack : String(platformError));
                 }
@@ -429,7 +471,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
                 try {
                     await this.log(generationId, 'ℹ The previously working version is still running and unaffected by this failed regeneration - platform left ACTIVE.');
                 } catch {
-                    // Purely informational - already logged the failure itself above.
+                    // Purely informational.
                 }
             }
         } finally {
@@ -437,44 +479,36 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         }
     }
 
+    /** GEN-005: status writes never override an ARCHIVED platform. */
+    private async updatePlatformStatusUnlessArchived(platformId: string, status: 'GENERATING' | 'ERROR'): Promise<void> {
+        await this.prisma.platform.updateMany({
+            where: { id: platformId, status: { not: 'ARCHIVED' } },
+            data: { status },
+        });
+    }
+
     /**
-     * Computes a diff between the migration history already on disk (`prisma/migrations/`) and
-     * the `schema.prisma` just written by `ProjectScaffolderService`, and - if there is any
-     * actual difference - writes it as a brand new, properly versioned migration folder
-     * (Prisma's own `<timestamp>_<name>/migration.sql` convention), so `prisma migrate deploy`
-     * (the very next step) has something real to apply.
+     * Computes a diff between the migration history on disk and the freshly written
+     * `schema.prisma` and, if there is a difference, writes it as a new versioned migration.
      *
-     * NEEDS A SHADOW DATABASE: `migrate diff --from-migrations` can't determine what a
-     * migration history results in by statically parsing SQL - it replays it against a real,
-     * empty database to find out, then diffs that against the target schema. This was initially
-     * (incorrectly) assumed to be a fully offline operation; it isn't. See
-     * `ProvisioningService.ensureShadowDatabaseUrl()` for the dedicated, persistent database
-     * used for this and why it deliberately isn't the per-platform role's own database (that
-     * role has no CREATEDB privilege on purpose).
+     * DATA-SAFETY FIX (GEN-001): the SQL is inspected before being written. Destructive
+     * statements (DROP TABLE/COLUMN, column type changes, SET NOT NULL...) - typically caused by
+     * archiving or deleting an entity/field - make the generation fail with the list of
+     * statements, unless the platform owner explicitly approved destructive changes for this
+     * generation. Nothing has been applied to the database at that point.
      */
     private async generateMigrationIfNeeded(
         generationId: string,
         projectPath: string,
         timeoutMs: number,
         envOverrides: Record<string, string>,
-        signal?: AbortSignal,
+        signal: AbortSignal | undefined,
+        allowDestructiveMigration: boolean,
     ): Promise<void> {
         const migrationsDir = path.join(projectPath, 'prisma', 'migrations');
         await fsp.mkdir(migrationsDir, { recursive: true });
 
-        // BUGFIX: `prisma migrate diff --from-migrations <dir>` refuses to run at all unless
-        // `<dir>/migration_lock.toml` already exists - that's how it knows which database
-        // connector (postgresql, mysql, ...) the migration history on disk was written for,
-        // without needing to read/parse the SQL itself. Normally `prisma migrate dev` creates
-        // this file automatically the very first time it's run in a project - but this pipeline
-        // never calls `migrate dev` (see the class-level comment on `generateMigrationIfNeeded`
-        // for why: the per-platform DB role has no CREATEDB privilege, which `migrate dev`
-        // requires for its shadow database), so the file never gets created and every single
-        // generation failed with "Could not determine the connector from the migrations
-        // directory (missing migration_lock.toml)". Written unconditionally, idempotently
-        // (the content never changes - this project's connector is always postgresql, see
-        // `schema-builder.service.ts`'s hardcoded `provider = "postgresql"` datasource block),
-        // and BEFORE the diff below, which is the first command that needs it to exist.
+        // `prisma migrate diff --from-migrations` requires migration_lock.toml to know the connector.
         const lockFilePath = path.join(migrationsDir, 'migration_lock.toml');
         if (!fs.existsSync(lockFilePath)) {
             await fsp.writeFile(
@@ -506,7 +540,23 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             return;
         }
 
-        const migrationName = `${this.formatMigrationTimestamp(new Date())}_platform_update`;
+        const destructive = findDestructiveStatements(sql);
+        if (destructive.length > 0) {
+            if (!allowDestructiveMigration) {
+                throw new Error(
+                    'Destructive schema changes detected - nothing was applied to the database. ' +
+                    'These statements would delete or rewrite existing data:\n' +
+                    destructive.map((statement) => `  • ${statement}`).join('\n') +
+                    '\nRestore the archived/deleted entities or fields, or have the platform owner relaunch the ' +
+                    'generation with "allowDestructiveMigration": true after taking a backup.',
+                );
+            }
+            await this.log(generationId, `⚠ ${destructive.length} destructive statement(s) explicitly approved by the platform owner:`);
+            for (const statement of destructive) await this.log(generationId, `  • ${statement}`);
+        }
+
+        // Second-level timestamp + a random suffix: two diffs in the same second never collide.
+        const migrationName = `${this.formatMigrationTimestamp(new Date())}_platform_update_${Math.random().toString(36).slice(2, 8)}`;
         const migrationFolder = path.join(migrationsDir, migrationName);
         await fsp.mkdir(migrationFolder, { recursive: true });
         await fsp.writeFile(path.join(migrationFolder, 'migration.sql'), `${sql}\n`, 'utf8');
@@ -555,7 +605,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
      * Appends a formatted line entry into the database build log history associated with the current generation run.
      */
     private async log(generationId: string, line: string): Promise<void> {
-        const normalizedLine = line.trim();
+        const normalizedLine = redactSecrets(line.trim());
         if (!normalizedLine) return;
         await this.generations.appendLog(generationId, normalizedLine);
     }

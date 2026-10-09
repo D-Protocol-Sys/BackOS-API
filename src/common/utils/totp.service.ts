@@ -47,7 +47,14 @@ export class TotpService {
      * @returns Promise resolving to `true` if the token is valid and active, `false` otherwise.
      */
     async verify(secret: string, token: string): Promise<boolean> {
-        // Clean up input by removing potential spaces entered by the user
+        return (await this.verifyWithStep(secret, token)).valid;
+    }
+
+    /**
+     * Same as `verify()` but also returns the RFC 6238 time step the code belongs to, so callers
+     * can reject a second use of the same code (SEC-009 anti-replay).
+     */
+    async verifyWithStep(secret: string, token: string): Promise<{ valid: boolean; timeStep?: number }> {
         const normalizedToken = token.trim().replace(/\s+/g, '');
 
         const result = await verify({
@@ -55,6 +62,7 @@ export class TotpService {
             token: normalizedToken,
         });
 
-        return result.valid;
+        if (!result.valid) return { valid: false };
+        return { valid: true, timeStep: (result as { timeStep?: number }).timeStep };
     }
 }

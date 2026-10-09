@@ -64,4 +64,10 @@ export class MfaService {
         // 2. Delegate TOTP time-window verification to TotpService
         return this.totp.verify(secret, token);
     }
+
+    /** Decrypts the secret and verifies the code, returning its time step (anti-replay, SEC-009). */
+    async verifyWithStep(encryptedSecret: string, token: string): Promise<{ valid: boolean; timeStep?: number }> {
+        const secret = this.crypto.decrypt(encryptedSecret);
+        return this.totp.verifyWithStep(secret, token);
+    }
 }

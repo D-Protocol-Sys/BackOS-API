@@ -24,11 +24,19 @@ describe('AuthService', () => {
         prismaMock = {
             user: { findUnique: jest.fn(), findFirst: jest.fn() },
             userMfa: { findUnique: jest.fn() },
-            recoveryCode: { findMany: jest.fn(), update: jest.fn() },
-            refreshToken: { create: jest.fn().mockResolvedValue({}) },
+            recoveryCode: { findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
+            refreshToken: { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            // SEC-004: TOTP anti-replay is an atomic raw UPDATE of user_mfa."lastUsedStep".
+            $executeRaw: jest.fn().mockResolvedValue(1),
+            $queryRaw: jest.fn().mockResolvedValue([]),
         };
         auditLogMock = { log: jest.fn() };
         mfaServiceMock = { verify: jest.fn() };
+        // verifyWithStep() mirrors verify() and reports the matched time step (anti-replay).
+        mfaServiceMock.verifyWithStep = jest.fn(async (secret: string, code: string) => {
+            const valid = await mfaServiceMock.verify(secret, code);
+            return valid ? { valid: true, timeStep: 1_000_000 } : { valid: false };
+        });
         recoveryCodeMock = {
             hashRecoveryCode: jest.fn((raw: string) => `hash(${raw})`),
         };
@@ -74,6 +82,18 @@ describe('AuthService', () => {
 
             expect(auditLogMock.log).toHaveBeenCalledWith(
                 expect.objectContaining({ actorId: 'user-1', context }),
+            );
+        });
+
+        it('rejette un code TOTP valide déjà utilisé (anti-rejeu, SEC-004)', async () => {
+            prismaMock.user.findUnique.mockResolvedValue(activeUser);
+            prismaMock.userMfa.findUnique.mockResolvedValue(activeMfa);
+            mfaServiceMock.verify.mockResolvedValue(true);
+            // The conditional UPDATE matched no row: this time step was already consumed.
+            prismaMock.$executeRaw.mockResolvedValue(0);
+
+            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(
+                UnauthorizedException,
             );
         });
 
@@ -125,8 +145,9 @@ describe('AuthService', () => {
                 service.loginWithRecoveryCode({ loginIdentifier: 'a', recoveryCode: 'abcdef' } as any, context),
             ).resolves.toBeDefined();
 
-            expect(prismaMock.recoveryCode.update).toHaveBeenCalledWith({
-                where: { id: 'code-1' },
+            // Consumed atomically: only succeeds if the code is still unused (SEC-008).
+            expect(prismaMock.recoveryCode.updateMany).toHaveBeenCalledWith({
+                where: { id: 'code-1', usedAt: null },
                 data: { usedAt: expect.any(Date) },
             });
         });
@@ -156,6 +177,37 @@ describe('AuthService', () => {
             await expect(
                 service.loginWithRecoveryCode({ loginIdentifier: 'a', recoveryCode: 'x' } as any, context),
             ).rejects.toThrow(UnauthorizedException);
+        });
+    });
+
+    describe('refreshTokens (audit SEC-002 / SEC-010)', () => {
+        const future = new Date(Date.now() + 86_400_000);
+
+        it("refuse et révoque toutes les sessions quand le compte n'est plus ACTIVE", async () => {
+            prismaMock.refreshToken.findUnique = jest.fn().mockResolvedValue({
+                id: 'rt-1', userId: 'user-1', expiresAt: future, revokedAt: null,
+                user: { id: 'user-1', status: UserStatus.SUSPENDED, workEmail: 'a@b.com' },
+            });
+
+            await expect(service.refreshTokens('raw-token')).rejects.toThrow(UnauthorizedException);
+            expect(prismaMock.refreshToken.updateMany).toHaveBeenCalledWith(
+                expect.objectContaining({ where: { userId: 'user-1', revokedAt: null } }),
+            );
+        });
+
+        it('détecte la réutilisation d\'un jeton déjà tourné et révoque toutes les sessions', async () => {
+            prismaMock.refreshToken.findUnique = jest.fn().mockResolvedValue({
+                id: 'rt-1', userId: 'user-1', expiresAt: future, revokedAt: new Date(Date.now() - 60_000),
+                user: { id: 'user-1', status: UserStatus.ACTIVE, workEmail: 'a@b.com' },
+            });
+
+            await expect(service.refreshTokens('raw-token')).rejects.toThrow(UnauthorizedException);
+            expect(prismaMock.refreshToken.updateMany).toHaveBeenCalledWith(
+                expect.objectContaining({ where: { userId: 'user-1', revokedAt: null } }),
+            );
+            expect(auditLogMock.log).toHaveBeenCalledWith(
+                expect.objectContaining({ metadata: { reason: 'refresh-token-reuse-detected' } }),
+            );
         });
     });
 });

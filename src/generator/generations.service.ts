@@ -30,6 +30,28 @@ export class GenerationsService {
      * after. Throws if the generation isn't awaiting approval (already approved, rejected,
      * cancelled...), so a double-click or a stale UI can never enqueue the same job twice.
      */
+    /**
+     * CONCURRENCY FIX (DB-005): creates a generation only if none is PENDING / RUNNING /
+     * AWAITING_APPROVAL for the platform. The check and the insert run in one transaction under a
+     * per-platform advisory lock, so concurrent requests cannot both pass the check.
+     * Returns null when another generation is already active.
+     */
+    async createIfNoneActive(
+        platformId: string,
+        triggeredById: string,
+        status: 'PENDING' | 'AWAITING_APPROVAL' = 'PENDING',
+    ) {
+        return this.prisma.$transaction(async (tx) => {
+            await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${`generation-create:${platformId}`}))`;
+            const inFlight = await tx.generation.findFirst({
+                where: { platformId, status: { in: ['AWAITING_APPROVAL', 'PENDING', 'RUNNING'] } },
+                select: { id: true },
+            });
+            if (inFlight) return null;
+            return tx.generation.create({ data: { platformId, triggeredById, status } });
+        });
+    }
+
     async approve(generationId: string, approverId: string) {
         const result = await this.prisma.generation.updateMany({
             where: { id: generationId, status: 'AWAITING_APPROVAL' },
@@ -73,18 +95,13 @@ export class GenerationsService {
      * @param line - The log message string to append.
      */
     async appendLog(generationId: string, line: string) {
-        const current = await this.prisma.generation.findUniqueOrThrow({
-            where: { id: generationId },
-            select: { logs: true },
-        });
-        
-        // Append new line and cap total logs length at 50,000 characters (keeping the most recent outputs)
-        const updatedLogs = `${current.logs ?? ''}${line}\n`.slice(-50_000);
-        
-        return this.prisma.generation.update({
-            where: { id: generationId },
-            data: { logs: updatedLogs },
-        });
+        // PERF / CONCURRENCY FIX (DB-007): one atomic UPDATE instead of read-modify-write of the
+        // whole log (quadratic I/O and lost lines when two writers interleave). Last 50k chars kept.
+        const updated = await this.prisma.$executeRaw`
+            UPDATE generations
+            SET logs = right(coalesce(logs, '') || ${line} || E'\n', 50000)
+            WHERE id = ${generationId}`;
+        if (updated === 0) throw new NotFoundException('Generation not found.');
     }
 
     /**
@@ -154,9 +171,24 @@ export class GenerationsService {
      * * @param platformId - Target platform identifier.
      */
     async listForPlatform(platformId: string) {
+        // DB-006 / PERF-004: bounded list (the 100 most recent generations) WITHOUT the logs
+        // column (up to 50 kB each) - the full logs are served by GET .../generations/:id.
         return this.prisma.generation.findMany({
             where: { platformId },
             orderBy: { startedAt: 'desc' },
+            take: 100,
+            select: {
+                id: true,
+                status: true,
+                errorMsg: true,
+                schemaVersion: true,
+                platformId: true,
+                triggeredById: true,
+                approvedById: true,
+                approvedAt: true,
+                startedAt: true,
+                finishedAt: true,
+            },
         });
     }
 }

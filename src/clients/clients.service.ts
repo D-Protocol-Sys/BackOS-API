@@ -94,8 +94,13 @@ export class ClientsService {
      */
     async findAll(page = 1, limit = 20, status?: string, includeArchived = false) {
         const skip = (page - 1) * limit;
+        // QUALITY fix: validate the filter against the enum instead of forwarding any string to
+        // Prisma (an unknown value used to surface as an opaque 500).
+        if (status && !(Object.values(ClientStatus) as string[]).includes(status)) {
+            throw new BadRequestException(`Invalid status "${status}".`);
+        }
         const where = status
-            ? { status: status as any }
+            ? { status: status as ClientStatus }
             : includeArchived
                 ? {}
                 : { status: { not: ClientStatus.ARCHIVED } };

@@ -13,7 +13,7 @@ import { RoleHierarchyService } from '../common/services/role-hierarchy.service'
 import { CreateUserDto } from './dto/create-user.dto';
 import { AdminUpdateUserDto } from './dto/admin-update-user.dto';
 import { UpdateProfileDetailsDto } from './dto/update-profile-details.dto';
-import { StatusChangeReason, UserStatus } from '@prismamodels/enums';
+import { PlanningScope, StatusChangeReason, UserStatus } from '@prismamodels/enums';
 import { AuditLogService } from '../audit/audit-log.service';
 import { PERMISSIONS } from '../common/constants/permissions.constant';
 import { AUDIT_ACTIONS } from '../common/constants/audit-actions';
@@ -31,6 +31,8 @@ import { ProcessDisabledUserDto, RetentionAction } from './dto/process-disabled-
 /**
  * Standard Prisma selection object to avoid leaking sensitive credentials or internal security details.
  */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export const SAFE_USER_SELECT = {
     id: true,
     workEmail: true,
@@ -157,11 +159,11 @@ export class UsersService {
      * @returns Updated safe user entity.
      */
     async updateMe(userId: string, dto: UpdateProfileDetailsDto) {
-        return this.prisma.user.update({
-            where: { id: userId },
-            data: dto,
-            select: SAFE_USER_SELECT,
-        });
+        // BUG FIX (API-001): the profile DTO (bio, phone, dateOfBirth...) used to be passed as-is to
+        // `prisma.user.update`, whose model has none of these columns - any profile field made the
+        // route fail with a 500. Profile fields go to UserProfile, personalEmail to User.
+        await this.updateMyProfileDetails(userId, dto);
+        return this.getMe(userId);
     }
 
     /**
@@ -219,6 +221,11 @@ export class UsersService {
      * @throws NotFoundException when the user has never uploaded an avatar.
      */
     async streamAvatar(userId: string, res: Response): Promise<void> {
+        // SECURITY FIX (SEC-011): the id comes from the URL and was joined into a filesystem path,
+        // so `..%2F..%2F<path>` could read any .png/.jpg/.webp file on the host.
+        if (!UUID_PATTERN.test(userId)) {
+            throw new NotFoundException('This user has no avatar.');
+        }
         const dir = path.join(resolveUploadDir(), 'avatars');
         for (const [extension, mimeType] of [['png', 'image/png'], ['jpg', 'image/jpeg'], ['webp', 'image/webp']] as const) {
             const diskPath = path.join(dir, `${userId}.${extension}`);
@@ -432,6 +439,7 @@ export class UsersService {
         dto: ChangeUserStatusDto,
     ) {
         // 1. Security checks
+        this.assertNotSelf(actorUserId, targetUserId, 'deactivate');
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'deactivate');
         await this.assertNotProtectedOwner(targetUserId,'deactivate');
 
@@ -483,6 +491,9 @@ export class UsersService {
         });
 
         // 3. Record successful administrative action
+        // SECURITY FIX (SEC-002): suspension now ends every session immediately.
+        await this.authService.revokeAllRefreshTokens(targetUserId);
+
         await this.auditLog.log({
             action: AUDIT_ACTIONS.USERS_DEACTIVATE,
             actorId: actorUserId,
@@ -547,6 +558,9 @@ export class UsersService {
         dto: ChangeUserStatusDto,
     ) {
         // 1. Security check: Ensure the actor has higher hierarchy seniority than the target user
+        // SECURITY FIX (SEC-002): `assertSeniorToTarget` returns early when actor = target, which let a
+        // suspended user holding users.deactivate reactivate their own account.
+        this.assertNotSelf(actorUserId, targetUserId, 'reactivate');
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'reactivate');
 
         // 2. Update user, reset timestamp, and create status history entry atomically
@@ -621,12 +635,14 @@ export class UsersService {
      */
     async disableUser(actorUserId: string, targetUserId: string) {
         // 1. Security checks
+        this.assertNotSelf(actorUserId, targetUserId, 'disable');
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'disable');
         await this.assertNotProtectedOwner(targetUserId, 'disable');
 
         // 2. Fetch grace period configuration (defaults to 60 days)
         const DEACTIVATION_GRACE_PERIOD_DAYS = this.configService.get<number>(
-            'status.deactivationGracePeriodDays',
+            // CONFIG FIX (ARCH-003): the 'status' namespace was never loaded; read the env var directly.
+            'DEACTIVATION_GRACE_PERIOD_DAYS',
             60,
         );
 
@@ -676,6 +692,8 @@ export class UsersService {
         });
 
         // 4. Log audit action AFTER successful transaction
+        await this.authService.revokeAllRefreshTokens(targetUserId);
+
         await this.auditLog.log({
             action: AUDIT_ACTIONS.USERS_DISABLE,
             actorId: actorUserId,
@@ -726,9 +744,14 @@ export class UsersService {
 
         // 4. Option 2: GDPR Anonymization
         if (dto.action === RetentionAction.ANONYMIZE) {
-            const anonymousTag = `deleted-user-${targetUserId.substring(0, 8)}`;
+            const anonymousTag = `deleted-user-${targetUserId.replace(/-/g, "").slice(0, 16)}`;
 
             await this.prisma.$transaction(async (tx) => {
+                // PRIVACY/SECURITY FIX: an anonymized account keeps no credential of any kind.
+                await tx.refreshToken.updateMany({ where: { userId: targetUserId, revokedAt: null }, data: { revokedAt: new Date() } });
+                await tx.userMfa.deleteMany({ where: { userId: targetUserId } });
+                await tx.recoveryCode.deleteMany({ where: { userId: targetUserId } });
+                await tx.invitation.deleteMany({ where: { userId: targetUserId } });
                 // Delete linked metadata profile
                 await tx.userProfile.deleteMany({ where: { userId: targetUserId } });
 
@@ -746,6 +769,8 @@ export class UsersService {
             });
 
             // Log administrative data processing audit event
+            await this.deleteAvatarFiles(targetUserId);
+
             await this.auditLog.log({
                 action: AUDIT_ACTIONS.USERS_ANONYMIZE,
                 actorId: actorUserId,
@@ -847,20 +872,12 @@ export class UsersService {
      * platform) can never pull another person's data.
      */
     async exportUserDataAs(actor: { userId: string; permissions: string[] }, targetUserId: string) {
+        // PRIVACY FIX (SEC-012): being owner/ADMIN of a platform the target belongs to no longer
+        // grants access to their GDPR export. Membership can be granted without the target's
+        // consent, and the export covers data from every other tenant (owned platforms,
+        // generations, personal e-mail) - it is now self-service or `users.export` only.
         if (actor.userId !== targetUserId && !actor.permissions.includes(PERMISSIONS.USERS_EXPORT)) {
-            const sharedPlatforms = await this.prisma.platform.findMany({
-                where: { OR: [{ ownerId: targetUserId }, { members: { some: { userId: targetUserId } } }] },
-                select: { id: true, ownerId: true },
-            });
-
-            let allowed = false;
-            for (const platform of sharedPlatforms) {
-                const { isOwner, isAdmin } = await this.platformAccess.getEffectivePermissions(actor, platform);
-                if (isOwner || isAdmin) { allowed = true; break; }
-            }
-            if (!allowed) {
-                throw new ForbiddenException("You are not allowed to export this user's data.");
-            }
+            throw new ForbiddenException("You are not allowed to export this user's data.");
         }
         return this.exportUserData(targetUserId);
     }
@@ -952,7 +969,7 @@ export class UsersService {
         // `platformOwned` check above; resolved via `PlanningService.reassignResponsible()`
         // (`PATCH /platforms/:platformId/planning/responsible`).
         const responsibleForCount = await this.prisma.planning.count({
-            where: { responsibleId: userId },
+            where: { responsibleId: userId, scope: { not: PlanningScope.PERSONAL } },
         });
         if (responsibleForCount > 0) {
             throw new ConflictException(
@@ -966,7 +983,7 @@ export class UsersService {
         // to know *why*. This replicates the same explicit, actionable pre-check already used
         // for `platformOwned` above, for the exact same class of problem.
         const createdEntriesCount = await this.prisma.planningEntry.count({
-            where: { creatorId: userId },
+            where: { creatorId: userId, planning: { scope: { not: PlanningScope.PERSONAL } } },
         });
         if (createdEntriesCount > 0) {
             throw new ConflictException(
@@ -983,7 +1000,21 @@ export class UsersService {
             targetId: userId,
         });
 
-        await this.prisma.user.delete({ where: { id: userId } });
+        // DB-008: FileAsset rows cascade with the user, but the files themselves used to stay on
+        // disk forever (personal data included). They are removed first.
+        const ownedFiles = await this.prisma.fileAsset.findMany({ where: { uploaderId: userId }, select: { storedName: true } });
+
+        await this.prisma.$transaction([
+            this.prisma.planning.deleteMany({
+                where: { scope: PlanningScope.PERSONAL, responsibleId: userId, platformId: null },
+            }),
+            this.prisma.user.delete({ where: { id: userId } }),
+        ]);
+
+        for (const file of ownedFiles) {
+            await fs.unlink(path.join(resolveUploadDir(), path.basename(file.storedName))).catch(() => undefined);
+        }
+        await this.deleteAvatarFiles(userId);
 
         return { message: 'Account permanently deleted.' };
     }
@@ -1045,6 +1076,21 @@ export class UsersService {
      * @param action - Action name for dynamic exception messaging.
      * @throws ForbiddenException if target user is the sole system owner.
      */
+    /** SEC-002: an account's status can never be changed by the account itself. */
+    private assertNotSelf(actorUserId: string, targetUserId: string, action: string): void {
+        if (actorUserId === targetUserId) {
+            throw new ForbiddenException(`You cannot ${action} your own account.`);
+        }
+    }
+
+    private async deleteAvatarFiles(userId: string): Promise<void> {
+        if (!UUID_PATTERN.test(userId)) return;
+        const dir = path.join(resolveUploadDir(), 'avatars');
+        for (const extension of ['png', 'jpg', 'webp']) {
+            await fs.unlink(path.join(dir, `${userId}.${extension}`)).catch(() => undefined);
+        }
+    }
+
     private async assertNotProtectedOwner(userId: string, action: string) {
         const userRoles = await this.prisma.userRole.findMany({
             where: { userId },

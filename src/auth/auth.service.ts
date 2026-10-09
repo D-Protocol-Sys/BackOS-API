@@ -65,10 +65,18 @@ export class AuthService {
         const saltRounds = this.configService.get<number>('totp.saltRounds', 12);
         const codeHash = await bcrypt.hash(code, saltRounds);
 
+        // CONFIG FIX (ARCH-003): the key used to be 'mfa.invitationExpiresInHours', a namespace
+        // that does not exist, so INVITATION_EXPIRES_IN_HOURS was silently ignored.
         const INVITATION_EXPIRES_IN_HOURS = this.configService.get<number>(
-            'mfa.invitationExpiresInHours', 
+            'totp.invitationExpiresInHours',
             48,
         );
+
+        // Only the latest invitation of a user stays usable.
+        await this.prisma.invitation.updateMany({
+            where: { userId: user.id, used: false },
+            data: { used: true, usedAt: new Date() },
+        });
         const expiresAt = new Date( Date.now() + INVITATION_EXPIRES_IN_HOURS * 60 * 60 * 1000 );
 
         // 3. Persist hashed invitation credentials and expiration date
@@ -174,49 +182,50 @@ export class AuthService {
         // 1. Retrieve active invitation associated with the provided token
         const invitation = await this.findValidInvitationByToken(dto.token);
 
-        const maxAttempts = this.configService.get<number>('totp.maxAttempts', 5);
+        // CONFIG FIX (ARCH-003): was 'totp.maxAttempts', which does not exist.
+        const maxAttempts = this.configService.get<number>('totp.invitationMaxAttempts', 5);
 
-        // 2. Lock out request if attempt threshold has been reached
-        if (invitation.attempts >= maxAttempts) {
+        // CONCURRENCY FIX (SEC-029): an attempt is reserved atomically BEFORE the bcrypt
+        // comparison. Parallel requests used to all read `attempts < max` and all get a guess.
+        const reserved = await this.prisma.invitation.updateMany({
+            where: { id: invitation.id, used: false, attempts: { lt: maxAttempts } },
+            data: { attempts: { increment: 1 } },
+        });
+
+        if (reserved.count === 0) {
             await this.auditLog.log({
                 action: AUDIT_ACTIONS.INVITATION_LOCKED,
                 actorId: invitation.userId,
                 targetType: AUDIT_TARGETS.INVITATION,
                 targetId: invitation.id,
-                metadata: {
-                    attempts: invitation.attempts,
-                    maxAttempts,
-                },
+                metadata: { attempts: invitation.attempts, maxAttempts },
                 context,
             });
 
             throw new UnauthorizedException('Too many failed attempts. Invitation has been invalidated.');
         }
 
-        // 3. Compare provided raw code with stored hash
         const isValidCode = await bcrypt.compare(dto.code, invitation.codeHash);
-        
         if (!isValidCode) {
-            await this.prisma.invitation.update({
-                where: { id: invitation.id },
-                data: { attempts: { increment: 1 } },
-            });
-
             throw new UnauthorizedException('Invalid verification code.');
         }
 
-        // 4. Mark invitation as successfully consumed
-        await this.prisma.invitation.update({
-            where: { id: invitation.id },
+        // Single use, enforced atomically (two concurrent valid submissions cannot both succeed).
+        const consumed = await this.prisma.invitation.updateMany({
+            where: { id: invitation.id, used: false },
             data: { used: true, usedAt: new Date() },
         });
+        if (consumed.count === 0) {
+            throw new UnauthorizedException('This invitation has already been used.');
+        }
 
         await this.auditLog.log({
             action: AUDIT_ACTIONS.INVITATION_USED,
             actorId: invitation.userId,
             targetType: AUDIT_TARGETS.INVITATION,
             targetId: invitation.id,
-            metadata: { invitedUser: invitation.user },
+            // PRIVACY FIX (SEC-029): used to store the whole user row in the audit metadata.
+            metadata: { invitedUserId: invitation.userId },
             context,
         });
 
@@ -279,9 +288,16 @@ export class AuthService {
             throw new UnauthorizedException('No pending MFA setup found for this account.');
         }
 
-        // 3. Verify TOTP code via MfaService
-        const isValid = await this.mfaService.verify(mfa.secretEncrypted, dto.totpCode);
+        // SECURITY FIX (SEC-009): confirmation had no attempt limit, allowing unlimited guesses
+        // while the account is ACTIVATING. It now shares the login lockout policy.
+        if (user.lockedUntil && user.lockedUntil > new Date()) {
+            throw new UnauthorizedException('Invalid verification code.');
+        }
+
+        // 3. Verify TOTP code via MfaService (single use)
+        const isValid = await this.verifyTotpOnce(user.id, mfa.secretEncrypted, dto.totpCode);
         if (!isValid) {
+            await this.registerFailedLoginAttempt(user.id, context);
             throw new UnauthorizedException('Invalid verification code.');
         }
 
@@ -378,21 +394,18 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 4. Verify TOTP code via MfaService
-        const isValid = await this.mfaService.verify(mfa.secretEncrypted, dto.totpCode);
+        // 4. Verify TOTP code via MfaService (a code is accepted only once - SEC-009)
+        const isValid = await this.verifyTotpOnce(user.id, mfa.secretEncrypted, dto.totpCode);
         if (!isValid) {
-            await this.registerFailedLoginAttempt(user.id, user.failedLoginAttempts, context);
+            await this.registerFailedLoginAttempt(user.id, context);
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 5. Successful login: clear any prior failed-attempt counter so a legitimate user is
-        // never inconvenienced by attempts that happened before their own successful login.
-        if (user.failedLoginAttempts > 0 || user.lockedUntil) {
-            await this.prisma.user.update({
-                where: { id: user.id },
-                data: { failedLoginAttempts: 0, lockedUntil: null },
-            });
-        }
+        // 5. Successful login: clear any prior failed-attempt counter.
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: { failedLoginAttempts: 0, lockedUntil: null, lastLoginAt: new Date() },
+        });
 
         // 6. Record successful login event in security audit log
         await this.auditLog.log({
@@ -419,35 +432,63 @@ export class AuthService {
      *   this failure, so we can decide here whether the new count crosses the lockout threshold.
      * @param context - Audit metadata (IP address, user agent) for the security audit trail.
      */
-    private async registerFailedLoginAttempt(
-        userId: string,
-        currentAttempts: number,
-        context: AuditContext,
-    ): Promise<void> {
+    private async registerFailedLoginAttempt(userId: string, context: AuditContext): Promise<void> {
         const maxAttempts = this.configService.get<number>('security.loginLockout.maxAttempts') ?? 5;
         const lockoutMinutes = this.configService.get<number>('security.loginLockout.lockoutMinutes') ?? 15;
 
-        const nextAttempts = currentAttempts + 1;
-        const shouldLock = nextAttempts >= maxAttempts;
+        // CONCURRENCY FIX (SEC-008): the counter used to be written as an absolute value read
+        // earlier in the request, so N parallel wrong guesses all wrote "1" and the lockout never
+        // triggered. The increment and the lock decision now happen in ONE atomic UPDATE.
+        const rows = await this.prisma.$queryRaw<{ attempts: number; locked: boolean }[]>`
+            UPDATE users
+            SET "failedLoginAttempts" = CASE WHEN "failedLoginAttempts" + 1 >= ${maxAttempts} THEN 0 ELSE "failedLoginAttempts" + 1 END,
+                "lockedUntil" = CASE WHEN "failedLoginAttempts" + 1 >= ${maxAttempts}
+                                     THEN now() + (${lockoutMinutes} * interval '1 minute')
+                                     ELSE "lockedUntil" END
+            WHERE id = ${userId}
+            RETURNING "failedLoginAttempts" AS attempts,
+                      ("lockedUntil" IS NOT NULL AND "lockedUntil" > now()) AS locked`;
 
-        await this.prisma.user.update({
-            where: { id: userId },
-            data: {
-                failedLoginAttempts: shouldLock ? 0 : nextAttempts,
-                lockedUntil: shouldLock
-                    ? new Date(Date.now() + lockoutMinutes * 60 * 1000)
-                    : undefined,
-            },
-        });
+        const shouldLock = rows[0]?.locked === true && rows[0]?.attempts === 0;
 
         await this.auditLog.log({
             action: shouldLock ? AUDIT_ACTIONS.LOGIN_LOCKED : AUDIT_ACTIONS.LOGIN_FAILED,
             actorId: userId,
             targetType: AUDIT_TARGETS.USER,
             targetId: userId,
-            metadata: shouldLock ? { lockoutMinutes } : { attempt: nextAttempts, maxAttempts },
+            metadata: shouldLock ? { lockoutMinutes } : { attempt: rows[0]?.attempts ?? null, maxAttempts },
             context,
         });
+    }
+
+    /**
+     * SECURITY FIX (SEC-009): verifies a TOTP code AND records its time step atomically, so the
+     * same code cannot be replayed within its validity window (intercepted code, shoulder
+     * surfing, double submission). Returns false for an invalid or already-used code.
+     */
+    private async verifyTotpOnce(userId: string, encryptedSecret: string, code: string): Promise<boolean> {
+        const result = await this.mfaService.verifyWithStep(encryptedSecret, code);
+        if (!result.valid) return false;
+        if (result.timeStep === undefined) return true;
+
+        const updated = await this.prisma.$executeRaw`
+            UPDATE user_mfa
+            SET "lastUsedStep" = ${result.timeStep}
+            WHERE "userId" = ${userId}
+              AND ("lastUsedStep" IS NULL OR "lastUsedStep" < ${result.timeStep})`;
+        return updated === 1;
+    }
+
+    /**
+     * SECURITY FIX (SEC-002): revokes every active refresh token of a user. Called on
+     * suspension, disabling, anonymization and when refresh-token reuse is detected.
+     */
+    async revokeAllRefreshTokens(userId: string): Promise<number> {
+        const result = await this.prisma.refreshToken.updateMany({
+            where: { userId, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
+        return result.count;
     }
 
     /**
@@ -490,9 +531,9 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        const isValid = await this.mfaService.verify(mfa.secretEncrypted, totpCode);
+        const isValid = await this.verifyTotpOnce(user.id, mfa.secretEncrypted, totpCode);
         if (!isValid) {
-            await this.registerFailedLoginAttempt(user.id, user.failedLoginAttempts, context);
+            await this.registerFailedLoginAttempt(user.id, context);
             throw new UnauthorizedException('Invalid credentials.');
         }
 
@@ -591,11 +632,14 @@ export class AuthService {
             throw new UnauthorizedException('Invalid credentials.');
         }
 
-        // 5. Consume recovery code (single-use enforcement)
-        await this.prisma.recoveryCode.update({ 
-            where: { id: match.id }, 
-            data: { usedAt: new Date() }, 
+        // 5. Consume recovery code (single-use, enforced atomically against concurrent use)
+        const consumed = await this.prisma.recoveryCode.updateMany({
+            where: { id: match.id, usedAt: null },
+            data: { usedAt: new Date() },
         });
+        if (consumed.count === 0) {
+            throw new UnauthorizedException('Invalid credentials.');
+        }
 
         // 6. Record successful recovery login event
         await this.auditLog.log({
@@ -646,7 +690,7 @@ export class AuthService {
             throw new UnauthorizedException('Re-authentication failed.');
         }
 
-        const isValid = await this.mfaService.verify(mfa.secretEncrypted, totpCode);
+        const isValid = await this.verifyTotpOnce(user.id, mfa.secretEncrypted, totpCode);
         if (!isValid) {
             await this.auditLog.log({
                 action: AUDIT_ACTIONS.STEP_UP_FAILED,
@@ -677,26 +721,52 @@ export class AuthService {
      * @throws UnauthorizedException if token is invalid, expired, or previously revoked.
      */
     async refreshTokens(rawRefreshToken: string) {
-        // 1. Hash raw refresh token to locate record in database
         const tokenHashValue = hashToken(rawRefreshToken);
-        
+
         const stored = await this.prisma.refreshToken.findUnique({
             where: { tokenHash: tokenHashValue },
             include: { user: true },
         });
 
-        // 2. Validate token existence, expiration, and revocation status
-        if (!stored || stored.revokedAt || stored.expiresAt < new Date()) {
+        if (!stored || stored.expiresAt < new Date()) {
             throw new UnauthorizedException('Invalid or expired session. Please log in again.');
         }
 
-        // 3. Immediately revoke current token (Token Rotation Pattern)
-        await this.prisma.refreshToken.update({ 
-            where: { id: stored.id }, 
-            data: { revokedAt: new Date() }, 
-        });
+        // SECURITY FIX (SEC-010): presenting an already-rotated token is the signature of a
+        // stolen token being replayed. Outside a short grace window (two browser tabs refreshing
+        // at the same moment), every session of the user is revoked.
+        if (stored.revokedAt) {
+            const REUSE_GRACE_MS = 10_000;
+            if (Date.now() - stored.revokedAt.getTime() > REUSE_GRACE_MS) {
+                await this.revokeAllRefreshTokens(stored.userId);
+                await this.auditLog.log({
+                    action: AUDIT_ACTIONS.LOGOUT,
+                    actorId: stored.userId,
+                    targetType: AUDIT_TARGETS.USER,
+                    targetId: stored.userId,
+                    metadata: { reason: 'refresh-token-reuse-detected' },
+                });
+            }
+            throw new UnauthorizedException('Invalid or expired session. Please log in again.');
+        }
 
-        // 4. Issue and return a new token pair
+        // SECURITY FIX (SEC-002): a suspended, disabled or deleted account can no longer renew
+        // its session - it used to keep access forever through token rotation.
+        if (stored.user.status !== UserStatus.ACTIVE) {
+            await this.revokeAllRefreshTokens(stored.userId);
+            throw new UnauthorizedException('Invalid or expired session. Please log in again.');
+        }
+
+        // CONCURRENCY FIX (SEC-010): conditional revocation - of two concurrent refreshes with
+        // the same token, only one can win and receive a new pair.
+        const revoked = await this.prisma.refreshToken.updateMany({
+            where: { id: stored.id, revokedAt: null },
+            data: { revokedAt: new Date() },
+        });
+        if (revoked.count === 0) {
+            throw new UnauthorizedException('Invalid or expired session. Please log in again.');
+        }
+
         return this.issueTokens(stored.user.id, stored.user.workEmail);
     }
 
@@ -812,7 +882,8 @@ export class AuthService {
 
         // 3. Generate raw refresh token and retrieve expiration window from configuration namespace
         const rawRefreshToken = generateSecureToken(64);
-        const expiresInDays = this.configService.get<number>('auth.refreshTokenExpiresInDays', 7);
+        // CONFIG FIX (ARCH-003): was 'auth.refreshTokenExpiresInDays' (non-existent namespace).
+        const expiresInDays = this.configService.get<number>('jwt.refreshTokenExpiresInDays', 7);
 
         // 4. Persist hashed refresh token with expiration timestamp
         await this.prisma.refreshToken.create({

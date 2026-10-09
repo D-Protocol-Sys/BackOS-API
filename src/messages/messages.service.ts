@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException, ForbiddenException } from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, Logger } from '@nestjs/common';
+import { escapeHtml } from '../common/utils/html-escape.util';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { EmailService } from '../email/email.service';
@@ -14,6 +15,8 @@ type Actor = { userId: string };
  */
 @Injectable()
 export class MessagesService {
+    private readonly logger = new Logger(MessagesService.name);
+
     constructor(
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
@@ -126,21 +129,20 @@ export class MessagesService {
         const all = [...directConvos, ...channelConvos];
 
         // Compute unread message counts for each conversation relative to user's `lastReadAt`
-        const withUnread = await Promise.all(
-            all.map(async (conv) => {
-                const read = await this.prisma.conversationRead.findUnique({
-                    where: { conversationId_userId: { conversationId: conv.id, userId: actor.userId } },
-                });
-                const unreadCount = await this.prisma.message.count({
-                    where: {
-                        conversationId: conv.id,
-                        senderId: { not: actor.userId },
-                        createdAt: { gt: read?.lastReadAt ?? new Date(0) },
-                    },
-                });
-                return { ...conv, unreadCount };
-            }),
-        );
+        // PERF FIX (PERF-001): one aggregated query for every conversation's unread count,
+        // instead of 2 queries per conversation on an endpoint the frontend polls.
+        const conversationIds = all.map((conv) => conv.id);
+        const unreadRows = conversationIds.length === 0 ? [] : await this.prisma.$queryRaw<{ conversationId: string; unread: bigint }[]>`
+            SELECT m."conversationId" AS "conversationId", count(*) AS unread
+            FROM messages m
+            LEFT JOIN conversation_reads r
+                   ON r."conversationId" = m."conversationId" AND r."userId" = ${actor.userId}
+            WHERE m."conversationId" = ANY(${conversationIds}::text[])
+              AND m."senderId" <> ${actor.userId}
+              AND m."createdAt" > coalesce(r."lastReadAt", to_timestamp(0))
+            GROUP BY m."conversationId"`;
+        const unreadByConversation = new Map(unreadRows.map((row) => [row.conversationId, Number(row.unread)]));
+        const withUnread = all.map((conv) => ({ ...conv, unreadCount: unreadByConversation.get(conv.id) ?? 0 }));
 
         // Sort conversations by most recent message or creation timestamp
         return withUnread
@@ -351,7 +353,10 @@ export class MessagesService {
             },
         });
 
-        await Promise.all(
+        // PERF / RELIABILITY FIX (PERF-002): e-mail notifications no longer delay (or fail) the
+        // request - an SMTP error used to return a 500 for a message that WAS saved, so the
+        // client retried and posted duplicates.
+        void Promise.allSettled(
             recipientIds.map((recipientId) =>
                 this.notifyIfInactive(conversationId, recipientId, {
                     content,
@@ -395,12 +400,15 @@ export class MessagesService {
         const frontendUrl = this.configService.get<string>('app.frontendUrl');
         const senderName = `${message.sender.firstName} ${message.sender.lastName}`;
         const preview = message.content.length > 140 ? `${message.content.slice(0, 140)}…` : message.content;
+        // SECURITY FIX (SEC-013): user content is escaped before being placed in the HTML body.
+        const safeSender = escapeHtml(senderName);
+        const safePreview = escapeHtml(preview);
 
         await this.emailService.sendMail(
             recipient.workEmail,
             `New message from ${senderName}`,
             `${senderName} sent you a message:\n\n"${preview}"\n\nOpen BPG Control: ${frontendUrl}/messages`,
-            `<p><strong>${senderName}</strong> sent you a message:</p><blockquote>${preview}</blockquote><p><a href="${frontendUrl}/messages">Open BPG Control</a></p>`,
+            `<p><strong>${safeSender}</strong> sent you a message:</p><blockquote>${safePreview}</blockquote><p><a href="${escapeHtml(`${frontendUrl}/messages`)}">Open BPG Control</a></p>`,
         );
 
         // Record last email dispatch timestamp

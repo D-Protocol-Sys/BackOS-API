@@ -25,7 +25,7 @@ interface CacheEntry {
  *
  * WHY THIS SERVICE EXISTS (see also `GATEWAY_README.md` in this folder): generated backends
  * are deliberately never exposed directly on the public network - they bind only to
- * `127.0.0.1` (see `RuntimeManagerService.start()` and the generated `mainTsTemplate()`). The
+ * `127.0.0.1` (see `DockerRuntimeManagerService.start()` and the generated `mainTsTemplate()`). The
  * only supported way to reach a generated backend from outside the host machine is through
  * this gateway, mounted in `main.ts` at `GENERATED_BACKEND_GATEWAY_PREFIX` (default
  * `/generated`). This keeps the "front door" of the whole system to a single, well-understood
@@ -35,7 +35,7 @@ interface CacheEntry {
  *
  * A short in-memory cache avoids a database round-trip on every single proxied request (which
  * would otherwise happen on the hot path of every API call made to every generated backend).
- * `RuntimeManagerService` proactively calls `invalidate()` whenever a platform's runtime state
+ * `DockerRuntimeManagerService` proactively calls `invalidate()` whenever a platform's runtime state
  * changes (start/stop/crash-detected), so the cache TTL below is a safety net for staleness,
  * not the only mechanism keeping this correct.
  */
@@ -102,7 +102,14 @@ export class PlatformGatewayService {
         const target: GatewayTarget | null = isRoutable
             ? {
                   port: platform!.generatedPort as number,
-                  host: this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1'),
+                  // GENERATED_BACKEND_GATEWAY_HOST: address the ORCHESTRATOR uses to reach a generated
+                  // backend. Defaults to GENERATED_BACKEND_HOST (bare-metal orchestrator: same
+                  // loopback). When the orchestrator itself runs in a container, 127.0.0.1 is the
+                  // container, not the host that publishes the port - set it to e.g.
+                  // `host.docker.internal`. GENERATED_BACKEND_HOST stays the BIND address.
+                  host:
+                      this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST') ||
+                      this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1'),
               }
             : null;
 
@@ -112,7 +119,7 @@ export class PlatformGatewayService {
 
     /**
      * Forces the next `resolveTarget()` call for `slug` to bypass the cache and hit the
-     * database again. Called by `RuntimeManagerService` immediately after any action that
+     * database again. Called by `DockerRuntimeManagerService` immediately after any action that
      * changes whether/where a platform is routable (start, stop, crash detection, or a
      * STARTING -> RUNNING health-check transition).
      *

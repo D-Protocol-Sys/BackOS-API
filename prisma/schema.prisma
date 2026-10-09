@@ -289,6 +289,7 @@ model UserMfa {
 
   secretEncrypted String
   status          MfaStatus @default(PENDING)
+  lastUsedStep    BigInt?
 
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
@@ -416,7 +417,7 @@ model Platform {
   url              String?
   status           PlatformStatus    @default(DRAFT)
 
-  generatedPort    Int?
+  generatedPort    Int?              @unique
   schemaVersion    Int               @default(0)
 
   runtimeStatus    RuntimeStatus     @default(STOPPED)

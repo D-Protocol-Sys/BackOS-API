@@ -40,6 +40,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-app_test}
       POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE:-app_provisioner}
       POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD:-app_provisioner_test}
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-app_test_runtime}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-app_test_runtime}
       
     # Binds port exclusively to local localhost interface (127.0.0.1) to avoid public exposure
     ports:

@@ -6,7 +6,7 @@ import { PlatformGatewayService } from './platform-gateway.service';
  * `https://<your-domain>/generated/<slug>/...` to the correct generated backend process.
  *
  * Marked `@Global()` (consistent with `PrismaModule` and `CommonModule` in this codebase) so
- * that `RuntimeManagerService` (in `GeneratorModule`) can inject `PlatformGatewayService`
+ * that `DockerRuntimeManagerService` (in `GeneratorModule`) can inject `PlatformGatewayService`
  * without a direct module import cycle between `GeneratorModule` and `GatewayModule`.
  *
  * The actual HTTP proxying middleware (`createGeneratedBackendProxyMiddleware`) is wired up in

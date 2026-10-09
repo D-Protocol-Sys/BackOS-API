@@ -23,7 +23,11 @@ export class EmailService implements OnModuleInit {
         this.transporter = nodemailer.createTransport({
             host: this.configService.get<string>('mail.host'),
             port: this.configService.get<number>('mail.port'),
-            secure: this.configService.get<string>('mail.secure') === 'true', // Parses string boolean representation safely
+            // BUG FIX (SEC-022): `mail.secure` is already a boolean (see mail.config.ts); comparing it
+            // to the string 'true' made implicit TLS impossible. Without implicit TLS, STARTTLS is
+            // now REQUIRED unless SMTP_REQUIRE_TLS=false (e.g. a local test SMTP server).
+            secure: this.configService.get<boolean>('mail.secure') === true,
+            requireTLS: this.configService.get<boolean>('mail.secure') !== true && process.env.SMTP_REQUIRE_TLS !== 'false',
             auth: {
                 user: this.configService.get<string>('mail.user'),
                 pass: this.configService.get<string>('mail.password'),

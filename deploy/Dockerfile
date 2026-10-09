@@ -57,7 +57,7 @@ RUN --mount=type=cache,target=/root/.local/share/pnpm/store \
     pnpm install --frozen-lockfile
 
 # Copy NestJS & Prisma configuration files
-COPY tsconfig.json nest-cli.json prisma.config.ts* ./
+COPY tsconfig.json tsconfig.build.json nest-cli.json prisma.config.ts* ./
 COPY prisma ./prisma
 RUN pnpm exec prisma generate
 
@@ -74,9 +74,11 @@ WORKDIR /app
 # Security & Operations:
 # 1. Create a dedicated non-root group/user ('app').
 # 2. Install docker-cli (for proxy communication) and tini (PID 1 process manager).
+# 3. OPS FIX: postgresql16-client provides `pg_dump`, required by the backup module
+#    (BackupService) - it was missing, so every backup failed with ENOENT in the container.
 RUN corepack enable \
     && addgroup -S app && adduser -S app -G app \
-    && apk add --no-cache docker-cli tini
+    && apk add --no-cache docker-cli tini postgresql16-client
 
 ENV NODE_ENV=production
 
@@ -100,16 +102,19 @@ COPY prisma.config.ts* ./
 # Configure startup script permissions and assign file ownership to 'app' user
 COPY deploy/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh \
-    && mkdir -p /app/generated && chown -R app:app /app
+    && mkdir -p /app/generated /app/uploads /app/backups && chown -R app:app /app
 
 # Enforce Security Best Practice: Run container as non-root user
 USER app
 
 EXPOSE 4803
 
-# Container level healthcheck evaluating application readiness endpoint
-HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \
-    CMD node -e "fetch(`${SERVER_URL}/api/health`).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+# Container level healthcheck evaluating application readiness endpoint.
+# OPS FIX: the previous command used backticks inside a shell-form CMD (interpreted by /bin/sh as
+# command substitution) and the PUBLIC SERVER_URL, so the check never actually tested this
+# container. It now probes the local port; /api/health answers 503 when the database is down.
+HEALTHCHECK --interval=15s --timeout=3s --start-period=30s --retries=3 \
+    CMD node -e "fetch('http://127.0.0.1:' + (process.env.PORT || 4803) + '/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 # Use tini as PID 1 to gracefully capture OS signals (e.g., SIGTERM) and avoid zombie processes
 ENTRYPOINT ["/sbin/tini", "--", "/usr/local/bin/entrypoint.sh"]

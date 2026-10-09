@@ -4,6 +4,7 @@ import * as fs from 'fs';
 import * as fsp from 'fs/promises';
 import * as path from 'path';
 import * as zlib from 'zlib';
+import * as crypto from 'crypto';
 import { pipeline } from 'stream/promises';
 import { runCommand, CommandFailedError } from '../common/utils/command-runner.util';
 import { PrismaService } from '../prisma/prisma.service';
@@ -187,7 +188,8 @@ export class BackupService {
 
         const timestamp = this.formatTimestamp(new Date());
         const safeLabel = this.sanitizeLabel(label);
-        const rawSqlPath = path.join(outputDir, `${safeLabel}_${timestamp}.sql`);
+        // Random suffix: two dumps of the same database in the same second no longer overwrite each other.
+        const rawSqlPath = path.join(outputDir, `${safeLabel}_${timestamp}_${crypto.randomBytes(3).toString('hex')}.sql`);
         const gzPath = `${rawSqlPath}.gz`;
         const timeoutMs = this.configService.get<number>('BACKUP_TIMEOUT_MS', 10 * 60 * 1000);
 
@@ -197,10 +199,14 @@ export class BackupService {
             // GRANT/OWNER statements tied to this environment's specific role names, which
             // would otherwise fail to restore on a fresh destination that doesn't have those
             // exact roles yet - exactly the "moving to new infra" scenario this exists for.
+            // SECURITY FIX (SEC-014): the password is passed through PGPASSWORD instead of the
+            // `--dbname` URI, so it never appears in the process list (`ps`) nor in the
+            // `CommandFailedError` message logged below.
+            const { dbname, password } = this.splitPassword(this.toLibpqConnectionUrl(connectionUrl));
             await runCommand(
                 'pg_dump',
                 [
-                    `--dbname=${this.toLibpqConnectionUrl(connectionUrl)}`,
+                    `--dbname=${dbname}`,
                     '--no-owner',
                     '--no-privileges',
                     '--verbose',
@@ -208,6 +214,7 @@ export class BackupService {
                 ],
                 outputDir,
                 timeoutMs,
+                password ? { PGPASSWORD: password } : {},
             );
         } catch (error) {
             if (error instanceof CommandFailedError) {
@@ -258,6 +265,17 @@ export class BackupService {
         const url = new URL(prismaStyleUrl);
         url.searchParams.delete('schema');
         return url.toString();
+    }
+
+    /**
+     * Removes the password from a libpq URI and returns it separately (decoded), so it can be
+     * handed to pg_dump through the PGPASSWORD environment variable.
+     */
+    private splitPassword(libpqUrl: string): { dbname: string; password?: string } {
+        const url = new URL(libpqUrl);
+        const password = url.password ? decodeURIComponent(url.password) : undefined;
+        url.password = '';
+        return { dbname: url.toString(), password };
     }
 
     /** `YYYYMMDD-HHmmss`, filesystem- and URL-safe, sorts chronologically by filename. */

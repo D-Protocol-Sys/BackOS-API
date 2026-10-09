@@ -26,7 +26,7 @@ export function packageJsonObject(
             'start': 'nest start',
             'start:dev': 'nest start --watch',
             // NOTE: matches the actual tsc/nest-cli output layout (outDir './dist', sourceRoot
-            // 'src' -> dist/src/main.js), and RuntimeManagerService.start() spawns this exact
+            // 'src' -> dist/src/main.js), and DockerRuntimeManagerService.start() spawns this exact
             // path directly. Was previously 'node dist/main', which does not exist on disk.
             'start:prod': 'node dist/src/main.js',
             'prisma:generate': 'prisma generate',
@@ -228,7 +228,7 @@ export function prismaModuleTemplate(): string {
  * PORT / ENV PRECEDENCE (bugfix): this used to be `import 'dotenv/config'`, which uses the
  * `dotenv` package's DEFAULT behaviour of *not* overriding a variable that is already present
  * in `process.env` when the process starts. That is the wrong default for a generated backend:
- * whatever process launches this one (`RuntimeManagerService`, a container runtime, systemd,
+ * whatever process launches this one (`DockerRuntimeManagerService`, a container runtime, systemd,
  * a developer's shell, ...) may already have its OWN unrelated `PORT` (or `HOST`, `DATABASE_URL`,
  * etc.) set in its environment, and if that leaks into this process's environment before
  * `dotenv` runs, this backend would silently bind to THAT value instead of the one written to
@@ -236,7 +236,7 @@ export function prismaModuleTemplate(): string {
  * backend could end up listening on the ORCHESTRATOR's own port instead of its assigned one.
  * Loading with \`{ override: true }\` makes this project's own \`.env\` file authoritative for
  * its own process, no matter what it happened to inherit. See also the explicit \`PORT\`/\`HOST\`
- * passed by \`RuntimeManagerService.start()\`, which is the other half of this fix.
+ * passed by \`DockerRuntimeManagerService.start()\`, which is the other half of this fix.
  */
 export function mainTsTemplate(): string {
     return `
@@ -278,9 +278,16 @@ export function mainTsTemplate(): string {
             // so the two can never silently drift apart.
             app.setGlobalPrefix(API_PREFIX);
 
-            const isProduction = process.env.NODE_ENV === 'production';
+            // API docs switch. The container image always runs with NODE_ENV=production (see
+            // dockerfileTemplate()), so keying this ONLY on NODE_ENV meant the docs were never
+            // mounted for Docker-run backends and 'Open API docs' answered a JSON 404. The
+            // orchestrator now passes API_DOCS_ENABLED explicitly (see
+            // DockerRuntimeManagerService.start()); NODE_ENV is only the fallback when it is unset.
+            const docsEnabled = process.env.API_DOCS_ENABLED !== undefined
+                ? process.env.API_DOCS_ENABLED === 'true'
+                : process.env.NODE_ENV !== 'production';
 
-            if (!isProduction) {
+            if (docsEnabled) {
                 const swaggerConfig = new DocumentBuilder()
                     .setTitle('Generated API by BPG')
                     .setDescription('Automatically generated documentation based on platform definitions.')
@@ -293,7 +300,7 @@ export function mainTsTemplate(): string {
 
             // process.env.PORT/HOST are now guaranteed correct for THIS process: either sourced
             // from this project's own .env (via the override:true load above), or explicitly
-            // set by RuntimeManagerService.start() at spawn time - see that file's comments.
+            // set by DockerRuntimeManagerService.start() at spawn time - see that file's comments.
             const port = process.env.PORT || ${GENERATED_BACKEND_CONTAINER_PORT};
 
             // SECURITY: loopback-only by default - see the module-level comment above. This
@@ -303,7 +310,7 @@ export function mainTsTemplate(): string {
 
             await app.listen(port, host);
             console.log(\`Generated API listening on \${host}:\${port} (internal only)\`);
-            if (!isProduction) {
+            if (docsEnabled) {
                 console.log(\`Documentation available at http://\${host}:\${port}/\${API_PREFIX}/docs\`);
             }
         }
@@ -491,7 +498,7 @@ export function uploadsMulterConfigTemplate(): string {
         import * as fs from 'fs';
         import { BadRequestException, ForbiddenException } from '@nestjs/common';
 
-        // Resolves relative to this process's cwd (the project root - see RuntimeManagerService
+        // Resolves relative to this process's cwd (the project root - see DockerRuntimeManagerService
         // / DockerRuntimeManagerService, both of which spawn/run from there), unless overridden.
         // DockerRuntimeManagerService explicitly sets this to a bind-mounted, writable path when
         // Docker isolation is active, since the rest of the container's filesystem is read-only.
@@ -932,6 +939,10 @@ RUN pnpm install --prod --no-frozen-lockfile \\
     && rm -rf "$(pnpm store path)"
 COPY --from=builder /app/dist ./dist
 COPY --from=builder /app/prisma ./prisma
+# Writable uploads dir owned by the non-root user: gives a freshly created Docker NAMED volume
+# mounted here (see GENERATED_BACKEND_UPLOADS_USE_VOLUME) the right ownership. A bind mount
+# simply overrides it, so this is harmless for the bind-mount setup.
+RUN mkdir -p /app/uploads && chown app:app /app/uploads
 USER app
 EXPOSE ${GENERATED_BACKEND_CONTAINER_PORT}
 HEALTHCHECK --interval=15s --timeout=3s --start-period=20s --retries=3 \\
@@ -957,18 +968,20 @@ CMD ["node", "dist/src/main.js"]
  * user's part - surfacing as an opaque `ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION` deep inside
  * `docker build` output.
  *
- * Setting it to 0 here restores the old (pre-v11) pnpm behavior of trusting whatever the
- * lockfile / registry resolution says, which is the right tradeoff for a backend whose
- * dependency set was already deterministically resolved and committed by
- * `ProjectScaffolderService` - re-litigating "is this transitive dep too new" on every
- * container (re)build adds no real security benefit here and only produces flaky, host-clock
- * -dependent build failures. Copied into BOTH Docker stages (see `dockerfileTemplate()`)
- * since each stage runs its own independent `pnpm install`.
+ * SUPPLY-CHAIN FIX (template hardening): this used to be set to 0, disabling the protection
+ * entirely. It is now 1440 (24 h) again, and the problem above is avoided differently:
+ *   - the lockfile is RESOLVED with the same policy at scaffold time (pnpm then picks the newest
+ *     version that is at least 24 h old instead of failing), so every entry it contains already
+ *     satisfies the policy;
+ *   - the lockfile is preserved across re-generations and the runtime image is only rebuilt when
+ *     the schema version changes (see DockerRuntimeManagerService.buildImage()).
+ * Copied into BOTH Docker stages (see `dockerfileTemplate()`) since each stage runs its own
+ * independent `pnpm install`.
  */
 export function npmrcTemplate(): string {
     return `# Auto-generated by ProjectScaffolderService - do not edit by hand, it will be overwritten on
 # the next generation. See the comment on npmrcTemplate() for why this is needed.
-minimum-release-age=0
+minimum-release-age=1440
 `;
 }
 
@@ -1003,7 +1016,7 @@ minimum-release-age=0
 export function pnpmWorkspaceYamlTemplate(): string {
     return `# Auto-generated by ProjectScaffolderService - do not edit by hand, it will be overwritten on
 # the next generation. See the comment on pnpmWorkspaceYamlTemplate() for why this is needed.
-minimumReleaseAge: 0
+minimumReleaseAge: 1440
 allowBuilds:
   prisma: true
   '@prisma/engines': true

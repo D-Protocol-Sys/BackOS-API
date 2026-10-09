@@ -1,4 +1,5 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req } from '@nestjs/common';
+import { Controller, Get, Post, Body, Patch, Param, Delete, Query, Req, UseGuards } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiParam, ApiBody } from '@nestjs/swagger';
 import { ClientsService } from './clients.service';
 import { CreateClientDto } from './dto/create-client.dto';
@@ -45,6 +46,9 @@ export class ClientsController {
      * "PUBLIC ENDPOINTS" section header - effectively making the feature unusable for its
      * intended anonymous audience.
      */
+    // SECURITY FIX (SEC-028): anonymous routes are rate-limited per IP.
+    @Throttle({ default: { limit: 60, ttl: 60_000 } })
+    @UseGuards(ThrottlerGuard)
     @Public()
     @Get('public/testimonials')
     @ApiOperation({
@@ -69,6 +73,9 @@ export class ClientsController {
      * with 256 bits of entropy, stored as a SHA-256 hash (see `ClientsService`), single-use,
      * and time-limited to 7 days.
      */
+    // SECURITY FIX (SEC-028): token-guessing / spam protection on the anonymous submit route.
+    @Throttle({ default: { limit: 10, ttl: 60_000 } })
+    @UseGuards(ThrottlerGuard)
     @Public()
     @Post('public/submit-testimonial')
     @ApiOperation({

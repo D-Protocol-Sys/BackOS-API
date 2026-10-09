@@ -10,6 +10,7 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 import * as fs from 'fs';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
 import { buildContentDisposition } from '../common/utils/content-disposition.util';
+import { streamFileToResponse } from '../common/utils/stream-file.util';
 
 /**
  * Type representing the authenticated user extracted from request context.
@@ -108,7 +109,7 @@ export class FilesController {
          * 4. Perform Non-blocking Streaming Output:
          * Pipes file read stream directly to response socket to save memory overhead.
          */
-        fs.createReadStream(diskPath).pipe(res);
+        await streamFileToResponse(diskPath, res);
     }
 
     /**

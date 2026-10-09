@@ -12,10 +12,9 @@
 #              pnpm exec prisma migrate deploy
 #              pnpm run start:dev
 #
-# This file was referenced by scripts/stack.sh (`up_dev`) and by the header
-# comment of .env.development.example, but was missing from earlier exports of
-# this repository - see docs/README.md > "État de l'outillage de déploiement"
-# for the full explanation. It intentionally mirrors deploy/docker-compose.test.yml
+# This file is referenced by scripts/stack.sh (`up_dev`) and by the header
+# comment of .env.development.example - see docs/DEPLOIEMENT_DEV.md for the
+# full walkthrough. It intentionally mirrors deploy/docker-compose.test.yml
 # (same postgres-init scripts, same provisioning-role mechanism) so dev and the
 # automated e2e harness behave identically - just with standard ports (5432/6379,
 # not the test harness's offset 5433/6380) and a persistent named volume instead
@@ -45,6 +44,9 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-monprojet_dev}
       POSTGRES_PROVISIONING_ROLE: ${POSTGRES_PROVISIONING_ROLE:-monprojet_provisioner}
       POSTGRES_PROVISIONING_PASSWORD: ${POSTGRES_PROVISIONING_PASSWORD:-change-me-dev-provisioner}
+      # Non-superuser role the app connects with (docker/postgres-init/02-app-role.sh).
+      POSTGRES_APP_USER: ${POSTGRES_APP_USER:-monprojet_dev_app}
+      POSTGRES_APP_PASSWORD: ${POSTGRES_APP_PASSWORD:-change-me-dev-app}
     # Loopback-only: this is a dev dependency for the app running natively on THIS
     # machine, never meant to be reachable from another device on the network.
     ports:

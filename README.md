@@ -1,18 +1,58 @@
-# BackOS - Project Documentation
+# BackOS
 
-Single entry point for all project documentation. If you don't know where to start, start here.
+**A backend generator.** Describe your data in a web interface, and BackOS builds, runs and serves a complete NestJS + Prisma backend for it — with its own database, its own routes, and its own isolation.
 
-## 1. What exactly is this project?
+> **New here?** Read [What is BackOS?](#1-what-is-backos), then jump straight to [Get the project on your machine](#4-get-the-project-on-your-machine) and [Choose how to run it](#5-choose-how-to-run-it).
 
-This is **not** a classic business API — it is a **backend generator**.
+---
 
-A user models entities, fields, and relationships through the interface; the `generator` module transforms this model into a real NestJS + Prisma project generated on disk, with its own CRUD routes, its own dedicated PostgreSQL database, and the ability to run either as a native process or as an isolated Docker container.
+## Table of contents
 
-The `gateway` module then routes public traffic from `/generated/<slug>/...` to the appropriate generated backend.
+1. [What is BackOS?](#1-what-is-backos)
+2. [Technology stack](#2-technology-stack)
+3. [Repository map](#3-repository-map)
+4. [Get the project on your machine](#4-get-the-project-on-your-machine)
+5. [Choose how to run it](#5-choose-how-to-run-it)
+6. [Scheduled cleanup](#6-scheduled-cleanup)
+7. [Where to go next](#7-where-to-go-next)
 
-This is a "meta" system (the backend generates and executes code on behalf of the user), which means it has a larger attack surface than a conventional CRUD application. The architecture takes this into account in several areas (per-platform network isolation, a restricted `docker-socket-proxy`, and dedicated PostgreSQL users for each platform).
+---
 
-## 2. Technology Stack
+## 1. What is BackOS?
+
+BackOS is **not** a classic business API. It is a **backend generator**: a "meta" system that writes and runs code on behalf of its users.
+
+### How it works
+
+```mermaid
+flowchart LR
+    A["You model entities,<br/>fields and relations"] --> B["Generator"]
+    B --> C["A real NestJS + Prisma<br/>project, written to disk"]
+    C --> D[("Its own dedicated<br/>PostgreSQL database")]
+    C --> E["Runs in its own<br/>Docker container"]
+    F["Public traffic<br/>/generated/{slug}/..."] --> G["Gateway"] --> E
+```
+
+1. **Model** — in the interface, you create entities (tables), fields (columns) and relations.
+2. **Generate** — the `generator` module turns that model into a real NestJS + Prisma project on disk, with its own CRUD routes and its own PostgreSQL database.
+3. **Run** — each generated backend starts in its own isolated Docker container, with its own network and CPU/memory limits.
+4. **Serve** — the `gateway` module routes public traffic from `/generated/<slug>/...` to the right generated backend.
+
+Around that core, BackOS also provides user and role management, clients and projects, planning, internal messaging, file uploads, backups and an audit log (see the [repository map](#3-repository-map)).
+
+### Security by design
+
+Because the system generates and executes code, its attack surface is larger than a conventional CRUD application. The architecture accounts for this:
+
+- **Per-platform network isolation** — each platform runs on its own network.
+- **Restricted `docker-socket-proxy`** — Docker is driven through a proxy that only exposes what the orchestrator needs.
+- **Dedicated PostgreSQL user for each platform** — each generated backend has its own database credentials.
+- **Loopback-only generated backends** — they are reachable only through the gateway, never directly. See [`src/gateway/GATEWAY_README.md`](src/gateway/GATEWAY_README.md).
+- **Authentication hardening** — JWT with rotating refresh tokens, brute-force protection and optional MFA (TOTP).
+
+---
+
+## 2. Technology stack
 
 | Layer                       | Choice                                                                                 |
 | --------------------------- | -------------------------------------------------------------------------------------- |
@@ -21,93 +61,149 @@ This is a "meta" system (the backend generates and executes code on behalf of th
 | Queue / Cache               | BullMQ + Redis 7                                                                       |
 | Authentication              | JWT (access + rotating refresh tokens), optional MFA/TOTP                              |
 | Public reverse proxy        | Traefik (automatic Let's Encrypt TLS)                                                  |
-| Generated backend isolation | Native process OR dedicated Docker container (configurable)                            |
+| Generated backend isolation | One dedicated Docker container per generated backend                                   |
 | CI/CD                       | GitHub Actions (lint, build, tests, `pnpm audit`, Gitleaks, Trivy, CodeQL, Dependabot) |
 
-## 3. Module Map (`src/`)
+---
 
-| Domain                    | Folder(s)                                                            | Role                                                                                                                                                  |
-| ------------------------- | -------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Authentication & Security | `auth/`, `common/guards/`, `common/services/` (MFA, TOTP, crypto)    | Login, refresh, brute-force protection, MFA                                                                                                           |
-| Authorization             | `permissions/`, `roles/`, `common/constants/permissions.constant.ts` | RBAC, permission ↔ database synchronization                                                                                                           |
-| Modeling                  | `entities/`, `fields/`, `relations/`                                 | What the user models for their backend                                                                                                                |
-| Generation                | `generator/` (29+ files)                                             | The core of the product: dynamic Prisma schema, generated CRUD, database provisioning, runtime orchestration (native process or Docker), API manifest |
-| Platform Lifecycle        | `platforms/`                                                         | Create/archive/restore/permanently delete generated platforms                                                                                         |
-| Public Gateway            | `gateway/`                                                           | Routes `/generated/<slug>/...` to the appropriate generated backend — see `src/gateway/GATEWAY_README.md`                                             |
-| Management                | `clients/`, `projects/`, `planning/`, `messages/`                    | Business features around platforms (billing, recurring planning, internal messaging)                                                                  |
-| Files                     | `files/`                                                             | Uploads with both declared MIME type **and** actual binary signature (magic bytes) validation                                                         |
-| Backups                   | `backup/`                                                            | Database dumps and automatic cleanup of unclaimed files                                                                                               |
-| Scheduled Cleanup         | `cleanup/`                                                           | Daily task (3:00 AM): expired tokens, expired OTPs, failed generations, and platforms archived for more than 30 days (see §5)                         |
-| Audit                     | `audit/`                                                             | Log of sensitive actions                                                                                                                              |
-| Email                     | `email/`                                                             | Notifications (invitations, OTPs, alerts)                                                                                                             |
+## 3. Repository map
 
-## 4. Security Model — What Has Already Been Verified
+Everything lives under [`src/`](src/). Each row links to the code, so you can open the part you are curious about.
 
-Summary of what currently holds true, based on code inspection rather than assumptions:
+| Domain                        | Folder(s)                                                                                                                                  | What it does                                                                                                             |
+| ----------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| **Authentication & security** | [`auth/`](src/auth/), [`common/guards/`](src/common/guards/), [`common/services/`](src/common/services/)                                   | Login, token refresh, brute-force protection, MFA / TOTP, encryption helpers                                             |
+| **Authorization**             | [`permissions/`](src/permissions/), [`roles/`](src/roles/)                                                                                 | Role-based access control, kept in sync with the database                                                                |
+| **Users**                     | [`users/`](src/users/)                                                                                                                     | Accounts, roles assignment, status lifecycle, data export, anonymization and deletion                                    |
+| **Modeling**                  | [`entities/`](src/entities/), [`fields/`](src/fields/), [`relations/`](src/relations/), [`enum-definitions/`](src/enum-definitions/)        | What a user models for their backend: tables, columns, relations and enums                                               |
+| **Generation** ⭐             | [`generator/`](src/generator/)                                                                                                             | The core of the product: dynamic Prisma schema, generated CRUD, database provisioning, runtime orchestration, API manifest |
+| **Platform lifecycle**        | [`platforms/`](src/platforms/)                                                                                                             | Create, archive, restore and permanently delete platforms; members and per-platform roles                                |
+| **Public gateway**            | [`gateway/`](src/gateway/)                                                                                                                 | Routes `/generated/<slug>/...` to the right generated backend — see [`GATEWAY_README.md`](src/gateway/GATEWAY_README.md)   |
+| **Management**               | [`clients/`](src/clients/), [`projects/`](src/projects/), [`planning/`](src/planning/), [`messages/`](src/messages/)                       | Clients and contracts, projects, planning (personal or per platform, with recurring programs) and internal messaging      |
+| **Files**                     | [`files/`](src/files/)                                                                                                                     | Uploads, validated on both the declared MIME type **and** the real binary signature (magic bytes)                        |
+| **Backups**                   | [`backup/`](src/backup/)                                                                                                                   | Database dumps and automatic cleanup of unclaimed files                                                                  |
+| **Scheduled cleanup**         | [`cleanup/`](src/cleanup/)                                                                                                                 | Daily maintenance task — see [§6](#6-scheduled-cleanup)                                                                  |
+| **Audit**                     | [`audit/`](src/audit/)                                                                                                                     | Log of sensitive actions                                                                                                 |
+| **Email**                     | [`email/`](src/email/)                                                                                                                     | Notifications: invitations, one-time codes, alerts                                                                       |
 
-* **Inputs**: strict global validation (`whitelist`, `forbidNonWhitelisted`); no SQL injection was found (dynamic identifiers are always escaped/truncated); no shell commands are constructed through string concatenation (`execFile`/`spawn` with argument arrays are used throughout).
+---
 
-* **Uploaded files**: both the declared type **and** the actual binary signature are verified before writing; filenames stored on disk are always server-generated UUIDs (never the name provided by the client).
+## 4. Get the project on your machine
 
-* **Authentication**: single-use refresh-token rotation, account-based brute-force protection (not only IP-based), and constant-time comparison for recovery codes.
+### Before you start
 
-* **Multi-tenant isolation**: each generated platform running in Docker has its own network; Docker sockets are never mounted directly into an application container (access is always through `docker-socket-proxy`, with restricted permissions — `EXEC=0`, `SECRETS=0`, `VOLUMES=0`).
+You only need **[Git](https://git-scm.com/downloads)** to download the project. Check that it is installed:
 
-* **Built-in security check**: `src/common/route-permission-audit.spec.ts` causes CI to fail if a route is added without explicitly declaring its permission (`@RequirePermissions`, `@Public()`, or a justified entry in `MANUALLY_CHECKED_ROUTES`). **Run this test after adding any route** — it is the project's best automatic safety net.
+```bash
+git --version
+```
 
-* **Public demo**: the `demo` account (`prisma/seed-demo.ts`) only has read permissions, and its container has **no** access to the `docker-socket-proxy` (deliberately removed — see `deploy/docker-compose.demo.yml`). Even if code execution were compromised inside this container, there is no technical path to the rest of the host.
+Any extra tool needed to *run* BackOS (a container runtime, a domain name, …) depends on the deployment mode you pick in the next step, and is listed in the matching guide.
 
-**Known unresolved weakness**: test coverage is still low. See `TESTS_COVERAGE_AUDIT.md` for the exact module-by-module status and action plan.
+### Step by step
 
-## 5. Platform Archiving and Deletion
+**1. Open a terminal** in the folder where you keep your projects.
 
-`DELETE /platforms/:id` archives the platform (it does not delete anything — it only stops the runtime if it was running).
+**2. Clone the repository:**
 
-An archived platform is **automatically and permanently deleted after 30 consecutive days of being archived** (generated files + database record; configurable through `PLATFORM_ARCHIVE_RETENTION_DAYS`) by the scheduled task in `cleanup/`.
+```bash
+git clone https://github.com/D-Protocol-Sys/BackOS-API
+```
 
-Restoring the platform (`PATCH /platforms/:id/restore`) before the deadline cancels the countdown. If it is archived again later, a new 30-day countdown starts from zero.
+**3. Move into the project folder:**
 
-`DELETE /platforms/:id/permanent` forces the immediate deletion of an already archived platform without waiting for the 30-day retention period.
+```bash
+cd BackOS-API
+```
 
-## 6. Deployment Tooling Status — Important
+**4. Check that you are in the right place.** You should see the `src/` folder and the `docs/` folder:
 
-Read this section before choosing a deployment mode.
+```bash
+ls
+```
 
-After thoroughly reviewing this directory, several real inconsistencies between the tooling (`scripts/stack.sh`, `Makefile`, `.env.*.example` files) and the files actually present were found and fixed:
+> **No Git?** On the GitHub page of the repository, click **Code → Download ZIP**, extract it, and open a terminal in the extracted folder.
 
-* **`docker-compose.yml` (root)** was referenced by `scripts/stack.sh` and `.env.development.example` for the `dev` stack, but was missing from the repository. It has been recreated (PostgreSQL + Redis only; the application runs natively through `pnpm run start:dev`, see `DEPLOIEMENT_DEV.md`).
+✅ **You now have BackOS on your machine.** Nothing is running yet — the next section explains how to start it.
 
-* **`scripts/stack.sh` had no `local` target**, even though `.env.local.example` and the header of `deploy/docker-compose.local.yml` both promised `./scripts/stack.sh up local`. This has been fixed; the target now exists (`up_local` / `down` / `logs` / `nuke`).
+---
 
-* **Two files solve the same problem** ("run the backend privately, without a public domain or TLS") without referencing each other: `deploy/docker-compose.local.yml` (`.env.local`, not connected to a tool used on a daily basis) and `deploy/docker-compose.lan.yml` (`.env.lan`, actually controlled by the Windows tray — `deploy/backend-tray.ps1` / `start-backend.bat`).
+## 5. Choose how to run it
 
-  **This guide documents `lan.yml` as the reference path** (see `DEPLOIEMENT_LAN.md`) because it is the only one connected to a tool that is actually used on a daily basis.
+Once you have the project, you can run it in **several ways**, depending on what you want to do with it. Each way is called a *deployment mode* and has its own step-by-step guide.
 
-  `local.yml` remains functional (and can now be launched through `make up-local`) but is redundant. It should eventually be consolidated or removed once one of the two becomes unnecessary, rather than maintaining both indefinitely in parallel.
+> 👉 **Start with the [overview of the deployment guides](docs/deployments/README.md).** It compares the modes and gathers what they all share.
 
-## 7. Each Deployment Mode in Detail
+> [!IMPORTANT]
+> **Everything runs in Docker containers**, in every mode: the BackOS API, its database, and each generated backend. **Docker is the only tool you need to install** (plus Git to download the project).
 
-| Documentation                      | What it covers                                                                                 | Intended use                                                  |
-| ---------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------------------------- |
-| `DEPLOIEMENT_DEV.md`               | Development workstation (hot reload, PostgreSQL/Redis in containers, native application)       | Daily development and coding                                  |
-| `DEPLOIEMENT_LAN.md`               | Stable private instance on a local network, controllable through a Windows system-tray icon    | Personal/internal use, no public domain                       |
-| `DEPLOIEMENT_DEMO.md`              | Public instance with a read-only account, intended to demonstrate the project to third parties | Presentations, client demos                                   |
-| `DEPLOIEMENT_PRODUCTION.md`        | Full public instance for real-world use                                                        | Official deployment                                           |
-| `DEPLOIEMENT_WIREGUARD.md`         | Self-hosted encrypted VPN tunnel for remotely accessing a private instance                     | Remote access without public exposure                         |
-| `DEPLOIEMENT_INTERNE_TAILSCALE.md` | Alternative to WireGuard that was rejected (third-party dependency)                            | Historical reference explaining why this option was abandoned |
+### Which guide is for me?
 
-## 8. Combining Multiple Modes into a Single Deployment
+| I want to…                                                           | Follow                                                                                                    |
+| -------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- |
+| Try BackOS, or work on its code, on my own machine                   | [Development](docs/deployments/DEPLOIEMENT_DEV.md)                                                        |
+| Run a stable private instance at home or in the office               | [LAN](docs/deployments/DEPLOIEMENT_LAN.md)                                                                |
+| Show the project to someone, safely                                  | [Demo](docs/deployments/DEPLOIEMENT_DEMO.md)                                                              |
+| Put BackOS online for real users                                     | [Production](docs/deployments/DEPLOIEMENT_PRODUCTION.md)                                                  |
+| Reach a private instance from outside, without exposing it           | [WireGuard](docs/deployments/DEPLOIEMENT_WIREGUARD.md)                                                    |
+| Do several of the above on **one single machine**                    | [Combined deployments](#combined-deployments)                                                             |
 
-| Documentation                                 | Combination                                                    | Use case                                                                                  |
-| --------------------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `DEPLOIEMENT_COMBINE_LAN_DEMO_WIREGUARD.md`   | LAN (+ tray) + Demo + WireGuard, on **a single machine**       | You only have one server PC and want both a protected private instance and a public demo  |
-| `DEPLOIEMENT_COMBINE_DEMO_PRODUCTION.md`      | Demo + Production, coexisting behind the same Traefik instance | Run a public demo and the actual production instance on a single server                   |
-| `DEPLOIEMENT_COMBINE_PRODUCTION_WIREGUARD.md` | Public Production + admin access through WireGuard             | Keep production public for users while protecting administrative/debug access through VPN |
+> Not sure? Start with **Development**. It is the quickest way to see BackOS working, and nothing is exposed to the network.
 
-## 9. Tests
+### Single deployment modes
 
-`TESTS_COVERAGE_AUDIT.md` — actual test coverage status, broken down by module, with a prioritized action plan.
+All guides are in [`docs/deployments/`](docs/deployments/). Each one is step by step, with checks after the important actions, and a troubleshooting table.
 
-## 10. Other Useful Documentation Elsewhere in the Repository
+| Mode                                                          | What it covers                                                                                 | Intended use                                |
+| ------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------- |
+| [**Development**](docs/deployments/DEPLOIEMENT_DEV.md)        | Your own machine, everything in Docker containers, started with a single command               | Trying BackOS and developing on it          |
+| [**LAN**](docs/deployments/DEPLOIEMENT_LAN.md)                | A stable private instance on a local network, controllable from a Windows system-tray icon     | Personal or internal use, no public domain  |
+| [**Demo**](docs/deployments/DEPLOIEMENT_DEMO.md)              | A public instance with a **read-only** account                                                 | Presentations and client demos              |
+| [**Production**](docs/deployments/DEPLOIEMENT_PRODUCTION.md)  | A full public instance                                                                         | Official, real-world deployment             |
+| [**WireGuard**](docs/deployments/DEPLOIEMENT_WIREGUARD.md)    | A self-hosted encrypted VPN tunnel to reach a private instance remotely                        | Remote access without public exposure       |
 
-* `src/gateway/GATEWAY_README.md` — how `/generated/<slug>/...` routing works.
+> 📜 *Historical note:* [`DEPLOIEMENT_INTERNE_TAILSCALE.md`](docs/deployments/DEPLOIEMENT_INTERNE_TAILSCALE.md) describes an alternative to WireGuard that was **rejected** (it relies on a third party). It is kept only to explain why.
+
+### Combined deployments
+
+Need more than one mode but only have **one machine**? These guides show how to make several modes coexist. All of them are in [`docs/deployments/combines/`](docs/deployments/combines/).
+
+| Combination                                                                                                              | What you get                                                      | Use case                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| [**LAN + Demo + WireGuard**](docs/deployments/combines/DEPLOIEMENT_COMBINE_LAN_DEMO_WIREGUARD.md)                         | LAN (with tray icon), a public demo and a VPN, on a single machine | One server PC: a protected private instance **and** a public demo                         |
+| [**Demo + Production**](docs/deployments/combines/DEPLOIEMENT_COMBINE_DEMO_PRODUCTION.md)                                 | Both instances behind the same Traefik                            | A public demo and the real production instance on one server                              |
+| [**Production + WireGuard**](docs/deployments/combines/DEPLOIEMENT_COMBINE_PRODUCTION_WIREGUARD.md)                       | Public production, with admin access through the VPN              | Keep production public for users while protecting administrative and debug access         |
+
+---
+
+## 6. Scheduled cleanup
+
+A task runs **every day at 3:00 AM** (see [`src/cleanup/`](src/cleanup/)) to keep the system tidy. It deletes, in order:
+
+| What                                                  | Kept for (default)                                    |
+| ----------------------------------------------------- | ----------------------------------------------------- |
+| Expired invitations and one-time codes (OTPs)         | 7 days                                                |
+| Revoked or expired refresh tokens                     | 30 days                                               |
+| Consumed MFA recovery codes (unused ones are kept)    | 30 days                                               |
+| Finished generation records (success or failed)       | 30 days — running generations are never touched       |
+| Old database backup dumps                             | see the backup configuration                          |
+| Archived **platforms**, **clients** and **contracts** | 30 days after archiving, then deleted permanently     |
+| Orphan uploads (files with no database record)        | files older than 24 hours                             |
+
+Every retention window can be changed through an environment variable (for example `PLATFORM_ARCHIVE_RETENTION_DAYS`).
+
+---
+
+## 7. Where to go next
+
+| You want to…                                          | Go to                                                                    |
+| ----------------------------------------------------- | ------------------------------------------------------------------------ |
+| Run the project                                       | [Choose how to run it](#5-choose-how-to-run-it)                          |
+| Compare the deployment modes                          | [Deployment guides overview](docs/deployments/README.md)                 |
+| Automate builds and deployments with GitHub Actions   | [CI/CD guide](docs/deployments/CI_CD.md)                                 |
+| See what is tested, and what is not                   | [Tests coverage audit](docs/TESTS_COVERAGE_AUDIT.md)                     |
+| Understand how `/generated/<slug>/...` routing works  | [`src/gateway/GATEWAY_README.md`](src/gateway/GATEWAY_README.md)         |
+| Explore the API interactively                         | Swagger UI at `/api/docs` (available **outside** production only)        |
+| Know which port it listens on                         | `PORT` environment variable — `4803` by default                          |
+| Check that an instance is alive                       | `GET /api/health` (answers `503` when the instance is degraded)          |
+| Read the code of a given domain                       | [Repository map](#3-repository-map)                                      |

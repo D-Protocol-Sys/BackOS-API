@@ -1,4 +1,5 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException, PayloadTooLargeException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import { PrismaService } from '../prisma/prisma.service';
@@ -32,6 +33,7 @@ export class FilesService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly planningService: PlanningService,
+        private readonly configService: ConfigService,
     ) {}
 
     /**
@@ -48,55 +50,51 @@ export class FilesService {
         file: Express.Multer.File,
         parent: FileParent = {},
     ) {
+        if (!file) {
+            throw new BadRequestException('No file was provided (expected multipart field "file").');
+        }
+
+        // FILE-002: the file is already on disk when this runs (Multer). ANY rejection below -
+        // including a failed authorization on the parent, which used to leave the file behind
+        // forever - now deletes it.
+        try {
+            return await this.persistUploadedFile(actor, file, parent);
+        } catch (error) {
+            await this.safeDeleteFromDisk(file.filename);
+            throw error;
+        }
+    }
+
+    private async persistUploadedFile(actor: Actor, file: Express.Multer.File, parent: FileParent) {
         const { planningEntryId, projectId, contractId } = parent;
 
-        // SECURITY/CORRECTNESS: a FileAsset has three independent, nullable parent FKs at the
-        // schema level (Prisma has no native "exactly one of these" constraint) - this is the
-        // application-layer enforcement of "a file belongs to at most one parent" that the
-        // schema alone can't express. Checked BEFORE any disk I/O so a malformed request never
-        // even gets as far as writing a file.
         this.assertSingleParent(parent);
 
-        // 1. Verify that the file MIME type is allowed by the system configuration.
         const spec = ALLOWED_FILE_TYPES[file.mimetype];
         if (!spec) {
-            // Immediately purge the orphaned file saved on disk by Multer before throwing.
-            await this.safeDeleteFromDisk(file.filename);
             throw new BadRequestException(`File MIME type not allowed: ${file.mimetype}`);
         }
 
-        // 2. Enforce precise category-level file size restrictions (more specific than global limit).
         const maxBytes = spec.maxSizeMb * 1024 * 1024;
         if (file.size > maxBytes) {
-            // Immediately purge file from disk if it exceeds its specific category threshold.
-            await this.safeDeleteFromDisk(file.filename);
             throw new BadRequestException(
                 `File size exceeds the maximum limit for category ${spec.category} (Max ${spec.maxSizeMb} MB).`,
             );
         }
 
-        // 3. SECURITY FIX (independent audit finding, previously written but never wired up):
-        // `file.mimetype` is just the client-supplied `Content-Type` of the multipart field -
-        // trivially spoofed (e.g. uploading an HTML/script payload declared as `image/png`).
-        // Read back the first bytes Multer actually wrote to disk and confirm they match the
-        // magic-byte signature expected for the declared type BEFORE persisting any metadata
-        // or granting the file a trusted-looking extension. See `file-signature.util.ts` for
-        // the full rationale and the deliberate fail-open behaviour on MIME types with no
-        // known signature (heuristic-only formats like `text/csv`/`text/plain`).
         const signatureOk = await this.verifyFileSignature(file);
         if (!signatureOk) {
-            await this.safeDeleteFromDisk(file.filename);
-            throw new BadRequestException(
-                'File content does not match its declared type. Upload rejected.',
-            );
+            throw new BadRequestException('File content does not match its declared type. Upload rejected.');
         }
 
-        // 4. Verify user permissions on associated resources before establishing attachment links.
+        // FILE-002: per-user storage quota (disk exhaustion by any authenticated account).
+        const quotaBytes = this.configService.get<number>('USER_UPLOAD_QUOTA_MB', 1024) * 1024 * 1024;
+        const used = await this.prisma.fileAsset.aggregate({ where: { uploaderId: actor.userId }, _sum: { sizeBytes: true } });
+        if ((used._sum.sizeBytes ?? 0) + file.size > quotaBytes) {
+            throw new PayloadTooLargeException('Storage quota exceeded. Delete some files before uploading new ones.');
+        }
+
         if (planningEntryId) {
-            /*
-             * Verify that the user has edit permissions for the target planning entry 
-             * BEFORE attaching the file, using the exact same authorization logic.
-             */
             await this.planningService.assertCanEditEntry(actor, planningEntryId);
         }
         if (projectId) {
@@ -106,7 +104,6 @@ export class FilesService {
             await this.assertCanEditContract(actor, contractId);
         }
 
-        // 5. Save file metadata in database central storage.
         return this.prisma.fileAsset.create({
             data: {
                 uploaderId: actor.userId,
@@ -123,10 +120,6 @@ export class FilesService {
         });
     }
 
-    /**
-     * Rejects a request that sets more than one of `planningEntryId`/`projectId`/`contractId`
-     * at once. Zero set (a bare unattached upload) and exactly one set are both fine.
-     */
     private assertSingleParent(parent: FileParent): void {
         const setCount = [parent.planningEntryId, parent.projectId, parent.contractId].filter(
             (value) => value !== undefined && value !== null && value !== '',
@@ -327,7 +320,7 @@ export class FilesService {
      * @returns Fully qualified absolute system filepath.
      */
     resolveDiskPath(storedName: string): string {
-        return path.join(resolveUploadDir(), storedName);
+        return path.join(resolveUploadDir(), path.basename(storedName));
     }
 
     /**
@@ -335,9 +328,10 @@ export class FilesService {
      * Implements a best-effort pattern for filesystem cleanups.
      * * @param storedName - Unique filename saved on disk.
      */
-    private async safeDeleteFromDisk(storedName: string) {
+    private async safeDeleteFromDisk(storedName: string | undefined) {
+        if (!storedName) return;
         try {
-            await fs.unlink(path.join(resolveUploadDir(), storedName));
+            await fs.unlink(path.join(resolveUploadDir(), path.basename(storedName)));
         } catch {
             // File might already be missing or removed; ignore error gracefully (best-effort strategy).
         }

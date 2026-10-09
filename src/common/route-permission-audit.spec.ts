@@ -36,6 +36,34 @@ const CONTROLLERS_ROOT = path.resolve(__dirname, '..');
  * reviewed decision - not a way to silence this test.
  */
 const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
+    'planning/personal-planning-program.controller.ts': {
+        create: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        list: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        getById: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        update: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        delete: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        upsertWeek: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        deleteWeek: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        replaceDayEntries: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        schedule: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        preview: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        apply: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        generate: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+    },
+    'planning/platform-planning-program.controller.ts': {
+        create: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        list: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        getById: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        update: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        delete: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        upsertWeek: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        deleteWeek: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        replaceDayEntries: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        schedule: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        preview: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        apply: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        generate: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+    },
     'entities/entities.controller.ts': {
         list: 'Scoped via CurrentUser + platform membership checked in EntitiesService.',
         getById: 'Scoped via CurrentUser + platform membership checked in EntitiesService.',

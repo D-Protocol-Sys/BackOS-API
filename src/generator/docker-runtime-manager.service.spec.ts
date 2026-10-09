@@ -8,6 +8,9 @@ import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
  * in isolation, which is what makes them fast and safe to run in CI without Docker installed.
  */
 jest.mock('child_process', () => ({
+    // Keep the real module (command-runner.util promisifies execFile at import time) and only
+    // replace spawn().
+    ...jest.requireActual('child_process'),
     spawn: jest.fn(),
 }));
 import { spawn } from 'child_process';

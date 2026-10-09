@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { PrismaService } from '../../prisma/prisma.service';
 import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
@@ -14,7 +15,19 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
      * Configures the JWT extraction and signature verification rules.
      * * @param configService - Injected service to retrieve environment variables safely.
      */
-    constructor(configService: ConfigService) {
+    /**
+     * SECURITY FIX (SEC-002): short-lived cache of account status, so a suspended, disabled or
+     * deleted user loses API access within seconds instead of keeping a valid access token for
+     * up to its 15-minute lifetime - at the cost of at most one indexed lookup per user every
+     * STATUS_CACHE_TTL_MS.
+     */
+    private static readonly STATUS_CACHE_TTL_MS = 30_000;
+    private readonly statusCache = new Map<string, { active: boolean; expiresAt: number }>();
+
+    constructor(
+        configService: ConfigService,
+        private readonly prisma: PrismaService,
+    ) {
         super({
             // Extracts the JWT from the HTTP Authorization header using the 'Bearer <token>' schema.
             jwtFromRequest: ExtractJwt.fromAuthHeaderAsBearerToken(),
@@ -44,10 +57,25 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
      * @returns An object representing the authenticated user context, which NestJS automatically attaches to `req.user`.
      */
     async validate(payload: { sub: string; email: string; permissions: string[] }) {
+        if (!(await this.isActive(payload.sub))) {
+            throw new UnauthorizedException('Session no longer valid.');
+        }
         return {
             userId: payload.sub, // 'sub' (subject) is the standard JWT claim representing the unique user ID
             email: payload.email,
             permissions: payload.permissions,
         };
+    }
+
+    private async isActive(userId: string): Promise<boolean> {
+        const now = Date.now();
+        const cached = this.statusCache.get(userId);
+        if (cached && cached.expiresAt > now) return cached.active;
+
+        const user = await this.prisma.user.findUnique({ where: { id: userId }, select: { status: true } });
+        const active = user?.status === 'ACTIVE';
+        if (this.statusCache.size > 10_000) this.statusCache.clear();
+        this.statusCache.set(userId, { active, expiresAt: now + JwtStrategy.STATUS_CACHE_TTL_MS });
+        return active;
     }
 }

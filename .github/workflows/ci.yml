@@ -37,7 +37,8 @@ permissions:
 # ----------------------------------------------------------------------------
 env:
   NODE_VERSION: "22"
-  PNPM_VERSION: "9"
+  # OPS-004: the pnpm version comes from package.json "packageManager" (pnpm@10.28.0, the one
+  # that produced pnpm-lock.yaml); the former hard-coded pnpm 9 could not read that lockfile.
 
 jobs:
 
@@ -55,8 +56,6 @@ jobs:
       # Step 2: Install pnpm package manager with specific version
       - name: Setup pnpm package manager
         uses: pnpm/action-setup@v4
-        with:
-          version: "${{ env.PNPM_VERSION }}"
 
       # Step 3: Install Node.js runtime and configure pnpm dependency caching
       - name: Setup Node.js runtime environment
@@ -93,8 +92,6 @@ jobs:
 
       - name: Setup pnpm package manager
         uses: pnpm/action-setup@v4
-        with:
-          version: "${{ env.PNPM_VERSION }}"
 
       - name: Setup Node.js runtime environment
         uses: actions/setup-node@v4
@@ -124,8 +121,6 @@ jobs:
 
       - name: Setup pnpm package manager
         uses: pnpm/action-setup@v4
-        with:
-          version: "${{ env.PNPM_VERSION }}"
 
       - name: Setup Node.js runtime environment
         uses: actions/setup-node@v4
@@ -163,8 +158,6 @@ jobs:
 
       - name: Setup pnpm package manager
         uses: pnpm/action-setup@v4
-        with:
-          version: "${{ env.PNPM_VERSION }}"
 
       - name: Setup Node.js runtime environment
         uses: actions/setup-node@v4
@@ -208,8 +201,6 @@ jobs:
 
       - name: Setup pnpm package manager
         uses: pnpm/action-setup@v4
-        with:
-          version: "${{ env.PNPM_VERSION }}"
 
       - name: Setup Node.js runtime environment
         uses: actions/setup-node@v4

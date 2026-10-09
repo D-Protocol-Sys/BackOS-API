@@ -10,7 +10,6 @@ import { ServiceCatalogModule } from './service-catalog.module';
 import { GeneratorController } from './generator.controller';
 import { PortAllocatorService } from './port-allocator.service';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
-import { RuntimeManagerService } from './runtime-manager.service';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 import { ApiManifestService } from './api-manifest.service';
 import { AuthModule } from '../auth/auth.module';
@@ -18,6 +17,7 @@ import { InternalGeneratedAuthController } from './internal-generated-auth.contr
 import { InternalGeneratedAuthService } from './internal-generated-auth.service';
 import { PlatformAccessModule } from '../platforms/platform-access.module';
 import { InternalAccountsSyncService } from './internal-accounts-sync.service';
+import { RuntimeRecoveryService } from './runtime-recovery.service';
 
 @Module({
 
@@ -44,14 +44,11 @@ import { InternalAccountsSyncService } from './internal-accounts-sync.service';
         PortAllocatorService,
         GenerationProcessor,
         GenerationCancellationRegistry,
-        // NOTE: this comment previously read "registered but not injected anywhere yet" - that
-        // is no longer accurate. GeneratorController's runtime/start, runtime/stop, runtime/
-        // status and runtime/logs routes are wired directly to DockerRuntimeManagerService
-        // below, not to this native-process implementation. RuntimeManagerService is kept
-        // registered for local/no-Docker setups that still construct it directly, but nothing
-        // in this module currently routes traffic to it.
-        RuntimeManagerService,
+        // ARCH-005: the unused native-process RuntimeManagerService was removed - every runtime
+        // route goes through the Docker-based implementation below.
         DockerRuntimeManagerService,
+        // Restarts the generated backends that were running before a host / Docker restart.
+        RuntimeRecoveryService,
         ApiManifestService,
         InternalGeneratedAuthService,
     ],

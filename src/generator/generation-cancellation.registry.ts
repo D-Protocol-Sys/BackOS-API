@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 
 /**
  * Registry managing execution cancellation for async generation tasks.
@@ -6,8 +6,14 @@ import { Injectable } from '@nestjs/common';
  * to send cancellation signals to long-running tasks across asynchronous boundaries.
  */
 @Injectable()
-export class GenerationCancellationRegistry {
+export class GenerationCancellationRegistry implements OnApplicationShutdown {
     private readonly controllers = new Map<string, AbortController>();
+    private shuttingDown = false;
+
+    /** True once the application started shutting down (aborts are not user cancellations). */
+    isShuttingDown(): boolean {
+        return this.shuttingDown;
+    }
 
     /**
      * Instantiates and registers a new AbortController for a specific generation process.
@@ -30,5 +36,18 @@ export class GenerationCancellationRegistry {
      */
     clear(generationId: string): void {
         this.controllers.delete(generationId);
+    }
+
+    /**
+     * RELIABILITY FIX (GEN-009): on shutdown (SIGTERM with shutdown hooks enabled) the running
+     * `pnpm`/`prisma` child processes are aborted instead of being left orphaned; the job is
+     * then picked up again by the boot-time reconciliation.
+     */
+    onApplicationShutdown(): void {
+        this.shuttingDown = true;
+        for (const controller of this.controllers.values()) {
+            controller.abort();
+        }
+        this.controllers.clear();
     }
 }

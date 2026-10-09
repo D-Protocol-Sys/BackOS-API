@@ -1,5 +1,5 @@
 import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
-import { IsEmail, IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
+import { IsEmail, IsString, IsOptional, MinLength, MaxLength, Matches } from 'class-validator';
 
 /**
  * Data Transfer Object representing the payload required to provision a new user account.
@@ -67,5 +67,7 @@ export class CreateUserDto {
     @IsString()
     @MinLength(3)
     @MaxLength(30)
+    // SEC-025: no '@' - a username equal to another account's e-mail made login ambiguous.
+    @Matches(/^[A-Za-z0-9._-]+$/, { message: 'username may only contain letters, digits, ".", "_" and "-".' })
     username?: string;
 }

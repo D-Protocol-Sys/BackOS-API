@@ -79,6 +79,10 @@ export class PlatformServicesService {
         // Validate complete structure against catalog specifications, then coerce typed values
         // ("true" -> true) so what is stored - and read back by the generators - is always well-typed.
         this.catalog.validateConfig(serviceKey, fullConfig);
+        // SEC-026: the JWT secret of a generated backend signs its users' sessions.
+        if (serviceKey === 'auth-user' && typeof fullConfig.jwtSecret === 'string' && fullConfig.jwtSecret.length < 32) {
+            throw new BadRequestException('The JWT secret must be at least 32 characters long.');
+        }
         const providedConfig = this.catalog.normalizeConfig(serviceKey, fullConfig);
 
         // Business Rule: every service this one depends on (e.g. Mailing for Auth & User and for

@@ -1,4 +1,5 @@
-import { Body, Controller, Headers, HttpCode, HttpStatus, NotFoundException, Post, Req } from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, HttpStatus, NotFoundException, Post, Req, UseGuards } from '@nestjs/common';
+import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { ApiExcludeController } from '@nestjs/swagger';
 import type { Request } from 'express';
 import { Public } from '../common/decorators/public.decorator';
@@ -17,6 +18,10 @@ import { LookupMemberDto } from './dto/lookup-member.dto';
  * `InternalGeneratedAuthService`). Hidden from the Swagger document.
  */
 @ApiExcludeController()
+// SEC-018: these public endpoints used to have no rate limit at all. The budget is generous
+// because every generated backend of a host reaches BackOS from the same (Docker gateway) IP.
+@UseGuards(ThrottlerGuard)
+@Throttle({ default: { limit: 300, ttl: 60_000 } })
 @Controller('internal/generated-auth')
 export class InternalGeneratedAuthController {
     constructor(private readonly internalAuth: InternalGeneratedAuthService) {}

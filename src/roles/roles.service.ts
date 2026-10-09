@@ -8,6 +8,9 @@ import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
 import { RoleHierarchyService } from '../common/services/role-hierarchy.service';
+import { AuditLogService } from '../audit/audit-log.service';
+import { AUDIT_ACTIONS, AuditAction } from '../common/constants/audit-actions';
+import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
 
 /**
  * Service managing user roles lifecycle, role-permission associations,
@@ -19,7 +22,15 @@ export class RolesService {
     constructor(
         private readonly prisma: PrismaService,
         private readonly roleHierarchy: RoleHierarchyService,
+        private readonly auditLog: AuditLogService,
     ) {}
+
+    /** SEC-027: RBAC changes are audited. */
+    private async audit(actorId: string, action: AuditAction, roleId: string, metadata: Record<string, unknown> = {}) {
+        await this.auditLog
+            .log({ action, actorId, targetType: AUDIT_TARGETS.ROLE, targetId: roleId, metadata: metadata as never })
+            .catch(() => undefined);
+    }
 
     /**
      * Lists all existing roles, including their nested permission definitions,
@@ -62,7 +73,7 @@ export class RolesService {
 
         const permissions = await this.resolvePermissions(dto.permissionKeys);
 
-        return this.prisma.role.create({
+        const created = await this.prisma.role.create({
             data: {
                 name: dto.name,
                 description: dto.description,
@@ -73,6 +84,8 @@ export class RolesService {
             },
             include: { rolePermissions: { include: { permission: true } } },
         });
+        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_CREATED, created.id, { name: dto.name, level: dto.level, permissions: dto.permissionKeys });
+        return created;
     }
 
     /**
@@ -81,11 +94,14 @@ export class RolesService {
      */
     async update(actorUserId: string, id: string, dto: UpdateRoleDto) {
         await this.assertNotSystemRole(id, 'modify');
-        return this.prisma.role.update({
+        await this.roleHierarchy.assertCanManageRole(actorUserId, id, 'modify');
+        const updated = await this.prisma.role.update({
             where: { id },
-            data: dto,
+            data: { name: dto.name, description: dto.description },
             include: { rolePermissions: { include: { permission: true } } },
         });
+        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_UPDATED, id, { ...dto });
+        return updated;
     }
 
     /**
@@ -105,6 +121,7 @@ export class RolesService {
      */
     async replacePermissions(actorUserId: string, id: string, permissionKeys: string[]) {
         await this.assertNotSystemRole(id, 'modify permissions for');
+        await this.roleHierarchy.assertCanManageRole(actorUserId, id, 'modify permissions for');
         await this.roleHierarchy.assertPermissionsAreOwnedByActor(actorUserId, permissionKeys);
         const permissions = await this.resolvePermissions(permissionKeys);
 
@@ -115,6 +132,7 @@ export class RolesService {
             }),
         ]);
 
+        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_PERMISSIONS_REPLACED, id, { permissions: permissionKeys });
         return this.getById(id);
     }
 
@@ -136,7 +154,9 @@ export class RolesService {
             );
         }
 
-        return this.prisma.role.delete({ where: { id } });
+        const deleted = await this.prisma.role.delete({ where: { id } });
+        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_DELETED, id, { name: deleted.name });
+        return deleted;
     }
 
     // ---- Helpers ----

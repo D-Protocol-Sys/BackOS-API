@@ -1,7 +1,9 @@
 # ============================================================================
 # PIPELINE OVERVIEW: Reusable Deployment Workflow
-# This workflow is called by other workflows (like CD) to execute SSH deployment
-# steps, perform health checks, and handle automatic rollback upon failure.
+# Called by the CD workflow. Connects to the server over SSH, deploys the image
+# that CD just built, scanned and signed (pulled from the registry - NOT rebuilt
+# on the server), checks the application is healthy, and rolls back to the
+# previous version if it is not.
 # ============================================================================
 
 name: Reusable Deployment
@@ -23,10 +25,10 @@ on:
         type: string          # Public URL of the deployed application
       image_tag:
         required: true
-        type: string          # Docker image tag or commit SHA to deploy
+        type: string          # Image tag to deploy (short commit SHA or semantic version)
       env_file:
         required: true
-        type: string          # Environment file path on target server (e.g., .env.demo)
+        type: string          # Kept for compatibility: the env file is now chosen by scripts/stack.sh
       health_check_url:
         required: true
         type: string          # Endpoint URL used to verify app health
@@ -35,53 +37,108 @@ jobs:
   deploy:
     name: Execute deployment
     runs-on: ubuntu-latest
-    
+
     # Links this job to GitHub's deployment tracker and active environment rules
     environment:
       name: ${{ inputs.environment }}
       url: ${{ inputs.target_url }}
 
     steps:
-      # Step 1: Connect to remote host over SSH and launch deployment script
+      # Step 0: Skip cleanly (with a visible warning) when the repository has no deployment
+      # target configured - typical for a fork that only wants the image build/scan/sign part.
+      - name: Check deployment configuration
+        id: config
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          HEALTH_URL: ${{ inputs.health_check_url }}
+        run: |
+          missing=""
+          for name in DEPLOY_HOST DEPLOY_USER DEPLOY_SSH_KEY DEPLOY_PATH; do
+            [ -n "${!name}" ] || missing="$missing secret:$name"
+          done
+          case "$HEALTH_URL" in
+            http://*|https://*) ;;
+            *) missing="$missing variable:DEMO_URL/PROD_URL" ;;
+          esac
+          if [ -n "$missing" ]; then
+            echo "::warning title=Deployment skipped (not configured)::${{ inputs.environment }} was NOT deployed. Missing:${missing}. See docs/README_DEPLOIEMENT.md, section CI/CD."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Step 1: Connect to the server, pull the published image and start the stack.
+      # If the deployment itself fails (e.g. a container never becomes healthy), roll back at once.
       - name: Deploy application via SSH
+        if: steps.config.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          GHCR_USER: ${{ secrets.GHCR_USER }}
+          GHCR_TOKEN: ${{ secrets.GHCR_TOKEN }}
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          REPO: ${{ github.repository }}
+          COMMIT_SHA: ${{ github.sha }}
+          TARGET_ENV: ${{ inputs.environment }}
+          IMAGE_TAG: ${{ inputs.image_tag }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: GHCR_USER,GHCR_TOKEN,DEPLOY_PATH,REPO,COMMIT_SHA,TARGET_ENV,IMAGE_TAG
           script: |
-            # Navigate to base directory on remote server
-            cd ${{ secrets.DEPLOY_PATH }}
-            
-            # Synchronize local repository state with the exact commit SHA
-            git fetch --tags && git checkout ${{ github.sha }}
-            
-            # Inject the target image version into environment configuration file
-            echo "IMAGE_TAG=${{ inputs.image_tag }}" >> ${{ inputs.env_file }}
-            
-            # Run application update script for specified environment
-            ./scripts/stack.sh up ${{ inputs.environment }}
+            set -e
+            cd "$DEPLOY_PATH"
+
+            # Synchronize the repository (compose files, scripts) with the exact commit
+            git fetch --tags && git checkout "$COMMIT_SHA"
+
+            # Registry image = ghcr.io/<owner>/<repo>, lowercased (registry names must be)
+            export ORCHESTRATOR_IMAGE="ghcr.io/$(echo "$REPO" | tr '[:upper:]' '[:lower:]')"
+            export GITHUB_REPOSITORY="$REPO"    # lets stack.sh verify the cosign signature
+
+            # Only needed when the image package is private
+            if [ -n "$GHCR_TOKEN" ]; then
+              echo "$GHCR_TOKEN" | docker login ghcr.io -u "$GHCR_USER" --password-stdin
+            fi
+
+            if ! ./scripts/stack.sh deploy "$TARGET_ENV" "$IMAGE_TAG"; then
+              echo "CRITICAL: deployment of $IMAGE_TAG failed. Rolling back to the previous version..."
+              ./scripts/stack.sh rollback "$TARGET_ENV" || echo "No previous version to restore."
+              exit 1
+            fi
 
       # Step 2: Post-deployment validation & automatic recovery
       - name: Verify health and rollback on failure
+        if: steps.config.outputs.configured == 'true'
         uses: appleboy/ssh-action@v1.2.0
+        env:
+          DEPLOY_PATH: ${{ secrets.DEPLOY_PATH }}
+          TARGET_ENV: ${{ inputs.environment }}
+          HEALTH_URL: ${{ inputs.health_check_url }}
         with:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: DEPLOY_PATH,TARGET_ENV,HEALTH_URL
           script: |
-            # Wait 10 seconds to allow container services to initialize properly
-            sleep 10
-            
-            # Perform HTTP request to test if application responds with HTTP 200
-            if ! curl -fsS ${{ inputs.health_check_url }}; then
-              echo "CRITICAL: Health check failed for ${{ inputs.environment }}. Initiating automated rollback..."
-              
-              # Revert deployment to previous stable state
-              ./scripts/stack.sh rollback ${{ inputs.environment }}
-              
-              echo "FAILED: Deployment aborted and previous version restored."
-              exit 1 # Fail the pipeline step explicitly
+            set -e
+            cd "$DEPLOY_PATH"
+
+            # Give the application up to ~60 s to answer with HTTP 200
+            healthy=0
+            for i in $(seq 1 12); do
+              if curl -fsS --max-time 5 "$HEALTH_URL" >/dev/null; then healthy=1; break; fi
+              sleep 5
+            done
+
+            if [ "$healthy" != "1" ]; then
+              echo "CRITICAL: health check failed for $TARGET_ENV. Initiating automated rollback..."
+              ./scripts/stack.sh rollback "$TARGET_ENV"
+              echo "FAILED: deployment aborted and previous version restored."
+              exit 1
             fi
-            
-            echo "SUCCESS: Post-deployment health check passed."
+
+            echo "SUCCESS: post-deployment health check passed."

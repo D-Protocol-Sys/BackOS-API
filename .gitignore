@@ -77,3 +77,6 @@ prisma/generated
 
 generated/
 uploads/
+
+# Owner activation details written by the production seed (SEC-031)
+owner-activation.txt
