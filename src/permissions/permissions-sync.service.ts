@@ -1,6 +1,7 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { PERMISSION_DESCRIPTIONS, PERMISSIONS } from '../common/constants/permissions.constant';
+import { collectFeaturePermissions } from '../features/feature-registry';
 
 /**
  * Service responsible for synchronizing application permissions with the database.
@@ -21,14 +22,20 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
      */
     async onApplicationBootstrap() {
 
-        const keys = Object.values(PERMISSIONS);
+        // OPTIONAL FEATURES: the permissions declared by EVERY installed feature are part of the
+        // catalog, whether the feature is currently enabled or not. Leaving a disabled feature's
+        // permissions out would make the purge below delete them, and with them every role's
+        // assignment of them - which switching the feature back on could not restore.
+        const featurePermissions = collectFeaturePermissions();
+        const descriptions: Record<string, string> = { ...PERMISSION_DESCRIPTIONS, ...featurePermissions };
+        const keys: string[] = [...Object.values(PERMISSIONS), ...Object.keys(featurePermissions)];
 
         // Synchronize each permission constant with the database record
         for (const key of keys) {
             await this.prisma.permission.upsert({
                 where: { key },
-                update: { description: PERMISSION_DESCRIPTIONS[key] },
-                create: { key, description: PERMISSION_DESCRIPTIONS[key] },
+                update: { description: descriptions[key] },
+                create: { key, description: descriptions[key] },
             });
         }
 

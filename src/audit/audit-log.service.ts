@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { Prisma } from '@prismamodels/client';
 import { AuditAction } from '../common/constants/audit-actions';
+import type { FeatureAuditAction, FeatureAuditTarget } from '../features/feature.types';
 import { AuditTarget } from '../common/constants/audit-target.constant';
 import { currentRequestId } from '../common/request-context/request-context';
 
@@ -28,7 +29,7 @@ export interface AuditLogEntry {
     /**
      * The specific action or event being audited (e.g., USER_LOGIN, ROLE_UPDATED).
      */
-    action: AuditAction;
+    action: AuditAction | FeatureAuditAction;
 
     /**
      * Unique identifier of the user performing the action (null if system-generated or unauthenticated).
@@ -38,7 +39,7 @@ export interface AuditLogEntry {
     /**
      * The broad entity/domain category affected by the action (e.g., User, Platform).
      */
-    targetType?: AuditTarget;
+    targetType?: AuditTarget | FeatureAuditTarget;
 
     /**
      * Unique identifier of the specific target entity affected.

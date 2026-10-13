@@ -12,9 +12,9 @@ name: CodeQL
 # ----------------------------------------------------------------------------
 on:
   push:
-    branches: [main]       # Run analysis when code is merged directly into 'main'
+    branches: [main, develop]  # Run analysis when code lands on 'main' or 'develop'
   pull_request:
-    branches: [main]       # Run analysis on Pull Requests targeting the 'main' branch
+    branches: [main, develop]  # Run analysis on Pull Requests targeting 'main' or 'develop'
   schedule:
     # Recurring cron trigger: Runs every Monday at 03:00 UTC
     # Catches newly discovered vulnerabilities (CVEs) even if no code changes occurred

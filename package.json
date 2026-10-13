@@ -19,6 +19,8 @@
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand",
     "test:e2e:migrate": "cross-env NODE_ENV=test prisma migrate deploy",
+    "test:scripts": "node --test scripts/pr-check.test.mjs scripts/list-features.test.mjs scripts/new-feature.test.mjs",
+    "feature:new": "node scripts/new-feature.mjs",
     "prisma:reset": "prisma migrate reset --force && prisma db seed && prisma generate",
     "sys:reset": "docker compose down -v && docker compose up -d --wait && pnpm prisma:reset"
   },

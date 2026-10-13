@@ -35,6 +35,7 @@ import { ProvisioningHealthService } from './common/services/provisioning-health
 import { GatewayModule } from './gateway/gateway.module';
 import { BackupModule } from './backup/backup.module';
 import { ClientsModule } from './clients/clients.module';
+import { FeaturesModule } from './features/features.module';
 
 @Module({
 
@@ -131,6 +132,10 @@ import { ClientsModule } from './clients/clients.module';
         AuditModule,
 
         BackupModule,
+
+        // Optional features (src/features/<name>/): loaded only when named in ENABLED_FEATURES.
+        // A feature never needs to be added to this file.
+        FeaturesModule.register(),
 
     ],
 

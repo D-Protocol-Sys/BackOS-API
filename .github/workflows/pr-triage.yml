@@ -1,0 +1,112 @@
+# ============================================================================
+# PULL REQUEST TRIAGE
+# Checks that a pull request is what it says it is (fix, improvement, documentation or NEW
+# FEATURE), labels it, and posts one comment that is updated on every push.
+#
+# SECURITY: this runs on `pull_request_target`, i.e. with a token that can write labels and
+# comments even for pull requests from forks. That is only safe because nothing from the pull
+# request is ever executed: the workflow checks out the BASE branch, and it only reads the
+# description and the list of changed files given by the GitHub API (see scripts/pr-check.mjs).
+# Do not add a step that checks out or runs the pull request's code.
+# ============================================================================
+name: PR triage
+
+on:
+  pull_request_target:
+    types: [opened, edited, synchronize, reopened, ready_for_review]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+
+concurrency:
+  group: pr-triage-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  triage:
+    name: Check the type of change
+    runs-on: ubuntu-latest
+    steps:
+      # With pull_request_target this checks out the base branch, never the pull request.
+      - name: Checkout the base branch
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: List the changed files (GitHub API)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          gh api --paginate "repos/${REPO}/pulls/${PR_NUMBER}/files" \
+            --jq '.[] | {filename, status, patch}' > pr-files.ndjson
+
+      - name: Check the pull request
+        env:
+          # Passed through the environment, never pasted into the script.
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          PR_BASE_REPO: ${{ github.repository }}
+          # Branch model: contributors target the integration branch, maintainers promote it to
+          # the release branch. Change them with repository variables, not by editing this file.
+          RELEASE_BRANCH: ${{ vars.RELEASE_BRANCH || 'main' }}
+          INTEGRATION_BRANCH: ${{ vars.INTEGRATION_BRANCH || 'develop' }}
+        run: node scripts/pr-check.mjs --files pr-files.ndjson --out pr-result.json --comment pr-comment.md
+
+      - name: Update the labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+
+          create() { gh label create "$1" --repo "$REPO" --color "$2" --description "$3" 2>/dev/null || true; }
+          create "type: feature"              "0e8a16" "A new optional feature (off by default)"
+          create "type: improvement"          "1d76db" "Improves what the base already does"
+          create "type: fix"                  "d73a4a" "Bug fix"
+          create "type: docs"                 "0075ca" "Documentation only"
+          create "needs-type-review"          "fbca04" "A maintainer must confirm: feature or improvement?"
+          create "touches-base"               "fbca04" "A feature that also edits the base"
+          create "infra"                      "5319e7" "Changes the workflows or the scripts"
+          create "needs-maintainer-decision"  "b60205" "Needs a decision from a maintainer"
+          create "release"                    "0e8a16" "Promotes the integration branch to production"
+
+          jq -r '.remove[]' pr-result.json | while IFS= read -r label; do
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --remove-label "$label" 2>/dev/null || true
+          done
+          jq -r '.labels[]' pr-result.json | while IFS= read -r label; do
+            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$label"
+          done
+
+      - name: Post or update the comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          existing=$(gh api --paginate "repos/${REPO}/issues/${PR_NUMBER}/comments" \
+            --jq '.[] | select(.body | contains("<!-- pr-triage -->")) | .id' | head -n 1)
+          if [ -n "$existing" ]; then
+            gh api --method PATCH "repos/${REPO}/issues/comments/${existing}" -F body=@pr-comment.md > /dev/null
+          else
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body-file pr-comment.md
+          fi
+
+      # Last on purpose: the labels and the comment are in place even when this fails.
+      - name: Fail if the pull request is inconsistent
+        run: |
+          if [ "$(jq '.errors | length' pr-result.json)" -gt 0 ]; then
+            echo "The pull request description or content needs fixing: see the comment on the pull request."
+            exit 1
+          fi

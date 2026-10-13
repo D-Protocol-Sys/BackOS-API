@@ -1,4 +1,5 @@
 import * as Joi from 'joi';
+import { validateFeatureEnv } from '../features/feature-env';
 
 /**
  * Environment Variables Validation Schema
@@ -181,4 +182,23 @@ export const validationSchema = Joi.object({
     OWNER_LASTNAME: Joi.string().required(),
     OWNER_USERNAME: Joi.string().required(),
 
+    // --- OPTIONAL FEATURES ---
+    // Comma-separated list of the optional features to switch on (`all` for every one, `-name`
+    // to switch one off). Empty or unset = the base BackOS. Whether the names exist, and the
+    // variables each feature declares, are checked by the `.custom()` step below, once every
+    // feature has been discovered. See src/features/README.md.
+    ENABLED_FEATURES: Joi.string().allow('').optional(),
+
+}).custom((value, helpers) => {
+
+    // Runs after the core variables above were validated. Discovering the features here, and
+    // not when this file is imported, avoids a circular import: a feature may import from
+    // `../../config` like any other module.
+    const { value: featureValues, errors } = validateFeatureEnv(value);
+
+    if (errors.length > 0) {
+        return helpers.message({ custom: errors.join(' ') });
+    }
+
+    return { ...value, ...featureValues };
 });

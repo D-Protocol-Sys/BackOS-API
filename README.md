@@ -90,6 +90,8 @@ Everything lives under [`src/`](src/). Each row links to the code, so you can op
 
 ## 4. Get the project on your machine
 
+> ℹ️ **Note:** BackOS is split into two repositories. This repository (`BackOS-API`) handles the backend engine, while the web interface is available on the [BackOS-WEB repository](https://github.com/D-Protocol-Sys/BackOS-WEB).
+
 ### Before you start
 
 You only need **[Git](https://git-scm.com/downloads)** to download the project. Check that it is installed:

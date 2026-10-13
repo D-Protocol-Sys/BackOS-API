@@ -11,6 +11,7 @@ updates:
   # ============================================================================
   - package-ecosystem: "npm"      # Package manager to monitor (npm, pnpm, yarn use "npm")
     directory: "/"                # Location of package.json and lockfile
+    target-branch: "develop"      # Pull requests go to the pre-production branch first
     schedule:
       interval: "weekly"          # Check frequency (daily, weekly, monthly)
       day: "monday"               # Day of the week to run checks
@@ -39,6 +40,7 @@ updates:
   # ============================================================================
   - package-ecosystem: "docker"   # Monitors base images in Dockerfiles (e.g., FROM node:22-alpine)
     directory: "/deploy"          # Location of Dockerfiles
+    target-branch: "develop"      # Pull requests go to the pre-production branch first
     schedule:
       interval: "weekly"
       day: "monday"
@@ -56,6 +58,7 @@ updates:
   # ============================================================================
   - package-ecosystem: "github-actions" # Monitors GitHub Actions versions (e.g., actions/checkout@v4)
     directory: "/"                      # Searches inside .github/workflows/
+    target-branch: "develop"            # Pull requests go to the pre-production branch first
     schedule:
       interval: "weekly"
       day: "monday"

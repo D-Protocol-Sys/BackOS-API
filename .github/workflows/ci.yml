@@ -13,7 +13,7 @@ name: CI
 on:
   pull_request:            # Run checks on any open or updated Pull Request
   push:
-    branches: [main]       # Run checks when code is merged directly into 'main'
+    branches: [main, develop]  # Run checks when code lands on 'main' (production) or 'develop' (pre-production)
 
 # ----------------------------------------------------------------------------
 # CONCURRENCY MANAGEMENT
@@ -138,6 +138,10 @@ jobs:
       - name: Run unit test suite with coverage
         run: pnpm run test:cov
 
+      # The helper scripts behind the pull request checks and `pnpm feature:new`
+      - name: Run the scripts' own tests
+        run: pnpm run test:scripts
+
       # Save HTML/LCOV coverage files as downloadable artifacts for 14 days
       - name: Archive test coverage artifacts
         uses: actions/upload-artifact@v4
@@ -187,6 +191,75 @@ jobs:
       # Debugging helper: Print container logs if E2E tests fail
       - name: Capture Docker Compose logs on job failure
         if: failure()              # Executes ONLY if a previous step failed
+        run: docker compose -f deploy/docker-compose.test.yml logs || true
+
+  # ============================================================================
+  # JOB 4b: Optional Features
+  # Skipped until the first feature exists in src/features/. Then it boots the real application
+  # with no feature, with all of them, and with each one alone, so that two features that work
+  # separately but not together are caught here and not by the users.
+  # ============================================================================
+  list-features:
+    name: Discover Optional Features
+    runs-on: ubuntu-latest
+    outputs:
+      count: ${{ steps.list.outputs.count }}
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+
+      - name: List the features found in src/features
+        id: list
+        run: node scripts/list-features.mjs >> "$GITHUB_OUTPUT"
+
+  features-e2e:
+    name: Optional Features (${{ matrix.label }})
+    needs: list-features
+    if: needs.list-features.outputs.count != '0'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.list-features.outputs.matrix) }}
+    env:
+      ENABLED_FEATURES: ${{ matrix.value }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm package manager
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js runtime environment
+        uses: actions/setup-node@v4
+        with:
+          node-version: "${{ env.NODE_VERSION }}"
+          cache: "pnpm"
+
+      - name: Install project dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma ORM client
+        run: pnpm exec prisma generate
+
+      - name: Populate test environment configuration from repository secrets
+        run: |
+          cp .env.test.example .env.test
+          {
+            echo "ENCRYPTION_KEY=${{ secrets.CI_ENCRYPTION_KEY }}"
+            echo "JWT_SECRET=${{ secrets.CI_JWT_SECRET }}"
+          } >> .env.test
+
+      - name: Boot the application and check the features
+        run: pnpm exec cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand features.e2e-spec
+
+      - name: Capture Docker Compose logs on job failure
+        if: failure()
         run: docker compose -f deploy/docker-compose.test.yml logs || true
 
   # ============================================================================

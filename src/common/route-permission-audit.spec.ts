@@ -75,6 +75,9 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         restore: 'Scoped via CurrentUser + platform membership checked in EntitiesService.',
         setAuthProtection: 'Scoped via CurrentUser + platform membership checked in EntitiesService.',
     },
+    'features/features.controller.ts': {
+        list: 'Any signed-in user may list the installed optional features (names, descriptions and an on/off flag - nothing sensitive, nothing scoped to a user); the front end needs it to show or hide screens.',
+    },
     'fields/fields.controller.ts': {
         list: 'Scoped via CurrentUser + platform membership checked in FieldsService.',
         create: 'Scoped via CurrentUser + platform membership checked in FieldsService.',

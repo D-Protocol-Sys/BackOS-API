@@ -1,5 +1,6 @@
 import { SetMetadata } from '@nestjs/common';
 import { PermissionKey } from '../constants/permissions.constant';
+import type { FeaturePermissionKey } from '../../features/feature.types';
 
 /**
  * Metadata key used to store the array of permissions required to access a route or controller.
@@ -20,5 +21,5 @@ export const PERMISSIONS_KEY = 'requiredPermissions';
  * createUsers() { ... }
  * ```
  */
-export const RequirePermissions = (...permissions: PermissionKey[]) =>
+export const RequirePermissions = (...permissions: Array<PermissionKey | FeaturePermissionKey>) =>
     SetMetadata(PERMISSIONS_KEY, permissions);

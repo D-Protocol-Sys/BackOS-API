@@ -1,0 +1,10 @@
+# Code owners are asked to review every pull request that touches the files they own.
+# With the branch ruleset option "Require review from Code Owners", their approval is required to merge.
+#
+# BEFORE USING: replace @YOUR-GITHUB-USERNAME below with the GitHub user (or @organisation/team) of the maintainer.
+# A name that does not exist makes GitHub ignore the line.
+#
+# Later, to let a trusted reviewer own one area, add a more specific line AFTER this one:
+# the last matching line wins. For example:  /src/features/my-feature/  @someone
+
+* @D-Protocol-Sys @D-Protocol-Tech
