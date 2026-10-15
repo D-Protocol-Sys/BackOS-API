@@ -117,7 +117,7 @@ jobs:
 
       # Step 6: Scan the published image for vulnerability vulnerabilities (CVEs)
       - name: Scan container image for vulnerabilities
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}@${{ steps.build.outputs.digest }}
           format: sarif               # Standard format for static analysis security results

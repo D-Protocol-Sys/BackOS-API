@@ -308,11 +308,24 @@ jobs:
         with:
           fetch-depth: 0          # '0' retrieves all commits, branches, and tags
 
-      # Scan repository history for leaked passwords, API tokens, and private keys
+      # Scan repository history for leaked passwords, API tokens, and private keys.
+      # This runs the open-source gitleaks program itself, not the gitleaks/gitleaks-action wrapper:
+      # the wrapper demands a licence key for repositories owned by an organisation. The release is
+      # pinned and its checksum is verified before it runs. The rules and exceptions are in
+      # .gitleaks.toml at the root of the repository.
       - name: Scan codebase for leaked credentials
-        uses: gitleaks/gitleaks-action@v2
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_VERSION: "8.30.1"
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          base="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}"
+          curl -sSfL -o "$archive" "${base}/${archive}"
+          curl -sSfL -o checksums.txt "${base}/gitleaks_${GITLEAKS_VERSION}_checksums.txt"
+          sha256sum --check --ignore-missing checksums.txt
+          tar -xzf "$archive" gitleaks
+          ./gitleaks detect --source "$GITHUB_WORKSPACE" --redact --no-banner --verbose
 
   # ============================================================================
   # JOB 7: File System and Container Security Scan
@@ -340,7 +353,7 @@ jobs:
 
       # Scan source code repository files for security misconfigurations
       - name: Scan repository filesystem with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           scan-type: fs
           scan-ref: .
@@ -349,7 +362,7 @@ jobs:
 
       # Scan local Docker image layers for vulnerable OS packages or libraries
       - name: Scan container image with Trivy
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ci-image:scan
           format: sarif

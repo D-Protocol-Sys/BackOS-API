@@ -1,0 +1,14 @@
+# Configuration of the secret scan (gitleaks), used by the "Hardcoded Secret Detection" CI job.
+# It starts from gitleaks' default rules and only adds the exceptions below.
+title = "BackOS gitleaks configuration"
+
+[extend]
+useDefault = true
+
+# The settings examples (.env.*.example) contain placeholders such as REPLACE_ME... and test values.
+# Their long, random-looking values trip the generic "api key" rule. ONLY that rule is relaxed for
+# these files: a real token, key or private key pasted into one of them is still reported.
+[[allowlists]]
+description = "Placeholders and test values in the settings examples"
+targetRules = ["generic-api-key"]
+paths = ['''^\.env(\.[a-z]+)?\.example$''']
