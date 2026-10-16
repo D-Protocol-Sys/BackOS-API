@@ -18,7 +18,6 @@ import { ProjectStatus } from '@prismamodels/client';
  * All properties are optional to allow flexible partial updates (PATCH requests).
  */
 export class UpdateProjectDto {
-
     /**
      * An optional updated name for the project.
      * Optional field: if provided, must be a string between 2 and 150 characters in length.
@@ -105,5 +104,4 @@ export class UpdateProjectDto {
     @Min(0)
     @Max(10)
     priority?: number;
-
 }

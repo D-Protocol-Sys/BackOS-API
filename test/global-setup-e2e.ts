@@ -44,9 +44,9 @@ export default async function globalSetup() {
     if (!tokenMatch || !codeMatch || !emailMatch) {
         throw new Error(
             '[e2e] Could not find the owner activation token/code/email in the seed output above. ' +
-            'Either the DB was not empty (owner already existed - is docker-compose.test.yml\'s ' +
-            'tmpfs volume actually being reset between runs?), or prisma/seed.ts\'s console.log ' +
-            'format changed and test/global-setup-e2e.ts\'s regex needs updating.',
+                "Either the DB was not empty (owner already existed - is docker-compose.test.yml's " +
+                "tmpfs volume actually being reset between runs?), or prisma/seed.ts's console.log " +
+                "format changed and test/global-setup-e2e.ts's regex needs updating.",
         );
     }
 
@@ -57,4 +57,3 @@ export default async function globalSetup() {
 
     console.log('[e2e] Test infra ready.');
 }
-

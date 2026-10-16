@@ -48,7 +48,11 @@ export function validateFeatureEnv(
             // Only keep the features' own keys: the core ones were already validated and are
             // merged back by the caller.
             const validated = result.value as Record<string, unknown>;
-            value = Object.fromEntries(Object.keys(rules).filter((key) => key in validated).map((key) => [key, validated[key]]));
+            value = Object.fromEntries(
+                Object.keys(rules)
+                    .filter((key) => key in validated)
+                    .map((key) => [key, validated[key]]),
+            );
         }
     }
 

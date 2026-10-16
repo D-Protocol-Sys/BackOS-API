@@ -1,11 +1,6 @@
 import { PlatformAccessService } from '../platforms/platform-access.service';
 import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
-import {
-    BadRequestException,
-    ForbiddenException,
-    Injectable,
-    NotFoundException,
-} from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { PlanningItemType, PlanningScope } from '@prismamodels/client';
 import { UserStatus } from '@prismamodels/enums';
 import { PrismaService } from '../prisma/prisma.service';
@@ -87,10 +82,7 @@ export const TYPE_REQUIREMENTS: Record<
  * @param type The item type being validated (e.g., TASK, EVENT)
  * @param payload The request body payload containing candidate properties
  */
-export function validatePlanningEntryPayload(
-    type: PlanningItemType,
-    payload: PlanningPayload,
-): void {
+export function validatePlanningEntryPayload(type: PlanningItemType, payload: PlanningPayload): void {
     const rules = TYPE_REQUIREMENTS[type];
 
     if (!rules) {
@@ -100,18 +92,14 @@ export function validatePlanningEntryPayload(
     // Ensure all required fields are present and not null/undefined
     for (const field of rules.required) {
         if (payload[field] === undefined || payload[field] === null) {
-            throw new BadRequestException(
-                `The field "${field}" is required for an item of type ${type}.`,
-            );
+            throw new BadRequestException(`The field "${field}" is required for an item of type ${type}.`);
         }
     }
 
     // Ensure no forbidden fields are populated for this item type
     for (const field of rules.forbidden) {
         if (payload[field] !== undefined && payload[field] !== null) {
-            throw new BadRequestException(
-                `The field "${field}" is not allowed for an item of type ${type}.`,
-            );
+            throw new BadRequestException(`The field "${field}" is not allowed for an item of type ${type}.`);
         }
     }
 }
@@ -283,9 +271,7 @@ export class PlanningService {
         return this.prisma.planningEntry.findMany({
             where: {
                 planningId: planning.id,
-                ...(assignedToMe
-                    ? { assignees: { some: { userId: actor.userId } } }
-                    : {}),
+                ...(assignedToMe ? { assignees: { some: { userId: actor.userId } } } : {}),
             },
             orderBy: { createdAt: 'desc' },
             include: {
@@ -765,8 +751,6 @@ export class PlanningService {
             return;
         }
 
-        throw new ForbiddenException(
-            'You do not have permission to manage this platform planning.',
-        );
+        throw new ForbiddenException('You do not have permission to manage this platform planning.');
     }
 }

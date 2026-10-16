@@ -1,6 +1,14 @@
 import {
-    IsString, IsOptional, MinLength, MaxLength, IsInt, Min, Max,
-    IsArray, ValidateNested, ArrayMaxSize,
+    IsString,
+    IsOptional,
+    MinLength,
+    MaxLength,
+    IsInt,
+    Min,
+    Max,
+    IsArray,
+    ValidateNested,
+    ArrayMaxSize,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { CreateProgramWeekDto } from './create-program-week.dto';
@@ -15,7 +23,6 @@ import { CreateProgramWeekDto } from './create-program-week.dto';
  * (matches "j'ajoute une nouvelle semaine plus tard").
  */
 export class CreatePlanningProgramDto {
-
     /**
      * Display name of the program (e.g. "Sport", "Cours").
      */

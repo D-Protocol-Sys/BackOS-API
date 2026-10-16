@@ -36,7 +36,6 @@ export async function generateAuthUserFiles(
     projectPath: string,
     config: Record<string, unknown>,
 ): Promise<BlueprintModuleRef[]> {
-
     const externalUsers = isExternalUsersEnabled(config);
     const profileFields = externalUsers ? readProfileFields(config) : [];
 
@@ -47,7 +46,6 @@ export async function generateAuthUserFiles(
     await fs.mkdir(path.join(projectPath, 'src', 'common', 'guards'), { recursive: true });
 
     const files: Record<string, string> = {
-
         'src/common/decorators/public.decorator.ts': String.raw`
             import { SetMetadata } from '@nestjs/common';
 
@@ -802,7 +800,6 @@ export async function generateAuthUserFiles(
  */
 function externalFiles(): Record<string, string> {
     return {
-
         'src/auth/dto/register-external.dto.ts': String.raw`
             import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
             import { Transform } from 'class-transformer';
@@ -1110,7 +1107,12 @@ function externalFiles(): Record<string, string> {
 
 /** DTO of `PATCH /users/me/profile`: every profile field, all optional (a profile is filled in progressively). */
 function buildUpdateProfileDto(profileFields: ReturnType<typeof readProfileFields>): string {
-    const fields = profileFields.map((field) => ({ column: field.column, type: field.type, required: false, isArray: field.isArray }));
+    const fields = profileFields.map((field) => ({
+        column: field.column,
+        type: field.type,
+        required: false,
+        isArray: field.isArray,
+    }));
     const imports = Array.from(collectFieldValidatorImports(fields)).sort().join(', ');
 
     return `
@@ -1145,21 +1147,29 @@ function buildUsersController(hasProfile: boolean, externalUsers: boolean): stri
                 getMe(@CurrentUser() user: AuthenticatedUser) {
                     return this.usersService.getMe(user);
                 }
-                ${hasProfile ? `
+                ${
+                    hasProfile
+                        ? `
                 /** External users only: fill in / update the profile (any subset of its fields). */
                 @Patch('me/profile')
                 updateProfile(@CurrentUser() user: AuthenticatedUser, @Body() dto: UpdateProfileDto) {
                     return this.usersService.updateProfile(user, dto);
                 }
-                ` : ''}
-                ${externalUsers ? `
+                `
+                        : ''
+                }
+                ${
+                    externalUsers
+                        ? `
                 /** Every external user (visitor / customer) of this platform - the "Users" tab's external list. Internal accounts only. */
                 @UseGuards(InternalOnlyGuard)
                 @Get('external')
                 listExternal(@Query('page') page?: string, @Query('limit') limit?: string) {
                     return this.usersService.listExternal(Number(page) || 1, Number(limit) || 25);
                 }
-                ` : ''}
+                `
+                        : ''
+                }
             }
         `;
 }
@@ -1168,7 +1178,6 @@ function buildUsersService(externalUsers: boolean, profileFields: ReturnType<typ
     const hasProfile = profileFields.length > 0;
     const names = profileFields.map((field) => toCamelCase(field.column));
 
-    const q = (value: string) => JSON.stringify(value);
     const profileSelect = `{ ${names.map((name) => `${name}: true`).join(', ')} }`;
     const emptyProfile = `{ ${profileFields.map((field) => `${toCamelCase(field.column)}: ${field.isArray ? '[]' : 'null'}`).join(', ')} }`;
     const requiredNames = profileFields.filter((field) => field.required).map((field) => toCamelCase(field.column));
@@ -1204,16 +1213,22 @@ function buildUsersService(externalUsers: boolean, profileFields: ReturnType<typ
                         },
                     });
                     if (!user) throw new NotFoundException('Utilisateur introuvable.');
-                    ${hasProfile ? `
+                    ${
+                        hasProfile
+                            ? `
                     const { profile, ...account } = user;
                     const values: Record<string, unknown> = { ...EMPTY_PROFILE, ...(profile ?? {}) };
                     const missingProfileFields = REQUIRED_PROFILE_FIELDS.filter((name) => this.isEmpty(values[name]));
                     return { type: 'external', ...account, profile: values, profileComplete: missingProfileFields.length === 0, missingProfileFields };
-                    ` : `
+                    `
+                            : `
                     return { type: 'external', ...user };
-                    `}
+                    `
+                    }
                 }
-                ${hasProfile ? `
+                ${
+                    hasProfile
+                        ? `
                 async updateProfile(user: AuthenticatedUser, dto: UpdateProfileDto) {
                     if (user.type !== 'external') throw new ForbiddenException('Seuls les utilisateurs externes ont un profil.');
 
@@ -1243,7 +1258,9 @@ function buildUsersService(externalUsers: boolean, profileFields: ReturnType<typ
                 private isEmpty(value: unknown): boolean {
                     return value === null || value === undefined || value === '' || (Array.isArray(value) && value.length === 0);
                 }
-                ` : ''}
+                `
+                        : ''
+                }
         `;
 
     return `
@@ -1251,14 +1268,18 @@ function buildUsersService(externalUsers: boolean, profileFields: ReturnType<typ
             import { PrismaService } from '../prisma/prisma.service';
             import { AuthenticatedUser } from '../auth/auth.types';
             ${hasProfile ? "import { UpdateProfileDto } from './dto/update-profile.dto';" : ''}
-            ${hasProfile ? `
+            ${
+                hasProfile
+                    ? `
             // Generated from the profile fields defined in BackOS (Auth & User service).
             const PROFILE_SELECT = ${profileSelect} as const;
             const EMPTY_PROFILE: Record<string, unknown> = ${emptyProfile};
             const REQUIRED_PROFILE_FIELDS: string[] = ${JSON.stringify(requiredNames).replace(/"/g, "'")};
             const DATE_PROFILE_FIELDS: string[] = ${JSON.stringify(dateNames).replace(/"/g, "'")};
             const ARRAY_PROFILE_FIELDS: string[] = ${JSON.stringify(arrayNames).replace(/"/g, "'")};
-            ` : ''}
+            `
+                    : ''
+            }
             @Injectable()
             export class UsersService {
                 constructor(private readonly prisma: PrismaService) {}

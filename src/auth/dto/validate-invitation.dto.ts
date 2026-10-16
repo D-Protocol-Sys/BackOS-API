@@ -1,11 +1,10 @@
 import { IsString } from 'class-validator';
 
 /**
- * Data Transfer Object (DTO) used to validate incoming requests 
+ * Data Transfer Object (DTO) used to validate incoming requests
  * when a user attempts to validate an invitation link or code.
  */
 export class ValidateInvitationDto {
-
     /**
      * The unique invitation token (usually extracted from a URL parameter or body).
      * * @IsString() - Ensures the incoming token is strictly a string primitive.
@@ -16,5 +15,4 @@ export class ValidateInvitationDto {
      */
     @IsString()
     token!: string;
-    
 }

@@ -26,9 +26,16 @@ export function avatarExtensionFor(mimetype: string): string | undefined {
 
 export const avatarUploadOptions = {
     storage: memoryStorage(),
-    fileFilter: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+    fileFilter: (
+        _req: unknown,
+        file: Express.Multer.File,
+        callback: (error: Error | null, accept: boolean) => void,
+    ) => {
         if (!ALLOWED_AVATAR_TYPES[file.mimetype]) {
-            return callback(new BadRequestException(`Unsupported avatar type: ${file.mimetype}. Use PNG, JPEG or WEBP.`), false);
+            return callback(
+                new BadRequestException(`Unsupported avatar type: ${file.mimetype}. Use PNG, JPEG or WEBP.`),
+                false,
+            );
         }
         callback(null, true);
     },

@@ -1,5 +1,4 @@
 export const PERMISSIONS = {
-
     // Users
     USERS_READ: 'users.read',
     USERS_UPDATE: 'users.update',
@@ -70,13 +69,11 @@ export const PERMISSIONS = {
 
     // Backups
     BACKUP_MANAGE: 'backup.manage',
-
 } as const;
 
 export type PermissionKey = (typeof PERMISSIONS)[keyof typeof PERMISSIONS];
 
 export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
-
     [PERMISSIONS.USERS_READ]: "View any user's profile and account details",
     [PERMISSIONS.USERS_UPDATE]: "Update any user's profile information (first name, last name)",
     [PERMISSIONS.USERS_CREATE]: 'Create a new user account by invitation (bypasses self-registration)',
@@ -114,9 +111,10 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 
     [PERMISSIONS.CLIENT_CREATE]: 'Create a new client profile',
     [PERMISSIONS.CLIENT_READ]: 'View client profile details and contact information',
-    [PERMISSIONS.CLIENT_UPDATE]: "Update client profile details, status, or internal notes",
+    [PERMISSIONS.CLIENT_UPDATE]: 'Update client profile details, status, or internal notes',
     [PERMISSIONS.CLIENT_DELETE]: 'Permanently delete a client profile',
-    [PERMISSIONS.CLIENT_MANAGE_TESTIMONIALS]: 'Approve, edit, or toggle public visibility of client reviews and testimonials',
+    [PERMISSIONS.CLIENT_MANAGE_TESTIMONIALS]:
+        'Approve, edit, or toggle public visibility of client reviews and testimonials',
 
     [PERMISSIONS.CONTRACT_CREATE]: 'Draft and create a new contract for a client',
     [PERMISSIONS.CONTRACT_READ]: 'View contract details, status, and financial information',
@@ -135,6 +133,6 @@ export const PERMISSION_DESCRIPTIONS: Record<PermissionKey, string> = {
 
     [PERMISSIONS.AUDIT_READ]: 'View the audit log of sensitive actions',
 
-    [PERMISSIONS.BACKUP_MANAGE]: 'Export (dump) the orchestrator database or any platform database for backup/infra-migration purposes',
-
+    [PERMISSIONS.BACKUP_MANAGE]:
+        'Export (dump) the orchestrator database or any platform database for backup/infra-migration purposes',
 };

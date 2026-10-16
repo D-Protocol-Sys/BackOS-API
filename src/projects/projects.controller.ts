@@ -25,7 +25,6 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('projects')
 export class ProjectsController {
-
     constructor(private readonly projectsService: ProjectsService) {}
 
     /**
@@ -81,5 +80,4 @@ export class ProjectsController {
     remove(@CurrentUser() actor: Actor, @Param('id') id: string) {
         return this.projectsService.delete(actor, id);
     }
-
 }

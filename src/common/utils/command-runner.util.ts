@@ -54,13 +54,45 @@ export class CommandFailedError extends Error {
  * passed explicitly through `envOverrides`.
  */
 const INHERITED_ENV_ALLOWLIST = [
-    'PATH', 'HOME', 'USER', 'LANG', 'LC_ALL', 'TZ', 'TMPDIR', 'TEMP', 'TMP', 'SHELL',
-    'PNPM_HOME', 'COREPACK_HOME', 'COREPACK_ENABLE_DOWNLOAD_PROMPT', 'XDG_CACHE_HOME', 'XDG_CONFIG_HOME', 'XDG_DATA_HOME',
-    'npm_config_registry', 'NPM_CONFIG_REGISTRY', 'npm_config_cache', 'NPM_CONFIG_CACHE',
-    'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'no_proxy',
-    'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE',
+    'PATH',
+    'HOME',
+    'USER',
+    'LANG',
+    'LC_ALL',
+    'TZ',
+    'TMPDIR',
+    'TEMP',
+    'TMP',
+    'SHELL',
+    'PNPM_HOME',
+    'COREPACK_HOME',
+    'COREPACK_ENABLE_DOWNLOAD_PROMPT',
+    'XDG_CACHE_HOME',
+    'XDG_CONFIG_HOME',
+    'XDG_DATA_HOME',
+    'npm_config_registry',
+    'NPM_CONFIG_REGISTRY',
+    'npm_config_cache',
+    'NPM_CONFIG_CACHE',
+    'HTTP_PROXY',
+    'HTTPS_PROXY',
+    'NO_PROXY',
+    'http_proxy',
+    'https_proxy',
+    'no_proxy',
+    'NODE_EXTRA_CA_CERTS',
+    'SSL_CERT_FILE',
     // Windows essentials for `.cmd` wrappers.
-    'SystemRoot', 'SYSTEMROOT', 'ComSpec', 'COMSPEC', 'PATHEXT', 'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'ProgramData', 'ProgramFiles',
+    'SystemRoot',
+    'SYSTEMROOT',
+    'ComSpec',
+    'COMSPEC',
+    'PATHEXT',
+    'APPDATA',
+    'LOCALAPPDATA',
+    'USERPROFILE',
+    'ProgramData',
+    'ProgramFiles',
 ] as const;
 
 export function buildChildProcessEnv(envOverrides: Record<string, string> = {}): NodeJS.ProcessEnv {
@@ -148,7 +180,6 @@ export async function runCommand(
     envOverrides: Record<string, string> = {},
     signal?: AbortSignal,
 ): Promise<CommandResult> {
-
     const executable = resolveExecutable(baseCommand);
     // `pg_dump` is a native binary launched directly, on every platform - the shell-wrapper
     // workaround below exists only for the `pnpm.cmd`/`npx.cmd` Node script wrappers on
@@ -165,24 +196,20 @@ export async function runCommand(
     try {
         // Executes child process asynchronously with safe execution constraints
         const { stdout, stderr } = await execFileAsync(executable, args, {
-            cwd,                             // Sets working directory
-            timeout: timeoutMs,              // Prevents hanging processes by enforcing a timeout
-            maxBuffer: 10 * 1024 * 1024,     // Caps buffer size to 10MB to avoid out-of-memory errors
-            windowsHide: true,               // Hides console window on Windows systems
+            cwd, // Sets working directory
+            timeout: timeoutMs, // Prevents hanging processes by enforcing a timeout
+            maxBuffer: 10 * 1024 * 1024, // Caps buffer size to 10MB to avoid out-of-memory errors
+            windowsHide: true, // Hides console window on Windows systems
             env: buildChildProcessEnv(envOverrides),
             signal,
             ...(useShell && { shell: true }),
         });
-        
+
         return { stdout, stderr };
     } catch (error: unknown) {
-
         const commandError = error as CommandExecutionError;
 
-        if (
-            commandError.name === 'AbortError' ||
-            commandError.code === 'ABORT_ERR'
-        ) {
+        if (commandError.name === 'AbortError' || commandError.code === 'ABORT_ERR') {
             throw new CommandCancelledError();
         }
 

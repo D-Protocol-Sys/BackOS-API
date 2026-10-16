@@ -7,7 +7,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { ProvisioningService } from './provisioning.service';
 import { ProjectScaffolderService } from './project-scaffolder.service';
 import { GenerationsService } from './generations.service';
-import { runCommand, CommandFailedError, CommandCancelledError, redactSecrets } from '../common/utils/command-runner.util';
+import {
+    runCommand,
+    CommandFailedError,
+    CommandCancelledError,
+    redactSecrets,
+} from '../common/utils/command-runner.util';
 import { PortAllocatorService } from './port-allocator.service';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
@@ -135,10 +140,17 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             const restartCount = job?.data?.restartCount ?? 0;
             const platform = job
                 ? null
-                : await this.prisma.platform.findUnique({ where: { id: generation.platformId }, select: { slug: true } });
+                : await this.prisma.platform.findUnique({
+                      where: { id: generation.platformId },
+                      select: { slug: true },
+                  });
             if (!job && !platform) {
                 // Platform itself is gone too - nothing sane to restart.
-                await this.markAsFailed(generation.id, generation.platformId, 'Interrompue par un redémarrage du serveur : plateforme introuvable, merci de relancer manuellement.');
+                await this.markAsFailed(
+                    generation.id,
+                    generation.platformId,
+                    'Interrompue par un redémarrage du serveur : plateforme introuvable, merci de relancer manuellement.',
+                );
                 continue;
             }
 
@@ -166,13 +178,19 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             const job = await this.queue.getJob(generation.id);
             if (job) continue;
             if (!generation.platform || generation.platform.status === 'ARCHIVED') {
-                await this.generations.markFailed(generation.id, 'Plateforme archivée ou introuvable : génération abandonnée.').catch(() => undefined);
+                await this.generations
+                    .markFailed(generation.id, 'Plateforme archivée ou introuvable : génération abandonnée.')
+                    .catch(() => undefined);
                 continue;
             }
             this.logger.warn(`Re-enqueuing orphaned PENDING generation ${generation.id}.`);
             await this.queue.add(
                 'generate',
-                { platformId: generation.platformId, slug: generation.platform.slug, generationId: generation.id } satisfies GenerationJobData,
+                {
+                    platformId: generation.platformId,
+                    slug: generation.platform.slug,
+                    generationId: generation.id,
+                } satisfies GenerationJobData,
                 { jobId: generation.id, ...GENERATION_JOB_RETENTION },
             );
         }
@@ -198,10 +216,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         });
         if (!current || current.status !== 'RUNNING') return; // already handled by process()'s own catch block
 
-        this.logger.error(
-            `Generation ${generationId} failed at the queue level (orphaned/stalled job).`,
-            error?.stack,
-        );
+        this.logger.error(`Generation ${generationId} failed at the queue level (orphaned/stalled job).`, error?.stack);
         await this.restartOrFail(generationId, platformId, slug, restartCount ?? 0);
     }
 
@@ -230,7 +245,9 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         }
 
         const nextRestartCount = restartCount + 1;
-        this.logger.warn(`Auto-restarting generation ${generationId} (attempt ${nextRestartCount}/${maxAutoRestarts}) after an interrupted run.`);
+        this.logger.warn(
+            `Auto-restarting generation ${generationId} (attempt ${nextRestartCount}/${maxAutoRestarts}) after an interrupted run.`,
+        );
 
         try {
             // A job with this id may still exist in the queue (in 'failed' state) - BullMQ
@@ -254,17 +271,36 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             // GENERATING: from the user's point of view the generation never stopped, it's
             // just picked back up. `process()` will call `markRunning()` again once it does.
         } catch (e: unknown) {
-            this.logger.error(`Failed to auto-restart generation ${generationId}; falling back to marking it FAILED.`, e instanceof Error ? e.stack : String(e));
-            await this.markAsFailed(generationId, platformId, 'Interrompue par un redémarrage du serveur ; la relance automatique a elle-même échoué. Merci de relancer manuellement.');
+            this.logger.error(
+                `Failed to auto-restart generation ${generationId}; falling back to marking it FAILED.`,
+                e instanceof Error ? e.stack : String(e),
+            );
+            await this.markAsFailed(
+                generationId,
+                platformId,
+                'Interrompue par un redémarrage du serveur ; la relance automatique a elle-même échoué. Merci de relancer manuellement.',
+            );
         }
     }
 
     private async markAsFailed(generationId: string, platformId: string, message: string): Promise<void> {
-        try { await this.generations.markFailed(generationId, message); }
-        catch (e: unknown) { this.logger.error(`Failed to mark orphaned generation ${generationId} as FAILED.`, e instanceof Error ? e.stack : String(e)); }
+        try {
+            await this.generations.markFailed(generationId, message);
+        } catch (e: unknown) {
+            this.logger.error(
+                `Failed to mark orphaned generation ${generationId} as FAILED.`,
+                e instanceof Error ? e.stack : String(e),
+            );
+        }
 
-        try { await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } }); }
-        catch (e: unknown) { this.logger.error(`Failed to set platform ${platformId} status to ERROR.`, e instanceof Error ? e.stack : String(e)); }
+        try {
+            await this.prisma.platform.update({ where: { id: platformId }, data: { status: 'ERROR' } });
+        } catch (e: unknown) {
+            this.logger.error(
+                `Failed to set platform ${platformId} status to ERROR.`,
+                e instanceof Error ? e.stack : String(e),
+            );
+        }
 
         this.cancellationRegistry.clear(generationId);
     }
@@ -286,9 +322,14 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         try {
             await lockClient.query('SELECT pg_advisory_lock(hashtext($1))', [lockKey]);
 
-            const current = await this.prisma.generation.findUnique({ where: { id: generationId }, select: { status: true } });
+            const current = await this.prisma.generation.findUnique({
+                where: { id: generationId },
+                select: { status: true },
+            });
             if (!current || current.status === 'SUCCESS' || current.status === 'FAILED') {
-                this.logger.warn(`Skipping job ${job.id}: generation ${generationId} is ${current?.status ?? 'missing'}.`);
+                this.logger.warn(
+                    `Skipping job ${job.id}: generation ${generationId} is ${current?.status ?? 'missing'}.`,
+                );
                 return;
             }
 
@@ -303,9 +344,7 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         const { platformId, slug, generationId } = job.data;
         const controller = this.cancellationRegistry.register(generationId);
 
-        this.logger.log(
-            `START generation job=${job.id} generationId=${generationId} platformId=${platformId}`,
-        );
+        this.logger.log(`START generation job=${job.id} generationId=${generationId} platformId=${platformId}`);
 
         const timeoutMs = this.configService.get<number>('GENERATION_COMMAND_TIMEOUT_MS', 300_000);
 
@@ -317,7 +356,9 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         // GEN-005: an archived (or deleted) platform is never generated - generating it used to flip
         // it back to ACTIVE, routable, and exempt from the archive retention purge.
         if (!platformBeforeRun || platformBeforeRun.status === 'ARCHIVED') {
-            await this.generations.markFailed(generationId, 'La plateforme est archivée ou supprimée : génération annulée.').catch(() => undefined);
+            await this.generations
+                .markFailed(generationId, 'La plateforme est archivée ou supprimée : génération annulée.')
+                .catch(() => undefined);
             this.cancellationRegistry.clear(generationId);
             return;
         }
@@ -370,7 +411,12 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             });
 
             await this.log(generationId, `  Project scaffolded at ${projectPath}`);
-            await this.log(generationId, isFirstGeneration ? '  Initial project generation detected.' : '  Re-generation detected: existing migration history preserved.');
+            await this.log(
+                generationId,
+                isFirstGeneration
+                    ? '  Initial project generation detected.'
+                    : '  Re-generation detected: existing migration history preserved.',
+            );
 
             const shadowDatabaseUrl = await this.provisioning.ensureShadowDatabaseUrl();
             // SEC-001: these are the ONLY variables (besides PATH/HOME/proxy settings, see
@@ -380,11 +426,27 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
 
             // STEP 3: INSTALL DEPENDENCIES (the previous lockfile is preserved by the scaffolder)
             await this.log(generationId, '→ Installing package dependencies...');
-            await this.runStep(generationId, 'pnpm', ['install'], projectPath, timeoutMs, envOverrides, controller.signal);
+            await this.runStep(
+                generationId,
+                'pnpm',
+                ['install'],
+                projectPath,
+                timeoutMs,
+                envOverrides,
+                controller.signal,
+            );
 
             // STEP 4: GENERATE PRISMA CLIENT
             await this.log(generationId, '→ Generating Prisma client...');
-            await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'generate'], projectPath, timeoutMs, envOverrides, controller.signal);
+            await this.runStep(
+                generationId,
+                'pnpm',
+                ['exec', 'prisma', 'generate'],
+                projectPath,
+                timeoutMs,
+                envOverrides,
+                controller.signal,
+            );
 
             // STEP 5: GENERATE A NEW MIGRATION FILE FOR THE CURRENT SCHEMA, IF NEEDED
             await this.log(generationId, '→ Checking for schema changes to migrate...');
@@ -401,11 +463,27 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
 
             // STEP 6: DATABASE MIGRATIONS
             await this.log(generationId, '→ Applying Prisma database migrations...');
-            await this.runStep(generationId, 'pnpm', ['exec', 'prisma', 'migrate', 'deploy'], projectPath, timeoutMs, envOverrides, controller.signal);
+            await this.runStep(
+                generationId,
+                'pnpm',
+                ['exec', 'prisma', 'migrate', 'deploy'],
+                projectPath,
+                timeoutMs,
+                envOverrides,
+                controller.signal,
+            );
 
             // STEP 7: BUILD PROJECT
             await this.log(generationId, '→ Compiling NestJS project...');
-            await this.runStep(generationId, 'pnpm', ['run', 'build'], projectPath, timeoutMs, envOverrides, controller.signal);
+            await this.runStep(
+                generationId,
+                'pnpm',
+                ['run', 'build'],
+                projectPath,
+                timeoutMs,
+                envOverrides,
+                controller.signal,
+            );
 
             // STEP 8: SUCCESS COMPLETION
             const platform = await this.prisma.platform.findUniqueOrThrow({
@@ -424,7 +502,10 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
                 await this.log(generationId, 'ℹ The platform was archived during this build - it stays archived.');
             }
 
-            await this.log(generationId, `✅ Generation completed successfully. Updated schema version: ${nextSchemaVersion}.`);
+            await this.log(
+                generationId,
+                `✅ Generation completed successfully. Updated schema version: ${nextSchemaVersion}.`,
+            );
 
             // RT-001: pre-build the runtime image now, so starting the platform no longer runs a
             // multi-minute `docker build` inside an HTTP request. Best effort: `start()` rebuilds
@@ -434,7 +515,10 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
                 await this.dockerRuntime.buildImageForGeneration(platformId, slug, nextSchemaVersion);
                 await this.log(generationId, '  Runtime image ready.');
             } catch (imageError: unknown) {
-                await this.log(generationId, `⚠ Runtime image not pre-built (it will be built at start): ${imageError instanceof Error ? imageError.message : String(imageError)}`);
+                await this.log(
+                    generationId,
+                    `⚠ Runtime image not pre-built (it will be built at start): ${imageError instanceof Error ? imageError.message : String(imageError)}`,
+                );
             }
         } catch (error: unknown) {
             const isCancelled = error instanceof CommandCancelledError;
@@ -447,29 +531,47 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             const message = redactSecrets(error instanceof Error ? error.message : String(error));
             const failureReason = isCancelled ? 'Cancelled by user.' : message;
 
-            this.logger.error(`Generation job ${generationId} failed.`, error instanceof Error ? redactSecrets(error.stack ?? '') : undefined);
+            this.logger.error(
+                `Generation job ${generationId} failed.`,
+                error instanceof Error ? redactSecrets(error.stack ?? '') : undefined,
+            );
 
             try {
-                await this.log(generationId, isCancelled ? '⏹ Generation Cancelled.' : `❌ Generation failed: ${message}`);
+                await this.log(
+                    generationId,
+                    isCancelled ? '⏹ Generation Cancelled.' : `❌ Generation failed: ${message}`,
+                );
             } catch (logError: unknown) {
-                this.logger.error(`Failed to record failure log for generation ${generationId}.`, logError instanceof Error ? logError.stack : String(logError));
+                this.logger.error(
+                    `Failed to record failure log for generation ${generationId}.`,
+                    logError instanceof Error ? logError.stack : String(logError),
+                );
             }
 
             try {
                 await this.generations.markFailed(generationId, failureReason);
             } catch (statusError: unknown) {
-                this.logger.error(`Failed to set status to FAILED for generation ${generationId}.`, statusError instanceof Error ? statusError.stack : String(statusError));
+                this.logger.error(
+                    `Failed to set status to FAILED for generation ${generationId}.`,
+                    statusError instanceof Error ? statusError.stack : String(statusError),
+                );
             }
 
             if (!hadWorkingVersion) {
                 try {
                     await this.updatePlatformStatusUnlessArchived(platformId, 'ERROR');
                 } catch (platformError: unknown) {
-                    this.logger.error(`Failed to set status to ERROR for platform ${platformId}.`, platformError instanceof Error ? platformError.stack : String(platformError));
+                    this.logger.error(
+                        `Failed to set status to ERROR for platform ${platformId}.`,
+                        platformError instanceof Error ? platformError.stack : String(platformError),
+                    );
                 }
             } else {
                 try {
-                    await this.log(generationId, 'ℹ The previously working version is still running and unaffected by this failed regeneration - platform left ACTIVE.');
+                    await this.log(
+                        generationId,
+                        'ℹ The previously working version is still running and unaffected by this failed regeneration - platform left ACTIVE.',
+                    );
                 } catch {
                     // Purely informational.
                 }
@@ -480,7 +582,10 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
     }
 
     /** GEN-005: status writes never override an ARCHIVED platform. */
-    private async updatePlatformStatusUnlessArchived(platformId: string, status: 'GENERATING' | 'ERROR'): Promise<void> {
+    private async updatePlatformStatusUnlessArchived(
+        platformId: string,
+        status: 'GENERATING' | 'ERROR',
+    ): Promise<void> {
         await this.prisma.platform.updateMany({
             where: { id: platformId, status: { not: 'ARCHIVED' } },
             data: { status },
@@ -514,8 +619,8 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             await fsp.writeFile(
                 lockFilePath,
                 '# Please do not edit this file manually\n' +
-                '# It should be added in your version-control system (e.g., Git)\n' +
-                'provider = "postgresql"\n',
+                    '# It should be added in your version-control system (e.g., Git)\n' +
+                    'provider = "postgresql"\n',
                 'utf8',
             );
         }
@@ -523,9 +628,14 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
         const { stdout } = await runCommand(
             'pnpm',
             [
-                'exec', 'prisma', 'migrate', 'diff',
-                '--from-migrations', './prisma/migrations',
-                '--to-schema', './prisma/schema.prisma',
+                'exec',
+                'prisma',
+                'migrate',
+                'diff',
+                '--from-migrations',
+                './prisma/migrations',
+                '--to-schema',
+                './prisma/schema.prisma',
                 '--script',
             ],
             projectPath,
@@ -545,13 +655,16 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
             if (!allowDestructiveMigration) {
                 throw new Error(
                     'Destructive schema changes detected - nothing was applied to the database. ' +
-                    'These statements would delete or rewrite existing data:\n' +
-                    destructive.map((statement) => `  • ${statement}`).join('\n') +
-                    '\nRestore the archived/deleted entities or fields, or have the platform owner relaunch the ' +
-                    'generation with "allowDestructiveMigration": true after taking a backup.',
+                        'These statements would delete or rewrite existing data:\n' +
+                        destructive.map((statement) => `  • ${statement}`).join('\n') +
+                        '\nRestore the archived/deleted entities or fields, or have the platform owner relaunch the ' +
+                        'generation with "allowDestructiveMigration": true after taking a backup.',
                 );
             }
-            await this.log(generationId, `⚠ ${destructive.length} destructive statement(s) explicitly approved by the platform owner:`);
+            await this.log(
+                generationId,
+                `⚠ ${destructive.length} destructive statement(s) explicitly approved by the platform owner:`,
+            );
             for (const statement of destructive) await this.log(generationId, `  • ${statement}`);
         }
 
@@ -587,14 +700,24 @@ export class GenerationProcessor extends WorkerHost implements OnApplicationBoot
     ): Promise<void> {
         try {
             const { stdout, stderr } = await runCommand(command, args, cwd, timeoutMs, envOverrides, signal);
-            if (stdout?.trim()) { await this.log(generationId, stdout.trim()); }
-            if (stderr?.trim()) { await this.log(generationId, stderr.trim()); }
+            if (stdout?.trim()) {
+                await this.log(generationId, stdout.trim());
+            }
+            if (stderr?.trim()) {
+                await this.log(generationId, stderr.trim());
+            }
         } catch (error: unknown) {
             if (error instanceof CommandFailedError) {
                 const output = error.stderr?.trim() || error.stdout?.trim();
                 if (output) {
-                    try { await this.log(generationId, output); } 
-                    catch (logError: unknown) { this.logger.error(`Failed to log execution output for failed command in generation ${generationId}.`, logError instanceof Error ? logError.stack : String(logError)); }
+                    try {
+                        await this.log(generationId, output);
+                    } catch (logError: unknown) {
+                        this.logger.error(
+                            `Failed to log execution output for failed command in generation ${generationId}.`,
+                            logError instanceof Error ? logError.stack : String(logError),
+                        );
+                    }
                 }
             }
             throw error;

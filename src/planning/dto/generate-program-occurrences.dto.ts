@@ -13,7 +13,6 @@ import { IsDateString } from 'class-validator';
  * already-covered period updates rather than duplicates its entries.
  */
 export class GenerateProgramOccurrencesDto {
-
     /**
      * Start of the range (inclusive). ISO 8601 date string, e.g. "2026-09-14".
      */

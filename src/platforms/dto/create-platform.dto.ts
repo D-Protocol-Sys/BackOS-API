@@ -5,7 +5,6 @@ import { IsString, IsOptional, IsUrl, MinLength, MaxLength } from 'class-validat
  * Defines input properties and validation constraints for incoming HTTP requests.
  */
 export class CreatePlatformDto {
-
     /**
      * The name of the platform.
      * Required field: must be a string between 2 and 100 characters in length.
@@ -32,5 +31,4 @@ export class CreatePlatformDto {
     @IsOptional()
     @IsUrl({ require_tld: false })
     url?: string;
-
 }

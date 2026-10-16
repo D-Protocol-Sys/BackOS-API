@@ -1,8 +1,6 @@
 import { PlatformAccessService } from '../platforms/platform-access.service';
 import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
-import {
-    Injectable, NotFoundException, ForbiddenException, BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { Prisma } from '@prismamodels/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateFieldDto } from './dto/create-field.dto';
@@ -23,12 +21,11 @@ const LOCKED_STATUSES = ['ACTIVE', 'GENERATING'];
 
 /**
  * Service managing individual fields/columns of dynamic entities.
- * Handles field creation, order calculations, type mutation restrictions, soft deletion (archiving), 
+ * Handles field creation, order calculations, type mutation restrictions, soft deletion (archiving),
  * and automatic SQL column identifier generation.
  */
 @Injectable()
 export class FieldsService {
-
     /**
      * @param prisma - Database client providing access to Prisma ORM methods.
      */
@@ -56,7 +53,7 @@ export class FieldsService {
     }
 
     /**
-     * Creates a new field within an entity. Generates a unique SQL column name 
+     * Creates a new field within an entity. Generates a unique SQL column name
      * and sets default position ordering.
      * * @param actor - The current user performing the request.
      * @param platformId - Target platform ID.
@@ -95,7 +92,7 @@ export class FieldsService {
     }
 
     /**
-     * Updates field attributes. Prevents data type modifications if the platform 
+     * Updates field attributes. Prevents data type modifications if the platform
      * is already in an active or generated deployment state.
      * * @param actor - The current user performing the request.
      * @param platformId - Target platform ID.
@@ -119,11 +116,7 @@ export class FieldsService {
         // Same rule for single <-> array: it turns a `TEXT` column into a `TEXT[]` one (or back),
         // which PostgreSQL cannot do with a plain ALTER once rows exist - the generated
         // migration would fail on the very next generation.
-        if (
-            dto.isArray !== undefined &&
-            dto.isArray !== field.isArray &&
-            LOCKED_STATUSES.includes(platform.status)
-        ) {
+        if (dto.isArray !== undefined && dto.isArray !== field.isArray && LOCKED_STATUSES.includes(platform.status)) {
             throw new BadRequestException(
                 'Cannot change whether a field is an array: this platform has already been generated. Delete and recreate the field if necessary.',
             );
@@ -139,9 +132,18 @@ export class FieldsService {
 
         const resultingType = dto.type ?? field.type;
         const resultingEnumDefinitionId =
-            resultingType !== 'ENUM' ? null : dto.enumDefinitionId !== undefined ? dto.enumDefinitionId : field.enumDefinitionId;
+            resultingType !== 'ENUM'
+                ? null
+                : dto.enumDefinitionId !== undefined
+                  ? dto.enumDefinitionId
+                  : field.enumDefinitionId;
         const resultingDefaultValue = dto.defaultValue !== undefined ? dto.defaultValue : field.defaultValue;
-        await this.assertEnumFieldIsCoherent(platformId, resultingType, resultingEnumDefinitionId ?? undefined, resultingDefaultValue);
+        await this.assertEnumFieldIsCoherent(
+            platformId,
+            resultingType,
+            resultingEnumDefinitionId ?? undefined,
+            resultingDefaultValue,
+        );
 
         // Which EnumDefinition a field points to is, for the generated database, exactly as
         // structural as its `type` or `isArray` - it decides which Prisma `enum` the column is.
@@ -233,7 +235,11 @@ export class FieldsService {
         }
     }
 
-    private assertArrayFieldIsCoherent(isArray: boolean, unique: boolean, defaultValue: string | null | undefined): void {
+    private assertArrayFieldIsCoherent(
+        isArray: boolean,
+        unique: boolean,
+        defaultValue: string | null | undefined,
+    ): void {
         if (!isArray) return;
         if (unique) {
             throw new BadRequestException('An array field cannot be unique.');
@@ -325,7 +331,7 @@ export class FieldsService {
     }
 
     /**
-     * Write access (Create / Edit / Archive): permitted to platform owner, global system admins, 
+     * Write access (Create / Edit / Archive): permitted to platform owner, global system admins,
      * or platform members with the `ADMIN` role.
      * * @throws `ForbiddenException` if user lacks required permissions.
      */
@@ -345,7 +351,7 @@ export class FieldsService {
 
     /**
      * Hard Delete access: restricted EXCLUSIVELY to platform owners or global system admins.
-     * Platform `ADMIN` members cannot hard delete even if they have `field.delete` permission; 
+     * Platform `ADMIN` members cannot hard delete even if they have `field.delete` permission;
      * they must archive instead.
      * * @throws `ForbiddenException` if actor is not the owner or global admin.
      */
@@ -360,7 +366,7 @@ export class FieldsService {
     }
 
     /**
-     * Helper: Generates a unique, SQL-safe column name for an entity by appending numeric suffixes 
+     * Helper: Generates a unique, SQL-safe column name for an entity by appending numeric suffixes
      * (`_2`, `_3`, etc.) if a duplicate column identifier is detected within the same entity scope.
      */
     private async generateUniqueColumn(entityId: string, name: string): Promise<string> {
@@ -371,7 +377,10 @@ export class FieldsService {
         // duplicated field and a broken build. Uniqueness is now checked on the Prisma name too.
         const existing = await this.prisma.field.findMany({ where: { entityId }, select: { column: true } });
         const takenColumns = new Set(existing.map((field) => field.column));
-        const takenFieldNames = new Set([...RESERVED_FIELD_NAMES, ...existing.map((field) => toCamelCase(field.column))]);
+        const takenFieldNames = new Set([
+            ...RESERVED_FIELD_NAMES,
+            ...existing.map((field) => toCamelCase(field.column)),
+        ]);
 
         let candidate = base;
         let counter = 2;

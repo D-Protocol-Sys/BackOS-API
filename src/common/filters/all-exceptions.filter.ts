@@ -1,11 +1,4 @@
-import {
-    ExceptionFilter,
-    Catch,
-    ArgumentsHost,
-    HttpException,
-    HttpStatus,
-    Logger,
-} from '@nestjs/common';
+import { ExceptionFilter, Catch, ArgumentsHost, HttpException, HttpStatus, Logger } from '@nestjs/common';
 import { Request, Response } from 'express';
 import { Prisma } from '@prismamodels/client';
 
@@ -22,12 +15,11 @@ interface ErrorResponseBody {
 
 /**
  * Global Exception Filter.
- * * `@Catch()` with no arguments acts as a catch-all filter, intercepting ALL unhandled 
+ * * `@Catch()` with no arguments acts as a catch-all filter, intercepting ALL unhandled
  * exceptions (HttpExceptions, ORM/Prisma errors, unhandled JS Errors) across the API.
  */
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
-
     // Instantiates NestJS logger dedicated to exception reporting
     private readonly logger = new Logger('ExceptionFilter');
 
@@ -37,7 +29,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
      * @param host - Execution context helper providing access to HTTP request/response objects.
      */
     catch(exception: unknown, host: ArgumentsHost) {
-
         // Extract HTTP context to access underlying Express request & response objects
         const ctx = host.switchToHttp();
         const response = ctx.getResponse<Response>();
@@ -55,9 +46,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
             );
         } else {
             // Client errors (4xx): Log as warnings with simplified message payloads
-            this.logger.warn(
-                `${request.method} ${request.url} -> ${statusCode} : ${JSON.stringify(message)}`,
-            );
+            this.logger.warn(`${request.method} ${request.url} -> ${statusCode} : ${JSON.stringify(message)}`);
         }
 
         // Construct unified HTTP JSON response body
@@ -71,7 +60,6 @@ export class AllExceptionsFilter implements ExceptionFilter {
 
         // Send HTTP response with appropriate status code and formatted payload
         response.status(statusCode).json(body);
-
     }
 
     /**
@@ -92,7 +80,7 @@ export class AllExceptionsFilter implements ExceptionFilter {
             if (typeof res === 'string') {
                 return { statusCode: status, message: res, error: exception.name };
             }
-            
+
             const resObj = res as { message?: string | string[]; error?: string };
             return {
                 statusCode: status,
@@ -105,29 +93,29 @@ export class AllExceptionsFilter implements ExceptionFilter {
         if (exception instanceof Prisma.PrismaClientKnownRequestError) {
             switch (exception.code) {
                 case 'P2002': // Unique constraint violation (e.g., duplicate email)
-                return {
-                    statusCode: HttpStatus.CONFLICT,
-                    message: 'A resource with this unique value already exists.',
-                    error: 'Conflict',
-                };
+                    return {
+                        statusCode: HttpStatus.CONFLICT,
+                        message: 'A resource with this unique value already exists.',
+                        error: 'Conflict',
+                    };
                 case 'P2025': // Record to update/delete not found
-                return {
-                    statusCode: HttpStatus.NOT_FOUND,
-                    message: 'Resource not found.',
-                    error: 'Not Found',
-                };
+                    return {
+                        statusCode: HttpStatus.NOT_FOUND,
+                        message: 'Resource not found.',
+                        error: 'Not Found',
+                    };
                 case 'P2003': // Foreign key constraint failed
-                return {
-                    statusCode: HttpStatus.CONFLICT,
-                    message: 'Action failed: relational constraint error with another resource.',
-                    error: 'Conflict',
-                };
+                    return {
+                        statusCode: HttpStatus.CONFLICT,
+                        message: 'Action failed: relational constraint error with another resource.',
+                        error: 'Conflict',
+                    };
                 default: // Fallback for unhandled database error codes
-                return {
-                    statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
-                    message: 'A database error occurred.',
-                    error: 'Internal Server Error',
-                };
+                    return {
+                        statusCode: HttpStatus.INTERNAL_SERVER_ERROR,
+                        message: 'A database error occurred.',
+                        error: 'Internal Server Error',
+                    };
             }
         }
 

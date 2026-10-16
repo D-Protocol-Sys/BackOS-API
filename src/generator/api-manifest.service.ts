@@ -96,7 +96,6 @@ export interface ApiManifest {
  */
 @Injectable()
 export class ApiManifestService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly schemaBuilder: SchemaBuilderService,
@@ -107,7 +106,6 @@ export class ApiManifestService {
      * Builds the full API manifest for a given platform.
      */
     async buildManifest(platform: { id: string; slug: string }): Promise<ApiManifest> {
-
         const entities = await this.schemaBuilder.getActiveEntitiesWithFields(platform.id);
         const relations = await this.prisma.relation.findMany({ where: { platformId: platform.id } });
 
@@ -148,11 +146,16 @@ export class ApiManifestService {
             authProtectRead: boolean;
             authProtectUpdate: boolean;
             authProtectDelete: boolean;
-            fields: { column: string; type: string; required: boolean; isArray: boolean; enumDefinition?: { values: string[] } | null }[];
+            fields: {
+                column: string;
+                type: string;
+                required: boolean;
+                isArray: boolean;
+                enumDefinition?: { values: string[] } | null;
+            }[];
         },
         relations: RelationFieldMeta[],
     ): ManifestResource {
-
         const modelName = toPascalCase(entity.tableName);
         const basePath = `/${entity.tableName}`;
 
@@ -233,7 +236,6 @@ export class ApiManifestService {
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {
-
         const shapes: ManifestFieldShape[] = fields.map((field) => ({
             name: toCamelCase(field.column),
             // ENUM: a quoted string-literal union of its own values (mirrors buildDtoFieldsSource());
@@ -278,11 +280,16 @@ export class ApiManifestService {
      * every direct - non many-to-many - relation).
      */
     private buildResponseShapes(
-        fields: { column: string; type: string; required: boolean; isArray: boolean; enumDefinition?: { values: string[] } | null }[],
+        fields: {
+            column: string;
+            type: string;
+            required: boolean;
+            isArray: boolean;
+            enumDefinition?: { values: string[] } | null;
+        }[],
         relations: RelationFieldMeta[],
         isSchedulable: boolean,
     ): ManifestFieldShape[] {
-
         const shapes: ManifestFieldShape[] = [
             { name: 'id', type: 'string (UUID)', required: true },
             ...this.buildFieldShapes(fields, [], isSchedulable),

@@ -5,7 +5,6 @@ import { IsString, MinLength, MaxLength, IsOptional } from 'class-validator';
  * All fields are optional to support flexible partial updates (PATCH requests).
  */
 export class UpdateRoleDto {
-
     /**
      * An optional updated name for the role.
      * Optional field: if provided, must be a string between 2 and 50 characters in length.
@@ -24,5 +23,4 @@ export class UpdateRoleDto {
     @IsString()
     @MaxLength(255)
     description?: string;
-    
 }

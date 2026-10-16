@@ -1,6 +1,6 @@
 import { BadRequestException, ForbiddenException, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { Cron, CronExpression } from '@nestjs/schedule';
-import { Prisma, PlanningEntry, PlanningItemType, PlanningScope, PlanningWeekDay } from '@prismamodels/client';
+import { Prisma, PlanningItemType, PlanningScope, PlanningWeekDay } from '@prismamodels/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { PlanningService, TYPE_REQUIREMENTS } from './planning.service';
 import { CreatePlanningProgramDto } from './dto/create-planning-program.dto';
@@ -39,7 +39,10 @@ const DAY_MS = 86_400_000;
 export class PlanningProgramService {
     private readonly logger = new Logger(PlanningProgramService.name);
 
-    constructor(private readonly prisma: PrismaService, private readonly planningService: PlanningService) {}
+    constructor(
+        private readonly prisma: PrismaService,
+        private readonly planningService: PlanningService,
+    ) {}
 
     // =========================================================================
     // PROGRAM CREATION & LISTING
@@ -89,7 +92,7 @@ export class PlanningProgramService {
      */
     private async createProgram(actor: Actor, planningId: string, dto: CreatePlanningProgramDto) {
         const weeks = dto.weeks ?? [];
-        const indexes = weeks.map(w => w.weekIndex);
+        const indexes = weeks.map((w) => w.weekIndex);
 
         if (new Set(indexes).size !== indexes.length) {
             throw new BadRequestException('Two weeks cannot use the same weekIndex.');
@@ -102,9 +105,9 @@ export class PlanningProgramService {
             throw new BadRequestException(`weekIndex ${maxWeekIndex} is outside the cycle (cycleWeeks=${cycleWeeks}).`);
         }
 
-        weeks.forEach(week => this.validateWeekDto(week));
+        weeks.forEach((week) => this.validateWeekDto(week));
 
-        const created = await this.prisma.$transaction(async tx => {
+        const created = await this.prisma.$transaction(async (tx) => {
             const program = await tx.planningProgram.create({
                 data: {
                     name: dto.name,
@@ -206,7 +209,7 @@ export class PlanningProgramService {
         await this.assertCanEditProgram(actor, program);
         this.validateWeekDto({ weekIndex, days: dto.days });
 
-        await this.prisma.$transaction(async tx => {
+        await this.prisma.$transaction(async (tx) => {
             if (weekIndex >= program.cycleWeeks) {
                 await tx.planningProgram.update({
                     where: { id: programId },
@@ -261,7 +264,7 @@ export class PlanningProgramService {
     ) {
         const program = await this.getProgramWithPlanningOrThrow(programId);
         await this.assertCanEditProgram(actor, program);
-        dto.entries.forEach(entry => this.validateEntryTimes(entry));
+        dto.entries.forEach((entry) => this.validateEntryTimes(entry));
 
         const week = await this.prisma.planningProgramWeek.findUnique({
             where: { programId_weekIndex: { programId, weekIndex } },
@@ -271,14 +274,16 @@ export class PlanningProgramService {
             throw new NotFoundException('This week does not exist yet. Create it first.');
         }
 
-        await this.prisma.$transaction(async tx => {
+        await this.prisma.$transaction(async (tx) => {
             const existingDay = await tx.planningProgramDay.findUnique({
                 where: { weekId_dayOfWeek: { weekId: week.id, dayOfWeek } },
             });
 
-            const day = existingDay ?? await tx.planningProgramDay.create({
-                data: { weekId: week.id, dayOfWeek },
-            });
+            const day =
+                existingDay ??
+                (await tx.planningProgramDay.create({
+                    data: { weekId: week.id, dayOfWeek },
+                }));
 
             if (existingDay) {
                 // Full replacement: remove the previous template entries first.
@@ -339,13 +344,13 @@ export class PlanningProgramService {
      * (weekIndex + dayOfWeek) identifies one template day.
      */
     private validateWeekDto(week: { weekIndex: number; days: CreateProgramWeekDto['days'] }) {
-        const days = week.days.map(day => day.dayOfWeek);
+        const days = week.days.map((day) => day.dayOfWeek);
 
         if (new Set(days).size !== days.length) {
             throw new BadRequestException(`Week ${week.weekIndex} contains the same day more than once.`);
         }
 
-        week.days.forEach(day => day.entries.forEach(entry => this.validateEntryTimes(entry)));
+        week.days.forEach((day) => day.entries.forEach((entry) => this.validateEntryTimes(entry)));
     }
 
     /** Ensures an entry never ends before or exactly when it starts. */
@@ -667,12 +672,7 @@ export class PlanningProgramService {
     }
 
     /** Generates occurrences in a platform planning. */
-    async generateForPlatform(
-        actor: Actor,
-        platformId: string,
-        programId: string,
-        dto: GenerateProgramOccurrencesDto,
-    ) {
+    async generateForPlatform(actor: Actor, platformId: string, programId: string, dto: GenerateProgramOccurrencesDto) {
         await this.planningService.assertCanEditPlatformPlanning(actor, platformId);
         const planning = await this.planningService.getOrCreatePlatformPlanning(platformId, actor.userId);
         return this.generateOccurrences(actor, programId, planning.id, dto);
@@ -804,9 +804,7 @@ export class PlanningProgramService {
             startAt: rules.required.includes('startAt')
                 ? this.combineDateAndTime(date, entry.startTime, '00:00')
                 : undefined,
-            endAt: rules.required.includes('endAt')
-                ? this.combineDateAndTime(date, entry.endTime, '23:59')
-                : undefined,
+            endAt: rules.required.includes('endAt') ? this.combineDateAndTime(date, entry.endTime, '23:59') : undefined,
             dueDate: rules.required.includes('dueDate')
                 ? this.combineDateAndTime(date, entry.endTime ?? entry.startTime, '23:59')
                 : undefined,

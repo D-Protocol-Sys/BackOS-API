@@ -34,7 +34,11 @@ export const multerOptions = {
         },
     }),
 
-    fileFilter: (_req: unknown, file: Express.Multer.File, callback: (error: Error | null, accept: boolean) => void) => {
+    fileFilter: (
+        _req: unknown,
+        file: Express.Multer.File,
+        callback: (error: Error | null, accept: boolean) => void,
+    ) => {
         if (!ALLOWED_FILE_TYPES[file.mimetype]) {
             return callback(
                 new BadRequestException(`Unsupported or disallowed file MIME type: ${file.mimetype}`),

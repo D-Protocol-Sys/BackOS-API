@@ -38,11 +38,8 @@ import { ClientsModule } from './clients/clients.module';
 import { FeaturesModule } from './features/features.module';
 
 @Module({
-
     imports: [
-
         ConfigModule.forRoot({
-
             isGlobal: true,
 
             cache: true,
@@ -60,7 +57,6 @@ import { FeaturesModule } from './features/features.module';
             envFilePath: `.env.${process.env.NODE_ENV ?? 'development'}`,
 
             ignoreEnvFile: process.env.NODE_ENV === 'production',
-            
         }),
 
         // RATE LIMITING FIX: `ThrottlerModule.forRoot()` only registers the throttler's
@@ -82,19 +78,19 @@ import { FeaturesModule } from './features/features.module';
         // Every other route (GET lists, polling endpoints, etc.) is no longer throttled at
         // all, which is what normal, legitimate traffic needs.
         ThrottlerModule.forRoot([{ ttl: 60_000, limit: 20 }]),
-            
+
         PrismaModule,
-            
+
         EmailModule,
-            
+
         AuthModule,
-            
+
         UsersModule,
-            
+
         PermissionsModule,
-            
+
         RolesModule,
-        
+
         CommonModule,
 
         // Global module resolving generated-platform slugs to their internal loopback
@@ -136,7 +132,6 @@ import { FeaturesModule } from './features/features.module';
         // Optional features (src/features/<name>/): loaded only when named in ENABLED_FEATURES.
         // A feature never needs to be added to this file.
         FeaturesModule.register(),
-
     ],
 
     controllers: [AppController],
@@ -153,7 +148,5 @@ import { FeaturesModule } from './features/features.module';
         { provide: APP_GUARD, useClass: DemoReadOnlyGuard },
         { provide: APP_INTERCEPTOR, useClass: TrackActivityInterceptor },
     ],
-
 })
-
 export class AppModule {}

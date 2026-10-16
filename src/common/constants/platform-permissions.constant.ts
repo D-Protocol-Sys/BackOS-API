@@ -14,7 +14,6 @@
  * directly in `PlatformsService` / `GeneratorController`, never as a grantable permission.
  */
 export const PLATFORM_PERMISSIONS = {
-
     // Platform (the platform's own settings - NOT delete/transfer/purge, see class doc above)
     PLATFORM_UPDATE: 'platform.update',
     PLATFORM_MANAGE_MEMBERS: 'platform.manage-members',
@@ -45,13 +44,11 @@ export const PLATFORM_PERMISSIONS = {
     // no code ever checked these per-platform keys, so granting them in a custom role had no
     // effect and was misleading. PlatformPermissionsSyncService prunes them from the database
     // (and from every custom role) on the next boot.
-
 } as const;
 
 export type PlatformPermissionKey = (typeof PLATFORM_PERMISSIONS)[keyof typeof PLATFORM_PERMISSIONS];
 
 export const PLATFORM_PERMISSION_DESCRIPTIONS: Record<PlatformPermissionKey, string> = {
-
     [PLATFORM_PERMISSIONS.PLATFORM_UPDATE]: "Update this platform's own settings (name, description, URL)",
     [PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS]: 'Add, remove, or change the role of members on this platform',
     [PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES]: 'Create, edit, or delete custom roles on this platform',
@@ -64,13 +61,13 @@ export const PLATFORM_PERMISSION_DESCRIPTIONS: Record<PlatformPermissionKey, str
     [PLATFORM_PERMISSIONS.DATA_UPDATE]: "Update records in this platform's generated tables",
     [PLATFORM_PERMISSIONS.DATA_DELETE]: "Delete records in this platform's generated tables",
 
-    [PLATFORM_PERMISSIONS.GENERATOR_EXECUTE]: 'Trigger a backend generation for this platform (subject to owner approval if not triggered by the owner)',
+    [PLATFORM_PERMISSIONS.GENERATOR_EXECUTE]:
+        'Trigger a backend generation for this platform (subject to owner approval if not triggered by the owner)',
     [PLATFORM_PERMISSIONS.RUNTIME_MANAGE]: "Start, stop, or inspect this platform's generated backend runtime",
 
     [PLATFORM_PERMISSIONS.FILE_MANAGE]: 'Delete or manage any uploaded file on this platform, regardless of ownership',
     [PLATFORM_PERMISSIONS.PLANNING_READ]: "View this platform's planning, regardless of membership",
     [PLATFORM_PERMISSIONS.PLANNING_MANAGE]: 'Create, edit, or delete this platform planning entries',
-
 };
 
 /**

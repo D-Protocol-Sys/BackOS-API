@@ -6,26 +6,12 @@ import { PlatformServicesController } from './platform-services.controller';
 import { PlatformAccessModule } from '../platforms/platform-access.module';
 
 @Module({
+    imports: [PlatformAccessModule],
 
-    imports: [
-        PlatformAccessModule,
-    ],
+    controllers: [ServiceCatalogController, PlatformServicesController],
 
-    controllers: [
-        ServiceCatalogController,
-        PlatformServicesController
-    ],
+    providers: [ServiceCatalog, PlatformServicesService],
 
-    providers: [
-        ServiceCatalog,
-        PlatformServicesService
-    ],
-
-    exports: [
-        ServiceCatalog,
-        PlatformServicesService
-    ],
-
+    exports: [ServiceCatalog, PlatformServicesService],
 })
-
 export class ServiceCatalogModule {}

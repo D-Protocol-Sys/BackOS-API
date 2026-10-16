@@ -30,11 +30,7 @@ export class PlatformPlanningController {
      * @param dto - Validated input data payload.
      */
     @Post()
-    create(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Body() dto: CreatePlanningEntryDto,
-    ) {
+    create(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Body() dto: CreatePlanningEntryDto) {
         return this.planningService.createPlatformEntry(actor, platformId, dto);
     }
 

@@ -15,7 +15,6 @@ import { IsDateString } from 'class-validator';
  * `PlanningProgramService.resolveCycleWeekIndex()`).
  */
 export class ApplyProgramDto {
-
     /**
      * The real calendar date to project the program onto. ISO 8601 date string,
      * e.g. "2026-09-18". Only the calendar day matters - any time component is ignored.

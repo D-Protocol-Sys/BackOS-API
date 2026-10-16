@@ -11,7 +11,7 @@ export class PortAllocatorService {
 
     /**
      * Fetches an existing port for a platform or allocates the first available port in range.
-     * * Educational Note: 
+     * * Educational Note:
      * We load existing assigned ports into a Set to achieve O(1) membership lookup efficiency.
      * This avoids nested array lookups during iteration.
      */

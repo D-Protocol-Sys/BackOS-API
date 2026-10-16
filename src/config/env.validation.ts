@@ -7,12 +7,9 @@ import { validateFeatureEnv } from '../features/feature-env';
  * Prevents the application from booting if critical configuration keys are missing or invalid.
  */
 export const validationSchema = Joi.object({
-
     // --- APPLICATION & ENVIRONMENT ---
     SERVER_NAME: Joi.string().required(),
-    NODE_ENV: Joi.string()
-        .valid('development', 'test', 'production')
-        .default('development'),
+    NODE_ENV: Joi.string().valid('development', 'test', 'production').default('development'),
     PORT: Joi.number().default(4803),
     CORS_ORIGIN: Joi.string(),
     FRONTEND_URL: Joi.string(),
@@ -40,18 +37,24 @@ export const validationSchema = Joi.object({
     REDIS_HOST: Joi.string(),
     REDIS_PORT: Joi.number().default(6379),
     // QUEUE-001: every containerized stack runs Redis with --requirepass - mandatory in production.
-    REDIS_PASSWORD: Joi.string().allow('').when('NODE_ENV', {
-        is: 'production',
-        then: Joi.string().min(16).required(),
-        otherwise: Joi.optional(),
-    }),
+    REDIS_PASSWORD: Joi.string()
+        .allow('')
+        .when('NODE_ENV', {
+            is: 'production',
+            then: Joi.string().min(16).required(),
+            otherwise: Joi.optional(),
+        }),
     REDIS_USERNAME: Joi.string().allow('').optional(),
     REDIS_TLS: Joi.boolean().default(false),
 
     // --- SECURITY & CRYPTOGRAPHY ---
     // SEC-021 / OPS-001: exactly 64 HEXADECIMAL characters (a 63-character key used to slip into .env.lan).
-    ENCRYPTION_KEY: Joi.string().pattern(/^[0-9a-fA-F]{64}$/).required()
-        .messages({ 'string.pattern.base': 'ENCRYPTION_KEY must be exactly 64 hexadecimal characters (openssl rand -hex 32).' }),
+    ENCRYPTION_KEY: Joi.string()
+        .pattern(/^[0-9a-fA-F]{64}$/)
+        .required()
+        .messages({
+            'string.pattern.base': 'ENCRYPTION_KEY must be exactly 64 hexadecimal characters (openssl rand -hex 32).',
+        }),
     BCRYPT_SALT_ROUNDS: Joi.number().default(12),
 
     // --- JWT & REFRESH TOKENS ---
@@ -131,7 +134,9 @@ export const validationSchema = Joi.object({
     // to `http://host.docker.internal:<PORT>` (the host, as seen from a generated Docker container).
     // Set it when BackOS itself runs in a container, or generated backends run as native processes
     // (e.g. `http://127.0.0.1:4803`). No trailing path.
-    GENERATED_BACKEND_BACKOS_URL: Joi.string().uri({ scheme: ['http', 'https'] }).optional(),
+    GENERATED_BACKEND_BACKOS_URL: Joi.string()
+        .uri({ scheme: ['http', 'https'] })
+        .optional(),
 
     // --- GENERATED BACKEND DOCKER ISOLATION (see DockerRuntimeManagerService) ---
     GENERATED_BACKEND_MEMORY_LIMIT: Joi.string().default('256m'),
@@ -188,9 +193,7 @@ export const validationSchema = Joi.object({
     // variables each feature declares, are checked by the `.custom()` step below, once every
     // feature has been discovered. See src/features/README.md.
     ENABLED_FEATURES: Joi.string().allow('').optional(),
-
 }).custom((value, helpers) => {
-
     // Runs after the core variables above were validated. Discovering the features here, and
     // not when this file is imported, avoids a circular import: a feature may import from
     // `../../config` like any other module.

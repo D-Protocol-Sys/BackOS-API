@@ -23,7 +23,6 @@ const alpha: FeatureManifest = {
 };
 
 describe('validateFeatureEnv', () => {
-
     it('applies the defaults of the features own variables', () => {
         const { value, errors } = validateFeatureEnv({}, [alpha]);
 
@@ -68,7 +67,6 @@ describe('validateFeatureEnv', () => {
 });
 
 describe('validationSchema (real environment validation)', () => {
-
     // The development example file is meant to work as it is, so it doubles as a valid base.
     const base = parse(fs.readFileSync(path.resolve(__dirname, '../../.env.development.example')));
 

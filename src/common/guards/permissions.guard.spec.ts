@@ -31,7 +31,7 @@ describe('PermissionsGuard', () => {
         expect(guard.canActivate(makeContext([]))).toBe(true);
     });
 
-    it('autorise l\'accès quand le tableau de permissions requises est vide', () => {
+    it("autorise l'accès quand le tableau de permissions requises est vide", () => {
         jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue([]);
         expect(guard.canActivate(makeContext([]))).toBe(true);
     });
@@ -41,12 +41,12 @@ describe('PermissionsGuard', () => {
         expect(guard.canActivate(makeContext(['users:read', 'users:update', 'roles:read']))).toBe(true);
     });
 
-    it("refuse (403) quand il manque UNE SEULE des permissions requises", () => {
+    it('refuse (403) quand il manque UNE SEULE des permissions requises', () => {
         jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['users:read', 'users:delete']);
         expect(() => guard.canActivate(makeContext(['users:read']))).toThrow(ForbiddenException);
     });
 
-    it("refuse quand request.user est absent (ne doit jamais planter, juste refuser)", () => {
+    it('refuse quand request.user est absent (ne doit jamais planter, juste refuser)', () => {
         jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(['users:read']);
         expect(() => guard.canActivate(makeContext(undefined))).toThrow(ForbiddenException);
     });

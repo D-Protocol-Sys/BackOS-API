@@ -9,7 +9,6 @@ import { CryptoService } from './crypto.service';
  */
 @Injectable()
 export class MfaService {
-
     constructor(
         private readonly totp: TotpService,
         private readonly qrCode: QrCodeService,
@@ -40,11 +39,11 @@ export class MfaService {
         const qrCode = await this.qrCode.toDataUrl(uri);
 
         // Return enrollment credentials for both DB persistence and UI display
-        return { 
-            secret, 
-            encryptedSecret, 
-            uri, 
-            qrCode 
+        return {
+            secret,
+            encryptedSecret,
+            uri,
+            qrCode,
         };
     }
 

@@ -11,7 +11,6 @@ import type { FeatureInfo } from './feature.types';
 @ApiBearerAuth('access-token')
 @Controller('features')
 export class FeaturesController {
-
     constructor(private readonly features: FeaturesService) {}
 
     @Get()

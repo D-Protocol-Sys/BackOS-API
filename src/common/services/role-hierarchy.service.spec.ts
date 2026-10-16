@@ -25,10 +25,7 @@ describe('RoleHierarchyService', () => {
 
     describe('getBestLevel', () => {
         it('retourne le niveau le plus bas (le plus haut en autorité) parmi plusieurs rôles', async () => {
-            prismaMock.userRole.findMany.mockResolvedValue([
-                { role: { level: 20 } },
-                { role: { level: 5 } },
-            ]);
+            prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 20 } }, { role: { level: 5 } }]);
             const level = await service.getBestLevel('user-1');
             expect(level).toBe(5);
         });
@@ -46,9 +43,7 @@ describe('RoleHierarchyService', () => {
                 .mockResolvedValueOnce([{ role: { level: 0 } }]) // acteur
                 .mockResolvedValueOnce([{ role: { level: 10 } }]); // cible
 
-            await expect(
-                service.assertSeniorToTarget('actor', 'target', 'désactiver'),
-            ).resolves.not.toThrow();
+            await expect(service.assertSeniorToTarget('actor', 'target', 'désactiver')).resolves.not.toThrow();
         });
 
         it('bloque si acteur et cible ont le même niveau', async () => {
@@ -56,9 +51,9 @@ describe('RoleHierarchyService', () => {
                 .mockResolvedValueOnce([{ role: { level: 10 } }])
                 .mockResolvedValueOnce([{ role: { level: 10 } }]);
 
-            await expect(
-                service.assertSeniorToTarget('actor', 'target', 'désactiver'),
-            ).rejects.toThrow(ForbiddenException);
+            await expect(service.assertSeniorToTarget('actor', 'target', 'désactiver')).rejects.toThrow(
+                ForbiddenException,
+            );
         });
 
         it('bloque si acteur a un niveau inférieur (moins élevé) à la cible', async () => {
@@ -66,15 +61,13 @@ describe('RoleHierarchyService', () => {
                 .mockResolvedValueOnce([{ role: { level: 20 } }])
                 .mockResolvedValueOnce([{ role: { level: 5 } }]);
 
-            await expect(
-                service.assertSeniorToTarget('actor', 'target', 'désactiver'),
-            ).rejects.toThrow(ForbiddenException);
+            await expect(service.assertSeniorToTarget('actor', 'target', 'désactiver')).rejects.toThrow(
+                ForbiddenException,
+            );
         });
 
         it('ne fait rien si acteur == cible (action sur soi-même déléguée ailleurs)', async () => {
-            await expect(
-                service.assertSeniorToTarget('same-id', 'same-id', 'désactiver'),
-            ).resolves.not.toThrow();
+            await expect(service.assertSeniorToTarget('same-id', 'same-id', 'désactiver')).resolves.not.toThrow();
             expect(prismaMock.userRole.findMany).not.toHaveBeenCalled();
         });
     });
@@ -84,9 +77,7 @@ describe('RoleHierarchyService', () => {
             prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 10 } }]);
             prismaMock.role.findUnique.mockResolvedValue({ level: 10, rolePermissions: [] });
 
-            await expect(service.assertCanGrantRole('actor', 'role-id')).rejects.toThrow(
-                ForbiddenException,
-            );
+            await expect(service.assertCanGrantRole('actor', 'role-id')).rejects.toThrow(ForbiddenException);
         });
 
         it("bloque si le rôle est de niveau plus faible MAIS porte une permission que l'acteur n'a pas (anti-escalade)", async () => {
@@ -106,9 +97,7 @@ describe('RoleHierarchyService', () => {
                 rolePermissions: [{ permission: { key: 'users.delete' } }],
             });
 
-            await expect(service.assertCanGrantRole('actor', 'role-id')).rejects.toThrow(
-                ForbiddenException,
-            );
+            await expect(service.assertCanGrantRole('actor', 'role-id')).rejects.toThrow(ForbiddenException);
         });
 
         it("autorise si le rôle est strictement plus faible ET que l'acteur détient déjà toutes ses permissions", async () => {
@@ -129,9 +118,7 @@ describe('RoleHierarchyService', () => {
             prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 10 } }]);
             prismaMock.role.findUnique.mockResolvedValue(null);
 
-            await expect(service.assertCanGrantRole('actor', 'missing-role')).rejects.toThrow(
-                NotFoundException,
-            );
+            await expect(service.assertCanGrantRole('actor', 'missing-role')).rejects.toThrow(NotFoundException);
         });
     });
 
@@ -140,18 +127,14 @@ describe('RoleHierarchyService', () => {
             prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 10 } }]);
             prismaMock.role.findUnique.mockResolvedValue({ id: 'role-id', level: 5 });
 
-            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(
-                ForbiddenException,
-            );
+            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(ForbiddenException);
         });
 
         it('bloque si les niveaux sont strictement égaux', async () => {
             prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 10 } }]);
             prismaMock.role.findUnique.mockResolvedValue({ id: 'role-id', level: 10 });
 
-            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(
-                ForbiddenException,
-            );
+            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(ForbiddenException);
         });
 
         it("autorise si l'acteur est strictement plus haut rang que le rôle ciblé", async () => {
@@ -165,18 +148,14 @@ describe('RoleHierarchyService', () => {
             prismaMock.userRole.findMany.mockResolvedValue([]);
             prismaMock.role.findUnique.mockResolvedValue({ id: 'role-id', level: 10 });
 
-            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(
-                ForbiddenException,
-            );
+            await expect(service.assertCanDeleteRole('actor', 'role-id')).rejects.toThrow(ForbiddenException);
         });
 
         it("lève NotFoundException si le rôle ciblé n'existe pas", async () => {
             prismaMock.userRole.findMany.mockResolvedValue([{ role: { level: 0 } }]);
             prismaMock.role.findUnique.mockResolvedValue(null);
 
-            await expect(service.assertCanDeleteRole('actor', 'missing-role')).rejects.toThrow(
-                NotFoundException,
-            );
+            await expect(service.assertCanDeleteRole('actor', 'missing-role')).rejects.toThrow(NotFoundException);
         });
     });
 });

@@ -3,21 +3,17 @@ import { PrismaService } from './prisma/prisma.service';
 
 @Injectable()
 export class AppService {
-
     constructor(private readonly prisma: PrismaService) {}
 
     getInfo() {
-
         return {
             name: 'back-os-api',
             version: '0.1.0',
             environment: process.env.NODE_ENV ?? 'development',
         };
-
     }
 
     async getHealth() {
-
         const startedAt = Date.now();
 
         let databaseStatus: 'ok' | 'error' = 'ok';
@@ -35,7 +31,5 @@ export class AppService {
             database: databaseStatus,
             responseTimeMs: Date.now() - startedAt,
         };
-
     }
-    
 }

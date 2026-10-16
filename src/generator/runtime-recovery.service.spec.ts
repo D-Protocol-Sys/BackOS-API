@@ -50,7 +50,10 @@ describe('RuntimeRecoveryService', () => {
 
     it('leaves alone a platform whose container is still running (only the stack restarted)', async () => {
         const { service, start } = build({
-            platforms: [{ id: 'p1', slug: 'portfolio' }, { id: 'p2', slug: 'blog' }],
+            platforms: [
+                { id: 'p1', slug: 'portfolio' },
+                { id: 'p2', slug: 'blog' },
+            ],
             statuses: { p1: 'RUNNING', p2: 'STARTING' },
         });
 
@@ -62,7 +65,10 @@ describe('RuntimeRecoveryService', () => {
 
     it('keeps going when one platform fails, and reports it', async () => {
         const { service, start } = build({
-            platforms: [{ id: 'p1', slug: 'broken' }, { id: 'p2', slug: 'portfolio' }],
+            platforms: [
+                { id: 'p1', slug: 'broken' },
+                { id: 'p2', slug: 'portfolio' },
+            ],
             startImpl: async (id) => {
                 if (id === 'p1') throw new Error('image build failed');
                 return {};

@@ -1,11 +1,10 @@
-import { IsString, IsOptional, MinLength, MaxLength } from 'class-validator';
+import { IsString, MinLength, MaxLength } from 'class-validator';
 
 /**
- * Data Transfer Object (DTO) defining the schema and validation rules 
+ * Data Transfer Object (DTO) defining the schema and validation rules
  * for creating a new entity record via incoming API payloads.
  */
 export class CreateEntityDto {
-
     /**
      * Name attribute of the entity.
      * Enforces type safety, mandatory presence, and character length bounds.
@@ -17,5 +16,4 @@ export class CreateEntityDto {
     @MinLength(1)
     @MaxLength(60)
     name!: string;
-
 }

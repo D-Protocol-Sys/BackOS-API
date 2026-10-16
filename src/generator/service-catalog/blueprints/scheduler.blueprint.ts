@@ -10,11 +10,11 @@ import { ServiceBlueprint } from '../service-blueprint.types';
  * 3. Prisma database schema models required for persisting scheduled job definitions.
  */
 export const SCHEDULER_BLUEPRINT: ServiceBlueprint = {
-
     // Unique blueprint identifier key used across the code generation engine
     key: 'scheduler',
     name: 'Scheduler',
-    description: 'Availability windows on entities and delayed actions (email or webhook), one-time or recurring. Requires Mailing (its "email" actions) and Auth & User (its API is reserved to internal accounts).',
+    description:
+        'Availability windows on entities and delayed actions (email or webhook), one-time or recurring. Requires Mailing (its "email" actions) and Auth & User (its API is reserved to internal accounts).',
 
     // - mailing:   its "email" action goes through the generated MailService.
     // - auth-user: the task routes can send e-mails and call arbitrary URLs, so they are restricted to
@@ -25,8 +25,8 @@ export const SCHEDULER_BLUEPRINT: ServiceBlueprint = {
     // Required npm/pnpm dependencies for background job management via Redis queues
     pnpmDependencies: {
         '@nestjs/bullmq': '^11.0.0',
-        'bullmq': '^5.34.0',
-        'ioredis': '^5.4.1',
+        bullmq: '^5.34.0',
+        ioredis: '^5.4.1',
     },
 
     // Nothing to configure here: e-mail settings come from Mailing.

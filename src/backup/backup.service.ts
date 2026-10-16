@@ -1,4 +1,10 @@
-import { Injectable, Logger, InternalServerErrorException, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    InternalServerErrorException,
+    NotFoundException,
+    BadRequestException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs';
 import * as fsp from 'fs/promises';
@@ -160,7 +166,9 @@ export class BackupService {
         }
 
         if (!fs.existsSync(resolvedPath)) {
-            throw new NotFoundException('Dump file not found (it may have already been downloaded, or purged by retention cleanup).');
+            throw new NotFoundException(
+                'Dump file not found (it may have already been downloaded, or purged by retention cleanup).',
+            );
         }
 
         return resolvedPath;
@@ -176,7 +184,9 @@ export class BackupService {
             await fsp.unlink(filePath);
         } catch (error) {
             // Not fatal - a leftover temp file is a disk-space nuisance, not a correctness bug.
-            this.logger.warn(`Failed to remove temporary dump file "${filePath}": ${error instanceof Error ? error.message : String(error)}`);
+            this.logger.warn(
+                `Failed to remove temporary dump file "${filePath}": ${error instanceof Error ? error.message : String(error)}`,
+            );
         }
     }
 
@@ -189,7 +199,10 @@ export class BackupService {
         const timestamp = this.formatTimestamp(new Date());
         const safeLabel = this.sanitizeLabel(label);
         // Random suffix: two dumps of the same database in the same second no longer overwrite each other.
-        const rawSqlPath = path.join(outputDir, `${safeLabel}_${timestamp}_${crypto.randomBytes(3).toString('hex')}.sql`);
+        const rawSqlPath = path.join(
+            outputDir,
+            `${safeLabel}_${timestamp}_${crypto.randomBytes(3).toString('hex')}.sql`,
+        );
         const gzPath = `${rawSqlPath}.gz`;
         const timeoutMs = this.configService.get<number>('BACKUP_TIMEOUT_MS', 10 * 60 * 1000);
 
@@ -205,13 +218,7 @@ export class BackupService {
             const { dbname, password } = this.splitPassword(this.toLibpqConnectionUrl(connectionUrl));
             await runCommand(
                 'pg_dump',
-                [
-                    `--dbname=${dbname}`,
-                    '--no-owner',
-                    '--no-privileges',
-                    '--verbose',
-                    '--file', rawSqlPath,
-                ],
+                [`--dbname=${dbname}`, '--no-owner', '--no-privileges', '--verbose', '--file', rawSqlPath],
                 outputDir,
                 timeoutMs,
                 password ? { PGPASSWORD: password } : {},
@@ -221,7 +228,7 @@ export class BackupService {
                 this.logger.error(`pg_dump failed for "${label}": ${error.message}`);
                 throw new InternalServerErrorException(
                     `Database export failed for "${label}". Make sure the "pg_dump" client tool ` +
-                    `(matching your Postgres server's major version) is installed and on PATH.`,
+                        `(matching your Postgres server's major version) is installed and on PATH.`,
                 );
             }
             throw error;
@@ -240,11 +247,7 @@ export class BackupService {
     }
 
     private async gzip(sourcePath: string, destPath: string): Promise<void> {
-        await pipeline(
-            fs.createReadStream(sourcePath),
-            zlib.createGzip({ level: 6 }),
-            fs.createWriteStream(destPath),
-        );
+        await pipeline(fs.createReadStream(sourcePath), zlib.createGzip({ level: 6 }), fs.createWriteStream(destPath));
     }
 
     private resolveOutputDir(): string {

@@ -2,12 +2,11 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * Application Security & Cryptography Configuration Namespace ('security')
- * * Holds master encryption keys used for encrypting sensitive fields in the database 
+ * * Holds master encryption keys used for encrypting sensitive fields in the database
  * (e.g., AES-256-GCM secret keys for 2FA/MFA).
  * Accessible via `ConfigService.get('security.property')`.
  */
 export default registerAs('security', () => ({
-
     /**
      * 256-bit Hexadecimal Encryption Key used for AES symmetric encryption.
      * MUST be exactly 64 hex characters (32 bytes) in production.
@@ -33,5 +32,4 @@ export default registerAs('security', () => ({
         /** Duration (in minutes) an account stays locked once the threshold above is reached. */
         lockoutMinutes: parseInt(process.env.LOGIN_LOCKOUT_MINUTES ?? '15', 10),
     },
-
 }));

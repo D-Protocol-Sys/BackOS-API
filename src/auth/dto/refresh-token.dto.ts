@@ -5,7 +5,6 @@ import { IsString } from 'class-validator';
  * during authentication token refresh requests.
  */
 export class RefreshTokenDto {
-
     /**
      * The refresh token string issued during authentication.
      * * @IsString() - Ensures the incoming property is a valid primitive string.
@@ -16,5 +15,4 @@ export class RefreshTokenDto {
      */
     @IsString()
     refreshToken!: string;
-    
 }

@@ -13,7 +13,7 @@ import { Public } from '../common/decorators/public.decorator';
 import { CurrentUser } from '../common/decorators/current-user.decorator';
 
 /**
- * Helper function to extract request metadata (IP address and User-Agent) 
+ * Helper function to extract request metadata (IP address and User-Agent)
  * for security auditing and session context tracking.
  * * @param req - Express Request object
  * @returns An object containing ipAddress and userAgent
@@ -23,7 +23,7 @@ function extractContext(req: Request) {
 }
 
 /**
- * Controller handling user authentication, invitation flows, MFA management, 
+ * Controller handling user authentication, invitation flows, MFA management,
  * and session token lifecycles.
  */
 /**
@@ -142,10 +142,7 @@ export class AuthController {
     @HttpCode(HttpStatus.OK)
     @ApiOperation({ summary: 'Log out current user session' })
     @ApiOkResponse({ description: 'Logged out successfully. Refresh token invalidated.' })
-    logout(
-        @CurrentUser() user: { userId: string }, 
-        @Body() dto: RefreshTokenDto,
-    ) {
+    logout(@CurrentUser() user: { userId: string }, @Body() dto: RefreshTokenDto) {
         return this.authService.logout(user.userId, dto.refreshToken);
     }
 }

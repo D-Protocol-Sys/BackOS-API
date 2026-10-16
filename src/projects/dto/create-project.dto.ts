@@ -21,7 +21,6 @@ import { ProjectStatus } from '@prismamodels/client';
  * out later via `UpdateProjectDto`.
  */
 export class CreateProjectDto {
-
     /**
      * The name of the project (e.g. "Online course platform").
      * Required field: must be a string between 2 and 150 characters in length.
@@ -109,5 +108,4 @@ export class CreateProjectDto {
     @Min(0)
     @Max(10)
     priority?: number;
-
 }

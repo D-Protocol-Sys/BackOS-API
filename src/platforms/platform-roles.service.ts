@@ -21,7 +21,6 @@ import { UpdatePlatformRoleDto } from './dto/update-platform-role.dto';
  */
 @Injectable()
 export class PlatformRolesService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly access: PlatformAccessService,
@@ -59,7 +58,12 @@ export class PlatformRolesService {
 
     async create(actor: Actor, platformId: string, dto: CreatePlatformRoleDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
         await this.assertGrantablePermissions(actor, platform, dto.permissions);
 
         const nameTaken = await this.prisma.platformRole.findUnique({
@@ -84,7 +88,12 @@ export class PlatformRolesService {
 
     async update(actor: Actor, platformId: string, roleId: string, dto: UpdatePlatformRoleDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
 
         const role = await this.findRoleOrThrow(platformId, roleId);
         if (role.isSystem) {
@@ -132,7 +141,12 @@ export class PlatformRolesService {
 
     async remove(actor: Actor, platformId: string, roleId: string) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_ROLES,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
 
         const role = await this.findRoleOrThrow(platformId, roleId);
         if (role.isSystem) {
@@ -181,7 +195,11 @@ export class PlatformRolesService {
      * only ever actually restricts a custom-role holder who was themselves granted
      * `PLATFORM_MANAGE_ROLES` but not every other permission.
      */
-    private async assertGrantablePermissions(actor: Actor, platform: { id: string; ownerId: string }, keys: PlatformPermissionKey[]) {
+    private async assertGrantablePermissions(
+        actor: Actor,
+        platform: { id: string; ownerId: string },
+        keys: PlatformPermissionKey[],
+    ) {
         const { permissions } = await this.access.getEffectivePermissions(actor, platform);
         const notOwned = keys.filter((key) => !permissions.has(key));
         if (notOwned.length > 0) {
@@ -225,5 +243,4 @@ export class PlatformRolesService {
         }
         return rows.map((row) => ({ platformPermissionId: row.id }));
     }
-
 }

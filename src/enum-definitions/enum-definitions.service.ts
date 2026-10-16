@@ -91,7 +91,9 @@ export class EnumDefinitionsService {
     // ---- Helpers (mirrors FieldsService's own, deliberately - same authorization boundary) ----
 
     private async findOrThrow(platformId: string, enumDefinitionId: string) {
-        const enumDefinition = await this.prisma.enumDefinition.findFirst({ where: { id: enumDefinitionId, platformId } });
+        const enumDefinition = await this.prisma.enumDefinition.findFirst({
+            where: { id: enumDefinitionId, platformId },
+        });
         if (!enumDefinition) throw new NotFoundException('Enum not found.');
         return enumDefinition;
     }
@@ -121,6 +123,8 @@ export class EnumDefinitionsService {
         // Platform-level check: ADMIN implicitly, or a custom role carrying `field.manage`.
         const { permissions } = await this.access.getEffectivePermissions(actor, platform);
         if (permissions.has(PLATFORM_PERMISSIONS.FIELD_MANAGE)) return platform;
-        throw new ForbiddenException('You must be the owner, a platform administrator, or possess the required permission.');
+        throw new ForbiddenException(
+            'You must be the owner, a platform administrator, or possess the required permission.',
+        );
     }
 }

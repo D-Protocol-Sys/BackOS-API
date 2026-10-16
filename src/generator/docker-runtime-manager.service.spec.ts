@@ -60,17 +60,13 @@ describe('DockerRuntimeManagerService', () => {
 
         it('rewrites 127.0.0.1 the same way as localhost', () => {
             configValues['GENERATED_BACKEND_DOCKER_DB_HOST'] = 'host.docker.internal';
-            const rewritten = (service as any).dockerReachableDatabaseUrl(
-                'postgresql://user:pass@127.0.0.1:5432/mydb',
-            );
+            const rewritten = (service as any).dockerReachableDatabaseUrl('postgresql://user:pass@127.0.0.1:5432/mydb');
             expect(rewritten).toContain('@host.docker.internal:5432/');
         });
 
         it('rewrites to the Postgres Compose service name in the containerized-prod shape', () => {
             configValues['GENERATED_BACKEND_DOCKER_DB_HOST'] = 'postgres';
-            const rewritten = (service as any).dockerReachableDatabaseUrl(
-                'postgresql://user:pass@localhost:5432/mydb',
-            );
+            const rewritten = (service as any).dockerReachableDatabaseUrl('postgresql://user:pass@localhost:5432/mydb');
             expect(rewritten).toContain('@postgres:5432/');
         });
 

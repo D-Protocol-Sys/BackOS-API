@@ -4,7 +4,6 @@ import { PlatformsModule } from '../platforms/platforms.module';
 import { ClientsModule } from '../clients/clients.module';
 
 @Module({
-
     // PlatformsModule for PlatformsService.purgeExpiredArchives() - purging an archived
     // platform has side effects beyond the database (stopping its runtime, deleting its
     // generated files), so that logic lives in PlatformsService rather than being duplicated
@@ -15,7 +14,5 @@ import { ClientsModule } from '../clients/clients.module';
     imports: [PlatformsModule, ClientsModule],
 
     providers: [CleanupService],
-    
 })
-
 export class CleanupModule {}

@@ -1,14 +1,11 @@
-import {
-    IsString, IsEnum, IsOptional, IsBoolean, IsInt, IsUUID, Min, MinLength, MaxLength,
-} from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsBoolean, IsUUID, MinLength, MaxLength } from 'class-validator';
 import { FieldType } from '@prismamodels/client';
 
 /**
- * Data Transfer Object (DTO) defining the schema and validation rules 
+ * Data Transfer Object (DTO) defining the schema and validation rules
  * for creating a new field/column within a dynamic entity.
  */
 export class CreateFieldDto {
-
     /**
      * Name/label of the field (e.g., "Email", "Age", "First Name").
      * Enforces type safety, mandatory presence, and character length bounds.
@@ -81,7 +78,7 @@ export class CreateFieldDto {
     defaultValue?: string;
 
     /**
-     * Optional flexible JSON metadata store for extended field configuration 
+     * Optional flexible JSON metadata store for extended field configuration
      * (e.g., UI select options, regex validation rules, or display masks).
      * * `@IsOptional()` - Field is optional.
      */

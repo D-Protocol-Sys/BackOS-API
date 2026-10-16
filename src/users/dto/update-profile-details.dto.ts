@@ -58,7 +58,7 @@ export class UpdateProfileDetailsDto {
      * City, region, or specific physical location name.
      */
     @ApiPropertyOptional({
-        description: "City, state, or regional location name.",
+        description: 'City, state, or regional location name.',
         example: 'Paris, Île-de-France',
         maxLength: 100,
     })

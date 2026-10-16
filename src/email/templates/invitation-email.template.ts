@@ -10,9 +10,9 @@
  * @returns Object containing the email subject, plain text body, and HTML body.
  */
 export function buildInvitationEmail(
-    activationLink: string, 
-    code: string, 
-    firstName: string, 
+    activationLink: string,
+    code: string,
+    firstName: string,
     username: string,
     workEmail: string,
     expiresInHours: number,

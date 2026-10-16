@@ -48,6 +48,31 @@ Use a **merge commit** for this pull request, not a squash, so that the history 
 An urgent fix may go straight to `main` from a branch named `hotfix/<something>` of this repository.
 Merge `main` back into `develop` right afterwards.
 
+## Code style and checks
+
+- **Formatting** is Prettier's, configured in `.prettierrc` (4 spaces, 120 columns, single quotes).
+  `pnpm format` applies it; the CI refuses code that is not formatted.
+- **Lint** is ESLint with type information. The CI runs `pnpm lint:check`, which only reports.
+  Do not run `pnpm lint` casually: it ends with `--fix` and rewrites files.
+- **Type-safety rules** (`no-unsafe-assignment`, `no-unsafe-member-access`, `no-unsafe-call`,
+  `no-unsafe-return`, `no-unsafe-argument`) are warnings in the code and are off in tests. They show
+  where values are loosely typed. Fix them little by little, then turn them back to `error` in
+  `eslint.config.mjs`.
+- **Unused names**: start a name with an underscore (`_context`) when it is unused on purpose.
+- **Dependencies**: the CI runs `pnpm audit --audit-level=high` and a Trivy scan. When a fix exists,
+  update the package. A vulnerability with no published fix is listed in `package.json`
+  (`pnpm.auditConfig.ignoreGhsas`) and justified in [Accepted security exceptions](#accepted-security-exceptions).
+- **Secret scan**: `.gitleaks.toml` holds the few exceptions (placeholders in the settings examples).
+  Never excuse a real secret: change it instead.
+
+## Accepted security exceptions
+
+Review this list from time to time: remove an entry as soon as a fix exists.
+
+| Advisory                | Package  | Why it is accepted                                                                                                                                  |
+| ----------------------- | -------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GHSA-vfj7-8cjw-p6xm`   | `braces` | Stack exhaustion on deeply nested brace patterns. No fixed version exists. It is reached only through `http-proxy-middleware` and `micromatch`, which matches the gateway's `pathFilter` globs; the gateway does not use `pathFilter` (it routes with `router` and `pathRewrite`), so no attacker-controlled pattern reaches it. |
+
 ## GitHub settings
 
 These live in the repository's **Settings** on GitHub.

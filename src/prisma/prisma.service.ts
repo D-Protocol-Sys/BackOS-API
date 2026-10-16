@@ -1,22 +1,14 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  OnModuleDestroy,
-} from '@nestjs/common';
+import { Injectable, Logger, OnModuleInit, OnModuleDestroy } from '@nestjs/common';
 import { PrismaClient } from '@prismamodels/client';
 import { PrismaPg } from '@prisma/adapter-pg';
 
 /**
  * Service extending `PrismaClient` to handle database connections and query operations.
- * Implements NestJS lifecycle hooks (`OnModuleInit`, `OnModuleDestroy`) to manage 
+ * Implements NestJS lifecycle hooks (`OnModuleInit`, `OnModuleDestroy`) to manage
  * database connection pooling smoothly during application startup and shutdown.
  */
 @Injectable()
-export class PrismaService
-    extends PrismaClient
-    implements OnModuleInit, OnModuleDestroy
-{
+export class PrismaService extends PrismaClient implements OnModuleInit, OnModuleDestroy {
     private readonly logger = new Logger(PrismaService.name);
 
     /**

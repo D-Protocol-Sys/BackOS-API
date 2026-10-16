@@ -9,11 +9,9 @@ import { IsUUID } from 'class-validator';
  * the endpoint that resolves that block (mirrors `TransferOwnershipDto` for platforms).
  */
 export class ReassignResponsibleDto {
-
     /**
      * The unique identifier (UUID v4) of the user designated as the new responsible party.
      */
     @IsUUID()
     newResponsibleId!: string;
-
 }

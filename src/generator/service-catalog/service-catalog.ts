@@ -7,20 +7,15 @@ import { SCHEDULER_BLUEPRINT } from './blueprints/scheduler.blueprint';
 /**
  * Registry array holding all registered service blueprints available in the platform catalog.
  */
-const ALL_BLUEPRINTS: ServiceBlueprint[] = [
-    AUTH_USER_BLUEPRINT,
-    MAILING_BLUEPRINT,
-    SCHEDULER_BLUEPRINT,
-];
+const ALL_BLUEPRINTS: ServiceBlueprint[] = [AUTH_USER_BLUEPRINT, MAILING_BLUEPRINT, SCHEDULER_BLUEPRINT];
 
 /**
  * Service acting as a centralized registry/catalog for service blueprints.
- * Responsible for blueprint discovery, strict input configuration validation, 
+ * Responsible for blueprint discovery, strict input configuration validation,
  * and segregating sensitive settings from standard plain configuration properties.
  */
 @Injectable()
 export class ServiceCatalog {
-
     /**
      * Returns the catalog as exposed to the front-end (`GET /service-catalog`): every blueprint,
      * WITHOUT its internal (`system`) config fields, and with its `dependsOn` prerequisites so a
@@ -98,7 +93,9 @@ export class ServiceCatalog {
         for (const field of blueprint.configFields) {
             if (field.system) continue;
             if (field.required && (providedConfig[field.key] === undefined || providedConfig[field.key] === '')) {
-                throw new BadRequestException(`The field "${field.label}" is required for service "${blueprint.name}".`);
+                throw new BadRequestException(
+                    `The field "${field.label}" is required for service "${blueprint.name}".`,
+                );
             }
         }
 
@@ -137,7 +134,7 @@ export class ServiceCatalog {
 
     /**
      * Splits a validated configuration object into two distinct dictionaries:
-     * one for plain/public configurations and another for sensitive/secret values 
+     * one for plain/public configurations and another for sensitive/secret values
      * (e.g., API secrets, passwords) to enable secure storage/handling.
      * * @param key - The target service key.
      * @param fullConfig - Complete configuration object to split.
@@ -154,7 +151,7 @@ export class ServiceCatalog {
         for (const field of blueprint.configFields) {
             const value = fullConfig[field.key];
             if (value === undefined) continue;
-            
+
             // Route values into separate stores based on the blueprint's secret flag
             if (field.secret) secret[field.key] = value;
             else plain[field.key] = value;
@@ -168,7 +165,10 @@ export class ServiceCatalog {
             case 'boolean':
                 return typeof value === 'boolean' || value === 'true' || value === 'false';
             case 'number':
-                return (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) && Number.isFinite(Number(value));
+                return (
+                    (typeof value === 'number' || (typeof value === 'string' && value.trim() !== '')) &&
+                    Number.isFinite(Number(value))
+                );
             default:
                 return true;
         }

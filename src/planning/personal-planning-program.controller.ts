@@ -1,5 +1,15 @@
 import {
-    Body, Controller, Delete, Get, Param, ParseEnumPipe, ParseIntPipe, Patch, Post, Put, Query,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    ParseEnumPipe,
+    ParseIntPipe,
+    Patch,
+    Post,
+    Put,
+    Query,
 } from '@nestjs/common';
 import { PlanningWeekDay } from '@prismamodels/client';
 import { PlanningProgramService } from './planning-program.service';
@@ -118,11 +128,7 @@ export class PersonalPlanningProgramController {
 
     /** Bulk variant of `apply` over a date range (e.g. pre-fill the next few months). */
     @Post(':id/generate')
-    generate(
-        @CurrentUser() actor: Actor,
-        @Param('id') id: string,
-        @Body() dto: GenerateProgramOccurrencesDto,
-    ) {
+    generate(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: GenerateProgramOccurrencesDto) {
         return this.programService.generateForPersonal(actor, id, dto);
     }
 }

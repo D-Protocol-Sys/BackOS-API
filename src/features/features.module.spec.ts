@@ -18,11 +18,15 @@ class BetaService {}
 @Module({ providers: [BetaService], exports: [BetaService] })
 class BetaModule {}
 
-const alpha: FeatureManifest = { name: 'alpha', description: 'Alpha feature', defaultEnabled: false, module: AlphaModule };
+const alpha: FeatureManifest = {
+    name: 'alpha',
+    description: 'Alpha feature',
+    defaultEnabled: false,
+    module: AlphaModule,
+};
 const beta: FeatureManifest = { name: 'beta', description: 'Beta feature', defaultEnabled: true, module: BetaModule };
 
 describe('FeaturesModule', () => {
-
     const original = process.env.ENABLED_FEATURES;
     let app: TestingModule | undefined;
 

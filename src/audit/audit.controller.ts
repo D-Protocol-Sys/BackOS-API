@@ -13,10 +13,7 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 @ApiBearerAuth('access-token')
 @Controller('audit-logs')
 export class AuditController {
-
-    constructor(
-        private readonly auditLogService: AuditLogService,
-    ) {}
+    constructor(private readonly auditLogService: AuditLogService) {}
 
     /**
      * Retrieves a paginated/limited list of system audit logs.
@@ -30,9 +27,7 @@ export class AuditController {
     @ApiOkResponse({
         description: 'Successfully retrieved audit log records.',
     })
-    list(
-        @Query() query: AuditLogQueryDto,
-    ) {
+    list(@Query() query: AuditLogQueryDto) {
         return this.auditLogService.list(query.limit);
     }
 }

@@ -4,12 +4,15 @@ import type { FeatureManifest } from './feature.types';
 export const ALL_FEATURES_TOKEN = 'all';
 
 export class UnknownFeatureError extends Error {
-    constructor(readonly unknown: string[], readonly installed: string[]) {
+    constructor(
+        readonly unknown: string[],
+        readonly installed: string[],
+    ) {
         super(
             `Unknown feature(s) in ENABLED_FEATURES: ${unknown.map((name) => `"${name}"`).join(', ')}. ` +
-            (installed.length > 0
-                ? `Installed features: ${installed.join(', ')}.`
-                : 'No optional feature is installed.'),
+                (installed.length > 0
+                    ? `Installed features: ${installed.join(', ')}.`
+                    : 'No optional feature is installed.'),
         );
         this.name = 'UnknownFeatureError';
     }

@@ -42,7 +42,7 @@ export class PlatformServicesService {
 
     /**
      * Retrieves all enabled services for a specific platform.
-     * Educational Note: We map the results to guarantee encrypted secrets are omitted 
+     * Educational Note: We map the results to guarantee encrypted secrets are omitted
      * from responses, returning only public metadata and plain configuration.
      */
     async list(actor: Actor, platformId: string) {
@@ -80,7 +80,11 @@ export class PlatformServicesService {
         // ("true" -> true) so what is stored - and read back by the generators - is always well-typed.
         this.catalog.validateConfig(serviceKey, fullConfig);
         // SEC-026: the JWT secret of a generated backend signs its users' sessions.
-        if (serviceKey === 'auth-user' && typeof fullConfig.jwtSecret === 'string' && fullConfig.jwtSecret.length < 32) {
+        if (
+            serviceKey === 'auth-user' &&
+            typeof fullConfig.jwtSecret === 'string' &&
+            fullConfig.jwtSecret.length < 32
+        ) {
             throw new BadRequestException('The JWT secret must be at least 32 characters long.');
         }
         const providedConfig = this.catalog.normalizeConfig(serviceKey, fullConfig);
@@ -97,7 +101,9 @@ export class PlatformServicesService {
             });
 
             if (!authUserService) {
-                throw new BadRequestException('Please enable "Auth & User" before enabling authentication protection on /mail/send.');
+                throw new BadRequestException(
+                    'Please enable "Auth & User" before enabling authentication protection on /mail/send.',
+                );
             }
         }
 
@@ -115,7 +121,9 @@ export class PlatformServicesService {
         const { plain, secret } = this.catalog.splitConfig(serviceKey, { ...providedConfig, ...systemValues });
         const encryptionKey = this.configService.getOrThrow<string>('ENCRYPTION_KEY');
         const hasSecrets = Object.keys(secret).length > 0;
-        const encryptedConfig = hasSecrets ? this.cryptoService.encryptWithRawKey(JSON.stringify(secret), encryptionKey) : null;
+        const encryptedConfig = hasSecrets
+            ? this.cryptoService.encryptWithRawKey(JSON.stringify(secret), encryptionKey)
+            : null;
 
         const service = await this.prisma.platformService.upsert({
             where: { platformId_serviceKey: { platformId, serviceKey } },
@@ -232,7 +240,9 @@ export class PlatformServicesService {
         // (same rule as entity fields) - the next generation's migration would fail.
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId }, select: { status: true } });
         if (platform && LOCKED_STATUSES.includes(platform.status)) {
-            const previous = new Map<string, ProfileFieldDefinition>(readProfileFields(config).map((f) => [f.column, f]));
+            const previous = new Map<string, ProfileFieldDefinition>(
+                readProfileFields(config).map((f) => [f.column, f]),
+            );
             for (const field of fields) {
                 const before = previous.get(field.column);
                 if (before && (before.type !== field.type || before.isArray !== field.isArray)) {
@@ -277,7 +287,7 @@ export class PlatformServicesService {
         try {
             const decrypted = this.cryptoService.decryptWithRawKey(record.encryptedConfig, encryptionKey);
             decryptedSecret = JSON.parse(decrypted);
-        } catch (error) {
+        } catch {
             // Mask detailed crypto/parsing errors behind generic internal error
             throw new InternalServerErrorException('Failed to retrieve secure service configuration.');
         }
@@ -363,12 +373,12 @@ export class PlatformServicesService {
         if (!config || typeof config !== 'object' || Array.isArray(config)) {
             return {};
         }
-        return config as ServiceConfig;
+        return config;
     }
 
     /**
      * Guard verifying read access for a user/actor over a given platform.
-     * Educational Note: If a user is not a member, we return a 404 instead of 403 
+     * Educational Note: If a user is not a member, we return a 404 instead of 403
      * to prevent unauthorized actors from enumerating platform IDs.
      */
     private async assertCanView(actor: Actor, platformId: string): Promise<void> {
@@ -401,7 +411,9 @@ export class PlatformServicesService {
         const { permissions } = await this.access.getEffectivePermissions(actor, platform);
         if (permissions.has(PLATFORM_PERMISSIONS.PLATFORM_UPDATE)) return;
 
-        throw new ForbiddenException('You must be the owner, a platform administrator, or possess required permissions.');
+        throw new ForbiddenException(
+            'You must be the owner, a platform administrator, or possess required permissions.',
+        );
     }
 
     /**

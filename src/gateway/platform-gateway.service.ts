@@ -101,7 +101,7 @@ export class PlatformGatewayService {
 
         const target: GatewayTarget | null = isRoutable
             ? {
-                  port: platform!.generatedPort as number,
+                  port: platform.generatedPort as number,
                   // GENERATED_BACKEND_GATEWAY_HOST: address the ORCHESTRATOR uses to reach a generated
                   // backend. Defaults to GENERATED_BACKEND_HOST (bare-metal orchestrator: same
                   // loopback). When the orchestrator itself runs in a container, 127.0.0.1 is the

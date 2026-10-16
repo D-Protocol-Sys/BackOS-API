@@ -5,5 +5,5 @@
 import { generate } from 'otplib';
 
 export function generateTotpCode(secret: string): Promise<string> | string {
-    return generate({ secret }) as unknown as string;
+    return generate({ secret });
 }

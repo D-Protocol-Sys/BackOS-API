@@ -3,11 +3,10 @@ import { IsEnum, IsOptional, IsString, MaxLength } from 'class-validator';
 import { StatusChangeReason } from '@prismamodels/enums';
 
 /**
- * Data Transfer Object (DTO) used when changing an account's active or administrative status 
+ * Data Transfer Object (DTO) used when changing an account's active or administrative status
  * (e.g., suspending, deactivating, or reactivating a user).
  */
 export class ChangeUserStatusDto {
-
     /**
      * The categorized reason triggering the status change.
      * Enforces that the input value strictly matches an allowed enum option from `StatusChangeReason`.

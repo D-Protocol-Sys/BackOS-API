@@ -2,7 +2,6 @@ import { IsEnum, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'clas
 import { PlanningScope } from '@prismamodels/client';
 
 export class CreatePlanningDto {
-
     @IsString()
     @MinLength(1)
     @MaxLength(200)

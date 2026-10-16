@@ -2,12 +2,11 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * Mail / SMTP Configuration Namespace ('mail')
- * * Groups all Email and Transport Layer Security (SMTP) settings 
+ * * Groups all Email and Transport Layer Security (SMTP) settings
  * into a dedicated namespace.
  * Accessible via `ConfigService.get('mail.property')`.
  */
 export default registerAs('mail', () => ({
-
     /**
      * The hostname or IP address of the SMTP server.
      */
@@ -41,5 +40,4 @@ export default registerAs('mail', () => ({
      * Format: "Display Name <email@example.com>"
      */
     from: process.env.SMTP_FROM,
-
 }));

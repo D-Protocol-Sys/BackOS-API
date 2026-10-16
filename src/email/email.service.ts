@@ -8,7 +8,6 @@ import * as nodemailer from 'nodemailer';
  */
 @Injectable()
 export class EmailService implements OnModuleInit {
-
     // Contextual logger instance for EmailService operations
     private readonly logger = new Logger(EmailService.name);
     // Nodemailer transporter instance used to manage SMTP connection and dispatch emails
@@ -18,7 +17,6 @@ export class EmailService implements OnModuleInit {
      * @param configService - NestJS Configuration Service used to retrieve environment variables.
      */
     constructor(private readonly configService: ConfigService) {
-
         // Instantiates Nodemailer transporter with dynamic configuration loaded from environment settings
         this.transporter = nodemailer.createTransport({
             host: this.configService.get<string>('mail.host'),
@@ -27,7 +25,8 @@ export class EmailService implements OnModuleInit {
             // to the string 'true' made implicit TLS impossible. Without implicit TLS, STARTTLS is
             // now REQUIRED unless SMTP_REQUIRE_TLS=false (e.g. a local test SMTP server).
             secure: this.configService.get<boolean>('mail.secure') === true,
-            requireTLS: this.configService.get<boolean>('mail.secure') !== true && process.env.SMTP_REQUIRE_TLS !== 'false',
+            requireTLS:
+                this.configService.get<boolean>('mail.secure') !== true && process.env.SMTP_REQUIRE_TLS !== 'false',
             auth: {
                 user: this.configService.get<string>('mail.user'),
                 pass: this.configService.get<string>('mail.password'),

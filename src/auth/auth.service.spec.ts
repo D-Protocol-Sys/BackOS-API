@@ -24,8 +24,15 @@ describe('AuthService', () => {
         prismaMock = {
             user: { findUnique: jest.fn(), findFirst: jest.fn() },
             userMfa: { findUnique: jest.fn() },
-            recoveryCode: { findMany: jest.fn(), update: jest.fn(), updateMany: jest.fn().mockResolvedValue({ count: 1 }) },
-            refreshToken: { create: jest.fn().mockResolvedValue({}), updateMany: jest.fn().mockResolvedValue({ count: 0 }) },
+            recoveryCode: {
+                findMany: jest.fn(),
+                update: jest.fn(),
+                updateMany: jest.fn().mockResolvedValue({ count: 1 }),
+            },
+            refreshToken: {
+                create: jest.fn().mockResolvedValue({}),
+                updateMany: jest.fn().mockResolvedValue({ count: 0 }),
+            },
             // SEC-004: TOTP anti-replay is an atomic raw UPDATE of user_mfa."lastUsedStep".
             $executeRaw: jest.fn().mockResolvedValue(1),
             $queryRaw: jest.fn().mockResolvedValue([]),
@@ -63,9 +70,7 @@ describe('AuthService', () => {
             prismaMock.userMfa.findUnique.mockResolvedValue(activeMfa);
             mfaServiceMock.verify.mockResolvedValue(true);
 
-            await expect(
-                service.verifyStepUpTotp('user-1', '123456', context),
-            ).resolves.toBeUndefined();
+            await expect(service.verifyStepUpTotp('user-1', '123456', context)).resolves.toBeUndefined();
 
             expect(mfaServiceMock.verify).toHaveBeenCalledWith('enc-secret', '123456');
             expect(auditLogMock.log).not.toHaveBeenCalled();
@@ -76,13 +81,9 @@ describe('AuthService', () => {
             prismaMock.userMfa.findUnique.mockResolvedValue(activeMfa);
             mfaServiceMock.verify.mockResolvedValue(false);
 
-            await expect(service.verifyStepUpTotp('user-1', '000000', context)).rejects.toThrow(
-                UnauthorizedException,
-            );
+            await expect(service.verifyStepUpTotp('user-1', '000000', context)).rejects.toThrow(UnauthorizedException);
 
-            expect(auditLogMock.log).toHaveBeenCalledWith(
-                expect.objectContaining({ actorId: 'user-1', context }),
-            );
+            expect(auditLogMock.log).toHaveBeenCalledWith(expect.objectContaining({ actorId: 'user-1', context }));
         });
 
         it('rejette un code TOTP valide déjà utilisé (anti-rejeu, SEC-004)', async () => {
@@ -92,26 +93,20 @@ describe('AuthService', () => {
             // The conditional UPDATE matched no row: this time step was already consumed.
             prismaMock.$executeRaw.mockResolvedValue(0);
 
-            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(
-                UnauthorizedException,
-            );
+            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(UnauthorizedException);
         });
 
         it("rejette si l'utilisateur n'existe pas, sans jamais appeler mfaService.verify (pas d'oracle)", async () => {
             prismaMock.user.findUnique.mockResolvedValue(null);
 
-            await expect(service.verifyStepUpTotp('ghost', '123456', context)).rejects.toThrow(
-                UnauthorizedException,
-            );
+            await expect(service.verifyStepUpTotp('ghost', '123456', context)).rejects.toThrow(UnauthorizedException);
             expect(mfaServiceMock.verify).not.toHaveBeenCalled();
         });
 
         it("rejette si l'utilisateur n'est pas ACTIVE (ex. suspendu)", async () => {
             prismaMock.user.findUnique.mockResolvedValue({ id: 'user-1', status: UserStatus.SUSPENDED });
 
-            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(
-                UnauthorizedException,
-            );
+            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(UnauthorizedException);
             expect(mfaServiceMock.verify).not.toHaveBeenCalled();
         });
 
@@ -119,9 +114,7 @@ describe('AuthService', () => {
             prismaMock.user.findUnique.mockResolvedValue(activeUser);
             prismaMock.userMfa.findUnique.mockResolvedValue(null);
 
-            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(
-                UnauthorizedException,
-            );
+            await expect(service.verifyStepUpTotp('user-1', '123456', context)).rejects.toThrow(UnauthorizedException);
             expect(mfaServiceMock.verify).not.toHaveBeenCalled();
         });
     });
@@ -135,9 +128,7 @@ describe('AuthService', () => {
             // hashRecoveryCode('ABCDEF') -> 'hash(ABCDEF)', encodé en octets pour simuler un hash hex réel.
             const hashHex = Buffer.from('hash(ABCDEF)').toString('hex');
             recoveryCodeMock.hashRecoveryCode.mockReturnValue(hashHex);
-            prismaMock.recoveryCode.findMany.mockResolvedValue([
-                { id: 'code-1', codeHash: hashHex, usedAt: null },
-            ]);
+            prismaMock.recoveryCode.findMany.mockResolvedValue([{ id: 'code-1', codeHash: hashHex, usedAt: null }]);
             prismaMock.recoveryCode.update.mockResolvedValue({});
             auditLogMock.log.mockResolvedValue(undefined);
 
@@ -185,7 +176,10 @@ describe('AuthService', () => {
 
         it("refuse et révoque toutes les sessions quand le compte n'est plus ACTIVE", async () => {
             prismaMock.refreshToken.findUnique = jest.fn().mockResolvedValue({
-                id: 'rt-1', userId: 'user-1', expiresAt: future, revokedAt: null,
+                id: 'rt-1',
+                userId: 'user-1',
+                expiresAt: future,
+                revokedAt: null,
                 user: { id: 'user-1', status: UserStatus.SUSPENDED, workEmail: 'a@b.com' },
             });
 
@@ -195,9 +189,12 @@ describe('AuthService', () => {
             );
         });
 
-        it('détecte la réutilisation d\'un jeton déjà tourné et révoque toutes les sessions', async () => {
+        it("détecte la réutilisation d'un jeton déjà tourné et révoque toutes les sessions", async () => {
             prismaMock.refreshToken.findUnique = jest.fn().mockResolvedValue({
-                id: 'rt-1', userId: 'user-1', expiresAt: future, revokedAt: new Date(Date.now() - 60_000),
+                id: 'rt-1',
+                userId: 'user-1',
+                expiresAt: future,
+                revokedAt: new Date(Date.now() - 60_000),
                 user: { id: 'user-1', status: UserStatus.ACTIVE, workEmail: 'a@b.com' },
             });
 

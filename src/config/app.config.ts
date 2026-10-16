@@ -2,12 +2,11 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * Application Configuration Namespace ('app')
- * * Using NestJS `registerAs` allows us to group related environment variables 
- * under a single configuration namespace. This provides type safety and 
+ * * Using NestJS `registerAs` allows us to group related environment variables
+ * under a single configuration namespace. This provides type safety and
  * easy access via `ConfigService.get('app.property')`.
  */
 export default registerAs('app', () => ({
-
     serverName: process.env.SERVER_NAME,
 
     /**
@@ -49,7 +48,7 @@ export default registerAs('app', () => ({
     generatedProjectsRoot: process.env.GENERATED_PROJECTS_ROOT,
 
     /**
-     * Maximum duration (in milliseconds) allowed for running generation CLI/system commands 
+     * Maximum duration (in milliseconds) allowed for running generation CLI/system commands
      * before timing out. (e.g., 300,000 ms = 5 minutes).
      * Fallback: 300000
      */
@@ -66,5 +65,4 @@ export default registerAs('app', () => ({
      * Fallback: 4999
      */
     generationPortRangeEnd: parseInt(process.env.GENERATION_PORT_RANGE_END ?? '4999', 10),
-
 }));

@@ -1,4 +1,19 @@
-import { Controller, Post, Get, Param, Body, ForbiddenException, NotFoundException, BadRequestException, ConflictException, ServiceUnavailableException, Query, UseGuards, Res, Logger } from '@nestjs/common';
+import {
+    Controller,
+    Post,
+    Get,
+    Param,
+    Body,
+    ForbiddenException,
+    NotFoundException,
+    BadRequestException,
+    ConflictException,
+    ServiceUnavailableException,
+    Query,
+    UseGuards,
+    Res,
+    Logger,
+} from '@nestjs/common';
 import type { Response } from 'express';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -15,7 +30,7 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 import type { GenerationJobData } from './generation.processor';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { GenerationCancellationRegistry } from './generation-cancellation.registry';
-import { ApiManifestService, type ApiManifest, } from './api-manifest.service';
+import { ApiManifestService, type ApiManifest } from './api-manifest.service';
 import { DockerRuntimeManagerService } from './docker-runtime-manager.service';
 import { PlatformAccessService } from '../platforms/platform-access.service';
 import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
@@ -47,10 +62,26 @@ export class GeneratorController {
     ) {}
 
     /** SEC-027: generation and runtime operations are audited (never blocking). */
-    private async audit(actorId: string, action: AuditAction, platformId: string, metadata: Record<string, unknown> = {}) {
+    private async audit(
+        actorId: string,
+        action: AuditAction,
+        platformId: string,
+        metadata: Record<string, unknown> = {},
+    ) {
         await this.auditLog
-            .log({ action, actorId, targetType: AUDIT_TARGETS.PLATFORM, targetId: platformId, metadata: metadata as never })
-            .catch((error) => this.logger.error(`Audit log failed for ${action}.`, error instanceof Error ? error.stack : String(error)));
+            .log({
+                action,
+                actorId,
+                targetType: AUDIT_TARGETS.PLATFORM,
+                targetId: platformId,
+                metadata: metadata as never,
+            })
+            .catch((error) =>
+                this.logger.error(
+                    `Audit log failed for ${action}.`,
+                    error instanceof Error ? error.stack : String(error),
+                ),
+            );
     }
 
     /**
@@ -98,7 +129,9 @@ export class GeneratorController {
             needsApproval ? 'AWAITING_APPROVAL' : 'PENDING',
         );
         if (!generation) {
-            throw new ConflictException('A generation process is already running or awaiting approval for this platform.');
+            throw new ConflictException(
+                'A generation process is already running or awaiting approval for this platform.',
+            );
         }
 
         await this.audit(actor.userId, AUDIT_ACTIONS.GENERATION_REQUESTED, platformId, {
@@ -248,7 +281,7 @@ export class GeneratorController {
     async listGenerations(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
-        
+
         await this.assertCanReadGenerations(actor, platform);
 
         return this.generations.listForPlatform(platformId);
@@ -277,7 +310,7 @@ export class GeneratorController {
     ) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
-        
+
         await this.assertCanReadGenerations(actor, platform);
 
         // SECURITY FIX (SEC-003): the generation must belong to the platform the caller was
@@ -286,7 +319,7 @@ export class GeneratorController {
         if (generation.platformId !== platformId) throw new NotFoundException('Generation not found.');
         return generation;
     }
-    
+
     /**
      * Triggers the start of a platform's isolated runtime container or process.
      *
@@ -296,10 +329,7 @@ export class GeneratorController {
     @UseGuards(ThrottlerGuard)
     @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Post('runtime/start')
-    async startRuntime(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-    ) {
+    async startRuntime(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanManageRuntime(actor, platform);
@@ -307,7 +337,7 @@ export class GeneratorController {
         await this.audit(actor.userId, AUDIT_ACTIONS.RUNTIME_STARTED, platformId);
         return result;
     }
-    
+
     /**
      * Halts an actively running platform runtime instance.
      *
@@ -316,10 +346,7 @@ export class GeneratorController {
     @UseGuards(ThrottlerGuard)
     @Throttle({ default: { limit: 10, ttl: 60_000 } })
     @Post('runtime/stop')
-    async stopRuntime(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-    ) {
+    async stopRuntime(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanManageRuntime(actor, platform);
@@ -327,15 +354,12 @@ export class GeneratorController {
         await this.audit(actor.userId, AUDIT_ACTIONS.RUNTIME_STOPPED, platformId);
         return result;
     }
-    
+
     /**
      * Retrieves the operational health and execution state of the target platform runtime.
      */
     @Get('runtime/status')
-    async getRuntimeStatus(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-    ) {
+    async getRuntimeStatus(@CurrentUser() actor: Actor, @Param('platformId') platformId: string) {
         const platform = await this.prisma.platform.findUnique({ where: { id: platformId } });
         if (!platform) throw new NotFoundException('Platform not found.');
         await this.assertCanView(actor, platform);
@@ -453,20 +477,30 @@ export class GeneratorController {
      * RELIABILITY FIX (QUEUE-002): if Redis is unavailable, the generation is marked FAILED
      * instead of staying PENDING forever (which blocked every later generation of the platform).
      */
-    private async enqueue(platform: { id: string; slug: string }, generationId: string, allowDestructiveMigration = false) {
+    private async enqueue(
+        platform: { id: string; slug: string },
+        generationId: string,
+        allowDestructiveMigration = false,
+    ) {
         try {
-            await this.queue.add('generate', {
-                platformId: platform.id,
-                slug: platform.slug,
-                generationId,
-                ...(allowDestructiveMigration ? { allowDestructiveMigration: true } : {}),
-            } satisfies GenerationJobData, { jobId: generationId, ...GENERATION_JOB_RETENTION });
+            await this.queue.add(
+                'generate',
+                {
+                    platformId: platform.id,
+                    slug: platform.slug,
+                    generationId,
+                    ...(allowDestructiveMigration ? { allowDestructiveMigration: true } : {}),
+                } satisfies GenerationJobData,
+                { jobId: generationId, ...GENERATION_JOB_RETENTION },
+            );
         } catch (error) {
             this.logger.error(
                 `Could not enqueue generation ${generationId}.`,
                 error instanceof Error ? error.stack : String(error),
             );
-            await this.generations.markFailed(generationId, 'Queue unavailable - please retry in a moment.').catch(() => undefined);
+            await this.generations
+                .markFailed(generationId, 'Queue unavailable - please retry in a moment.')
+                .catch(() => undefined);
             throw new ServiceUnavailableException('The generation queue is temporarily unavailable. Please retry.');
         }
     }

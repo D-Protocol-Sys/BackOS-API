@@ -4,7 +4,6 @@ import { RelationsService } from './relations.service';
 import { RelationsController } from './relations.controller';
 
 @Module({
-
     imports: [PlatformAccessModule],
 
     controllers: [RelationsController],
@@ -12,7 +11,5 @@ import { RelationsController } from './relations.controller';
     providers: [RelationsService],
 
     exports: [RelationsService],
-
 })
-
 export class RelationsModule {}

@@ -55,8 +55,10 @@ Docker, BackOS running on your machine with hot reload.
    ```bash
    pnpm test
    pnpm build
-   pnpm lint
+   pnpm lint:check
    ```
+   If `pnpm lint:check` complains about formatting, run `pnpm format`: it rewrites your files in the
+   project's style (4 spaces, 120 columns), then check again.
 5. Push your branch to your fork and open a **pull request** against **`develop`** (not `main`).
 6. Fill in the pull request description. **Tick one type of change.**
 

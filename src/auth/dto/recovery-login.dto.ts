@@ -4,7 +4,6 @@ import { IsNotEmpty, IsString } from 'class-validator';
  * Data Transfer Object for Emergency Recovery Authentication.
  */
 export class RecoveryLoginDto {
-
     /**
      * Primary account identifier (work email or username).
      */
@@ -18,5 +17,4 @@ export class RecoveryLoginDto {
     @IsString()
     @IsNotEmpty()
     recoveryCode!: string;
-
 }

@@ -12,3 +12,13 @@ useDefault = true
 description = "Placeholders and test values in the settings examples"
 targetRules = ["generic-api-key"]
 paths = ['''^\.env(\.[a-z]+)?\.example$''']
+
+# The README comes from the NestJS starter: its badge URLs carry a placeholder token that is public
+# (the same in every NestJS project). Only that exact kind of line is excused, in README.md only.
+[[allowlists]]
+description = "Badge URLs of the NestJS starter README (public placeholder token)"
+targetRules = ["generic-api-key"]
+condition = "AND"
+paths = ['''^README\.md$''']
+regexTarget = "line"
+regexes = ['''nestjs/nest/master\?token=''']

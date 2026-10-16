@@ -23,7 +23,5 @@ export function generateSecureToken(bytes = 32): string {
  * @returns The resulting SHA-256 hash formatted as a 64-character hexadecimal string.
  */
 export function hashToken(rawToken: string): string {
-    return createHash('sha256')
-        .update(rawToken)
-        .digest('hex');
+    return createHash('sha256').update(rawToken).digest('hex');
 }

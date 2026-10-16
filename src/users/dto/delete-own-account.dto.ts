@@ -10,7 +10,6 @@ import { IsString, Length } from 'class-validator';
  * `UsersService.deleteOwnAccount()` for the full rationale.
  */
 export class DeleteOwnAccountDto {
-
     /**
      * A freshly-generated 6-digit TOTP code from the user's authenticator app, proving current
      * possession of their MFA device (not their original login code, which may be minutes old).
@@ -18,5 +17,4 @@ export class DeleteOwnAccountDto {
     @IsString()
     @Length(6, 6)
     totpCode!: string;
-
 }

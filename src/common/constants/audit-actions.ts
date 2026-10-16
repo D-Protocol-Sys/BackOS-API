@@ -1,14 +1,10 @@
-import { 
-    PERMISSIONS, 
-    PERMISSION_DESCRIPTIONS, 
-    PermissionKey 
-} from './permissions.constant';
+import { PERMISSIONS, PERMISSION_DESCRIPTIONS, PermissionKey } from './permissions.constant';
 
 /**
  * -----------------------------------------------------------------------------
  * 1. Specific System & Security Audit Actions
  * -----------------------------------------------------------------------------
- * Audit logs that are distinct from standard user RBAC permissions 
+ * Audit logs that are distinct from standard user RBAC permissions
  * (e.g. Authentication flow, MFA events, and detailed execution states).
  */
 export const SYSTEM_AUDIT_ACTIONS = {
@@ -103,7 +99,8 @@ export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_ADDED]: 'Member added to a platform',
     [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_ROLE_CHANGED]: "A platform member's role was changed",
     [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED]: 'Member removed from a platform',
-    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED]: 'Removal of a platform member requested (pending owner approval)',
+    [SYSTEM_AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED]:
+        'Removal of a platform member requested (pending owner approval)',
     [SYSTEM_AUDIT_ACTIONS.GENERATION_REQUESTED]: 'Backend generation triggered or requested',
     [SYSTEM_AUDIT_ACTIONS.GENERATION_APPROVED]: 'Generation request approved by the owner',
     [SYSTEM_AUDIT_ACTIONS.GENERATION_REJECTED]: 'Generation request rejected by the owner',
@@ -132,13 +129,16 @@ export const SYSTEM_AUDIT_DESCRIPTIONS: Record<SystemAuditAction, string> = {
     [SYSTEM_AUDIT_ACTIONS.CLIENT_STATUS_CHANGED]: 'Client lifecycle status was changed (e.g. Prospect to Active)',
     [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_SUBMITTED]: 'Client submitted a review or testimonial',
     [SYSTEM_AUDIT_ACTIONS.CLIENT_TESTIMONIAL_TOGGLED]: 'Client testimonial public visibility was changed',
-    [SYSTEM_AUDIT_ACTIONS.CLIENT_ARCHIVED]: 'Client was archived - permanently deleted after the retention window unless restored',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_ARCHIVED]:
+        'Client was archived - permanently deleted after the retention window unless restored',
     [SYSTEM_AUDIT_ACTIONS.CLIENT_RESTORED]: 'Archived client was restored, cancelling its pending deletion',
-    [SYSTEM_AUDIT_ACTIONS.CLIENT_PURGED]: 'Archived client was permanently deleted, along with its contracts and their files',
+    [SYSTEM_AUDIT_ACTIONS.CLIENT_PURGED]:
+        'Archived client was permanently deleted, along with its contracts and their files',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_SIGNED]: 'Contract was officially marked as signed',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_EXPIRED]: 'Contract reached its expiration date',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_TERMINATED]: 'Contract was terminated prior to expiration',
-    [SYSTEM_AUDIT_ACTIONS.CONTRACT_ARCHIVED]: 'Contract was archived - permanently deleted after the retention window unless restored',
+    [SYSTEM_AUDIT_ACTIONS.CONTRACT_ARCHIVED]:
+        'Contract was archived - permanently deleted after the retention window unless restored',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_RESTORED]: 'Archived contract was restored, cancelling its pending deletion',
     [SYSTEM_AUDIT_ACTIONS.CONTRACT_PURGED]: 'Archived contract was permanently deleted, along with its files',
 
@@ -177,7 +177,7 @@ export type AuditAction = PermissionKey | SystemAuditAction;
  * -----------------------------------------------------------------------------
  * 4. Unified Audit Descriptions Mapping
  * -----------------------------------------------------------------------------
- * Combines permission descriptions with system audit descriptions to ensure 
+ * Combines permission descriptions with system audit descriptions to ensure
  * 100% type safety and zero redundancy.
  */
 export const AUDIT_ACTION_DESCRIPTIONS: Record<AuditAction, string> = {

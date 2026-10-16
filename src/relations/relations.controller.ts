@@ -17,7 +17,6 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/relations')
 export class RelationsController {
-    
     constructor(private readonly relationsService: RelationsService) {}
 
     /**
@@ -34,11 +33,7 @@ export class RelationsController {
      * * @route POST /platforms/:platformId/relations
      */
     @Post()
-    create(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Body() dto: CreateRelationDto,
-    ) {
+    create(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Body() dto: CreateRelationDto) {
         return this.relationsService.create(actor, platformId, dto);
     }
 

@@ -1,8 +1,4 @@
-import {
-    Injectable,
-    UnauthorizedException,
-    NotFoundException,
-} from '@nestjs/common';
+import { Injectable, UnauthorizedException, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
@@ -26,7 +22,6 @@ import { MfaStatus, UserStatus } from '@prismamodels/enums';
 
 @Injectable()
 export class AuthService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly jwtService: JwtService,
@@ -67,17 +62,14 @@ export class AuthService {
 
         // CONFIG FIX (ARCH-003): the key used to be 'mfa.invitationExpiresInHours', a namespace
         // that does not exist, so INVITATION_EXPIRES_IN_HOURS was silently ignored.
-        const INVITATION_EXPIRES_IN_HOURS = this.configService.get<number>(
-            'totp.invitationExpiresInHours',
-            48,
-        );
+        const INVITATION_EXPIRES_IN_HOURS = this.configService.get<number>('totp.invitationExpiresInHours', 48);
 
         // Only the latest invitation of a user stays usable.
         await this.prisma.invitation.updateMany({
             where: { userId: user.id, used: false },
             data: { used: true, usedAt: new Date() },
         });
-        const expiresAt = new Date( Date.now() + INVITATION_EXPIRES_IN_HOURS * 60 * 60 * 1000 );
+        const expiresAt = new Date(Date.now() + INVITATION_EXPIRES_IN_HOURS * 60 * 60 * 1000);
 
         // 3. Persist hashed invitation credentials and expiration date
         const invitation = await this.prisma.invitation.create({
@@ -85,7 +77,7 @@ export class AuthService {
                 userId: user.id,
                 tokenHash,
                 codeHash,
-                expiresAt
+                expiresAt,
             },
         });
 
@@ -116,7 +108,7 @@ export class AuthService {
 
         // 5. Dispatch notification email to user's personal address
         try {
-            await this.emailService.sendMail( user.personalEmail!, subject, text, html );
+            await this.emailService.sendMail(user.personalEmail!, subject, text, html);
             await this.auditLog.log({
                 action: AUDIT_ACTIONS.INVITATION_SENT,
                 actorId: actor.id,
@@ -131,10 +123,7 @@ export class AuthService {
                 targetType: AUDIT_TARGETS.INVITATION,
                 targetId: invitation.id,
                 metadata: {
-                    reason:
-                        error instanceof Error
-                            ? error.message
-                            : 'Unknown email error',
+                    reason: error instanceof Error ? error.message : 'Unknown email error',
                 },
             });
             throw error;
@@ -157,9 +146,9 @@ export class AuthService {
         const invitation = await this.findValidInvitationByToken(dto.token);
 
         // 2. Return success status along with basic identity info for UI pre-filling
-        return { 
-            valid: true, 
-            email: invitation.user.workEmail 
+        return {
+            valid: true,
+            email: invitation.user.workEmail,
         };
     }
 
@@ -234,8 +223,8 @@ export class AuthService {
 
         await this.prisma.userMfa.upsert({
             where: { userId: invitation.userId },
-            update: { 
-                secretEncrypted: enrollment.encryptedSecret, 
+            update: {
+                secretEncrypted: enrollment.encryptedSecret,
                 status: 'PENDING',
             },
             create: {
@@ -246,15 +235,15 @@ export class AuthService {
         });
 
         // 6. Transition user lifecycle status to ACTIVATING
-        await this.prisma.user.update({ 
-            where: { id: invitation.userId }, 
-            data: { status: 'ACTIVATING' }, 
+        await this.prisma.user.update({
+            where: { id: invitation.userId },
+            data: { status: 'ACTIVATING' },
         });
 
-        return { 
-            qrCodeDataUrl: enrollment.qrCode, 
-            manualEntryKey: enrollment.secret, 
-            otpauthUri: enrollment.uri 
+        return {
+            qrCodeDataUrl: enrollment.qrCode,
+            manualEntryKey: enrollment.secret,
+            otpauthUri: enrollment.uri,
         };
     }
 
@@ -302,22 +291,22 @@ export class AuthService {
         }
 
         // 4. Update MFA and User statuses to ACTIVE
-        await this.prisma.userMfa.update({ 
-            where: { userId: user.id }, 
-            data: { status: MfaStatus.ACTIVE }, 
+        await this.prisma.userMfa.update({
+            where: { userId: user.id },
+            data: { status: MfaStatus.ACTIVE },
         });
-        
-        await this.prisma.user.update({ 
-            where: { id: user.id }, 
-            data: { status: UserStatus.ACTIVE }, 
+
+        await this.prisma.user.update({
+            where: { id: user.id },
+            data: { status: UserStatus.ACTIVE },
         });
 
         // 5. Generate 8 plain recovery codes and store their hashed versions
         const recoveryCodes = this.recoveryCode.generate();
         await this.prisma.recoveryCode.createMany({
-            data: recoveryCodes.map((code) => ({ 
-                userId: user.id, 
-                codeHash: this.recoveryCode.hashRecoveryCode(code), 
+            data: recoveryCodes.map((code) => ({
+                userId: user.id,
+                codeHash: this.recoveryCode.hashRecoveryCode(code),
             })),
         });
 
@@ -370,10 +359,7 @@ export class AuthService {
         // 1. Fetch user by work email OR username where status is ACTIVE
         const user = await this.prisma.user.findFirst({
             where: {
-                OR: [
-                    { workEmail: dto.loginIdentifier },
-                    { username: dto.loginIdentifier },
-                ],
+                OR: [{ workEmail: dto.loginIdentifier }, { username: dto.loginIdentifier }],
             },
         });
 
@@ -593,10 +579,7 @@ export class AuthService {
         // 1. Fetch user by work email OR username where status is ACTIVE
         const user = await this.prisma.user.findFirst({
             where: {
-                OR: [
-                    { workEmail: dto.loginIdentifier },
-                    { username: dto.loginIdentifier },
-                ],
+                OR: [{ workEmail: dto.loginIdentifier }, { username: dto.loginIdentifier }],
             },
         });
 
@@ -621,10 +604,7 @@ export class AuthService {
         const codeHashBuffer = Buffer.from(codeHash, 'hex');
         const match = candidates.find((c) => {
             const candidateBuffer = Buffer.from(c.codeHash, 'hex');
-            return (
-                candidateBuffer.length === codeHashBuffer.length &&
-                timingSafeEqual(candidateBuffer, codeHashBuffer)
-            );
+            return candidateBuffer.length === codeHashBuffer.length && timingSafeEqual(candidateBuffer, codeHashBuffer);
         });
 
         // 4. Handle invalid or already consumed recovery code
@@ -708,7 +688,7 @@ export class AuthService {
     /**
      * Rotates an existing refresh token to issue a new access token and refresh token pair.
      * * Implementation Details:
-     * Uses Refresh Token Rotation. When a refresh token is presented, it is immediately revoked 
+     * Uses Refresh Token Rotation. When a refresh token is presented, it is immediately revoked
      * (marked as used via `revokedAt`) and a brand new token pair is issued.
      * * Process Flow:
      * 1. Hashes incoming raw refresh token string for lookup.
@@ -787,13 +767,13 @@ export class AuthService {
 
         // 2. Revoke active refresh token for the specific user
         await this.prisma.refreshToken.updateMany({
-            where: { 
-                userId, 
-                tokenHash: tokenHashValue, 
-                revokedAt: null 
+            where: {
+                userId,
+                tokenHash: tokenHashValue,
+                revokedAt: null,
             },
-            data: { 
-                revokedAt: new Date() 
+            data: {
+                revokedAt: new Date(),
             },
         });
 
@@ -874,10 +854,10 @@ export class AuthService {
         const permissions = await this.getPermissionsForUser(userId);
 
         // 2. Generate signed JWT Access Token
-        const accessToken = this.jwtService.sign({ 
-            sub: userId, 
-            email, 
-            permissions 
+        const accessToken = this.jwtService.sign({
+            sub: userId,
+            email,
+            permissions,
         });
 
         // 3. Generate raw refresh token and retrieve expiration window from configuration namespace
@@ -895,9 +875,9 @@ export class AuthService {
         });
 
         // 5. Return token pair to client
-        return { 
-            accessToken, 
-            refreshToken: rawRefreshToken 
+        return {
+            accessToken,
+            refreshToken: rawRefreshToken,
         };
     }
 }

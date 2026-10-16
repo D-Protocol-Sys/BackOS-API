@@ -28,7 +28,7 @@ Details: [`src/features/README.md`](../blob/main/src/features/README.md).
 
 ## Checklist
 
-- [ ] `pnpm test` and `pnpm build` pass on my machine.
+- [ ] `pnpm test`, `pnpm build` and `pnpm lint:check` pass on my machine (`pnpm format` fixes the formatting).
 - [ ] I added or updated tests.
 - [ ] I updated the documentation if behaviour changed.
 

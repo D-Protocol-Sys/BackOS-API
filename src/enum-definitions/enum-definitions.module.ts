@@ -4,7 +4,6 @@ import { EnumDefinitionsController } from './enum-definitions.controller';
 import { EnumDefinitionsService } from './enum-definitions.service';
 
 @Module({
-
     imports: [PlatformAccessModule],
     controllers: [EnumDefinitionsController],
     providers: [EnumDefinitionsService],

@@ -8,7 +8,6 @@ import { PersonalPlanningProgramController } from './personal-planning-program.c
 import { PlatformPlanningProgramController } from './platform-planning-program.controller';
 
 @Module({
-
     imports: [PlatformAccessModule],
 
     controllers: [
@@ -21,7 +20,5 @@ import { PlatformPlanningProgramController } from './platform-planning-program.c
     providers: [PlanningService, PlanningProgramService],
 
     exports: [PlanningService, PlanningProgramService],
-
 })
-
 export class PlanningModule {}

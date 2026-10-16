@@ -6,7 +6,6 @@ import { registerAs } from '@nestjs/config';
  * Accessible via `ConfigService.get('jwt.property')`.
  */
 export default registerAs('jwt', () => ({
-
     /**
      * Secret key used to sign and verify JWT access tokens.
      * MUST be kept secret and should be a long, random string in production.
@@ -26,9 +25,5 @@ export default registerAs('jwt', () => ({
      * `parseInt` converts the environment string into a base-10 integer.
      * * Fallback: 7 days
      */
-    refreshTokenExpiresInDays: parseInt(
-        process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? '7',
-        10,
-    ),
-
+    refreshTokenExpiresInDays: parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN_DAYS ?? '7', 10),
 }));

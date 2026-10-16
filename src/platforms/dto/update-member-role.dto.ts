@@ -5,8 +5,6 @@ import { IsUUID } from 'class-validator';
  * platform. `platformRoleId` must point to a `PlatformRole` row belonging to that same platform.
  */
 export class UpdateMemberRoleDto {
-
     @IsUUID()
     platformRoleId!: string;
-
 }

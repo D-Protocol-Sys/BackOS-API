@@ -1,9 +1,4 @@
-import {
-    Injectable,
-    NotFoundException,
-    ForbiddenException,
-    BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { FilesService } from '../files/files.service';
 import { CreateProjectDto } from './dto/create-project.dto';
@@ -25,7 +20,6 @@ type Actor = { userId: string; permissions: string[] };
  */
 @Injectable()
 export class ProjectsService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly filesService: FilesService,
@@ -36,7 +30,6 @@ export class ProjectsService {
      * different `managerId` is explicitly provided.
      */
     async create(actor: Actor, dto: CreateProjectDto) {
-
         this.assertDatesAreConsistent(dto.startAt, dto.targetEndAt);
 
         if (dto.platformId) {
@@ -75,7 +68,6 @@ export class ProjectsService {
      * sees projects they manage. Supports optional filtering by platform and status.
      */
     async list(actor: Actor, filters: { platformId?: string; clientId?: string; status?: ProjectStatus } = {}) {
-
         const canSeeAll = actor.permissions.includes(PERMISSIONS.PROJECT_READ);
 
         return this.prisma.project.findMany({
@@ -130,9 +122,11 @@ export class ProjectsService {
         // fields at a time) before re-checking platform/client/contract consistency - checking
         // against `dto` alone would miss e.g. a `clientId` change that now conflicts with a
         // `platformId` the caller didn't even mention in this particular request.
-        const effectivePlatformId = dto.platformId === null ? null : dto.platformId ?? project.platformId ?? undefined;
-        const effectiveClientId = dto.clientId === null ? null : dto.clientId ?? project.clientId ?? undefined;
-        const effectiveContractId = dto.contractId === null ? null : dto.contractId ?? project.contractId ?? undefined;
+        const effectivePlatformId =
+            dto.platformId === null ? null : (dto.platformId ?? project.platformId ?? undefined);
+        const effectiveClientId = dto.clientId === null ? null : (dto.clientId ?? project.clientId ?? undefined);
+        const effectiveContractId =
+            dto.contractId === null ? null : (dto.contractId ?? project.contractId ?? undefined);
 
         const client = effectiveClientId ? await this.findClientOrThrow(effectiveClientId) : null;
         const contract = effectiveContractId ? await this.findContractOrThrow(effectiveContractId) : null;
@@ -316,5 +310,4 @@ export class ProjectsService {
         }
         return candidate;
     }
-
 }

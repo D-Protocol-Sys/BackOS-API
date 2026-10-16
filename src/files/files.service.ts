@@ -1,4 +1,11 @@
-import { Injectable, Logger, NotFoundException, ForbiddenException, BadRequestException, PayloadTooLargeException } from '@nestjs/common';
+import {
+    Injectable,
+    Logger,
+    NotFoundException,
+    ForbiddenException,
+    BadRequestException,
+    PayloadTooLargeException,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -22,12 +29,11 @@ type Actor = { userId: string; permissions: string[] };
 type FileParent = { planningEntryId?: string; projectId?: string; contractId?: string };
 
 /**
- * Service managing uploaded file metadata, authorization controls, 
+ * Service managing uploaded file metadata, authorization controls,
  * fine-grained size validation, and physical disk file lifecycle operations.
  */
 @Injectable()
 export class FilesService {
-
     private readonly logger = new Logger(FilesService.name);
 
     constructor(
@@ -45,11 +51,7 @@ export class FilesService {
      *   `assertSingleParent()`. Leave all unset for a bare unattached upload.
      * @returns The saved FileAsset record in database.
      */
-    async saveUploadedFile(
-        actor: Actor,
-        file: Express.Multer.File,
-        parent: FileParent = {},
-    ) {
+    async saveUploadedFile(actor: Actor, file: Express.Multer.File, parent: FileParent = {}) {
         if (!file) {
             throw new BadRequestException('No file was provided (expected multipart field "file").');
         }
@@ -89,7 +91,10 @@ export class FilesService {
 
         // FILE-002: per-user storage quota (disk exhaustion by any authenticated account).
         const quotaBytes = this.configService.get<number>('USER_UPLOAD_QUOTA_MB', 1024) * 1024 * 1024;
-        const used = await this.prisma.fileAsset.aggregate({ where: { uploaderId: actor.userId }, _sum: { sizeBytes: true } });
+        const used = await this.prisma.fileAsset.aggregate({
+            where: { uploaderId: actor.userId },
+            _sum: { sizeBytes: true },
+        });
         if ((used._sum.sizeBytes ?? 0) + file.size > quotaBytes) {
             throw new PayloadTooLargeException('Storage quota exceeded. Delete some files before uploading new ones.');
         }

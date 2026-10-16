@@ -12,7 +12,6 @@ import { CreateProgramDayDto } from './create-program-day.dto';
  * jours qu'il me faut" - only the days actually used need to be sent).
  */
 export class UpsertProgramWeekDto {
-
     /**
      * The days configured for this week (only the days that have something planned).
      */

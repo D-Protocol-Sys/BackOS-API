@@ -2,11 +2,10 @@ import { IsUUID, IsEnum, IsString, MinLength, MaxLength } from 'class-validator'
 import { RelationType } from '@prismamodels/client';
 
 /**
- * Data Transfer Object (DTO) used when creating a relation mapping 
+ * Data Transfer Object (DTO) used when creating a relation mapping
  * between two entities/models (e.g., ONE_TO_MANY, MANY_TO_MANY).
  */
 export class CreateRelationDto {
-    
     /**
      * The structural type of the relationship.
      * Enforces that the input strictly matches a valid `RelationType` enum value.

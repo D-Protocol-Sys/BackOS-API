@@ -24,7 +24,6 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('platforms')
 export class PlatformsController {
-
     constructor(
         private readonly platformsService: PlatformsService,
         private readonly messagesService: MessagesService,
@@ -108,11 +107,7 @@ export class PlatformsController {
      * * @route POST /platforms/:id/transfer-ownership
      */
     @Post(':id/transfer-ownership')
-    transferOwnership(
-        @CurrentUser() actor: Actor,
-        @Param('id') id: string,
-        @Body() dto: TransferOwnershipDto,
-    ) {
+    transferOwnership(@CurrentUser() actor: Actor, @Param('id') id: string, @Body() dto: TransferOwnershipDto) {
         return this.platformsService.transferOwnership(actor, id, dto);
     }
 
@@ -166,11 +161,7 @@ export class PlatformsController {
      * * @route DELETE /platforms/:id/members/:userId
      */
     @Delete(':id/members/:userId')
-    removeMember(
-        @CurrentUser() actor: Actor,
-        @Param('id') id: string,
-        @Param('userId') userId: string,
-    ) {
+    removeMember(@CurrentUser() actor: Actor, @Param('id') id: string, @Param('userId') userId: string) {
         return this.platformsService.removeMember(actor, id, userId);
     }
 
@@ -179,11 +170,7 @@ export class PlatformsController {
      * * @route POST /platforms/:id/members/:userId/confirm-removal
      */
     @Post(':id/members/:userId/confirm-removal')
-    confirmMemberRemoval(
-        @CurrentUser() actor: Actor,
-        @Param('id') id: string,
-        @Param('userId') userId: string,
-    ) {
+    confirmMemberRemoval(@CurrentUser() actor: Actor, @Param('id') id: string, @Param('userId') userId: string) {
         return this.platformsService.confirmMemberRemoval(actor, id, userId);
     }
 
@@ -192,11 +179,7 @@ export class PlatformsController {
      * * @route POST /platforms/:id/members/:userId/cancel-removal
      */
     @Post(':id/members/:userId/cancel-removal')
-    cancelMemberRemoval(
-        @CurrentUser() actor: Actor,
-        @Param('id') id: string,
-        @Param('userId') userId: string,
-    ) {
+    cancelMemberRemoval(@CurrentUser() actor: Actor, @Param('id') id: string, @Param('userId') userId: string) {
         return this.platformsService.cancelMemberRemoval(actor, id, userId);
     }
 
@@ -204,5 +187,4 @@ export class PlatformsController {
     getChannel(@CurrentUser() actor: Actor, @Param('id') id: string) {
         return this.messagesService.getOrCreatePlatformChannel(actor, id);
     }
-
 }

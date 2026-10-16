@@ -44,7 +44,9 @@ export class RuntimeRecoveryService implements OnApplicationBootstrap, OnModuleD
 
     onApplicationBootstrap(): void {
         if (!this.isEnabled()) {
-            this.logger.log('Automatic restore of generated backends is disabled (GENERATED_BACKEND_AUTO_RESTORE=false).');
+            this.logger.log(
+                'Automatic restore of generated backends is disabled (GENERATED_BACKEND_AUTO_RESTORE=false).',
+            );
             return;
         }
         const delayMs = Number(this.configService.get('GENERATED_BACKEND_RESTORE_DELAY_MS', 5000));
@@ -81,7 +83,9 @@ export class RuntimeRecoveryService implements OnApplicationBootstrap, OnModuleD
             }
             pending = stillFailing;
             if (pending.length > 0 && attempt < attempts) {
-                this.logger.warn(`${pending.length} generated backend(s) could not be restored (attempt ${attempt}/${attempts}); retrying in ${Math.round(retryDelayMs / 1000)} s.`);
+                this.logger.warn(
+                    `${pending.length} generated backend(s) could not be restored (attempt ${attempt}/${attempts}); retrying in ${Math.round(retryDelayMs / 1000)} s.`,
+                );
                 await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
             }
         }
@@ -116,7 +120,9 @@ export class RuntimeRecoveryService implements OnApplicationBootstrap, OnModuleD
             await this.runtime.start(platform.id);
             return 'restored';
         } catch (error) {
-            this.logger.warn(`Could not restore "${platform.slug}": ${error instanceof Error ? error.message : String(error)}`);
+            this.logger.warn(
+                `Could not restore "${platform.slug}": ${error instanceof Error ? error.message : String(error)}`,
+            );
             return 'failed';
         }
     }

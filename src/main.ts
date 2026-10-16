@@ -11,7 +11,6 @@ import { createGeneratedBackendProxyMiddleware } from './gateway/generated-backe
 import { createGatewayRateLimiter } from './gateway/gateway-rate-limiter.middleware';
 
 async function bootstrap() {
-
     // OPS-007: LOG_FORMAT=json switches to structured JSON logs (one object per line), easier to
     // ship to a log pipeline; the default human-readable format is kept for development.
     const app = await NestFactory.create(AppModule, {
@@ -80,10 +79,7 @@ async function bootstrap() {
     const gatewayPrefix = configService.get<string>('GENERATED_BACKEND_GATEWAY_PREFIX', '/generated');
     const platformGateway = app.get(PlatformGatewayService);
 
-    app.use(
-        gatewayPrefix,
-        createGatewayRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 120 }),
-    );
+    app.use(gatewayPrefix, createGatewayRateLimiter({ windowMs: 60_000, maxRequestsPerWindow: 120 }));
     app.use(createGeneratedBackendProxyMiddleware(platformGateway, gatewayPrefix));
 
     // SECURITY FIX (SEC-020): CORS_ORIGIN accepts a comma-separated list. The wildcard "*" is
@@ -96,7 +92,10 @@ async function bootstrap() {
         .filter(Boolean);
     const allowAnyOrigin = corsOrigins.includes('*');
     if (allowAnyOrigin) {
-        Logger.warn('CORS_ORIGIN="*": any origin may call the API (without credentials). Set explicit origins in production.', 'Bootstrap');
+        Logger.warn(
+            'CORS_ORIGIN="*": any origin may call the API (without credentials). Set explicit origins in production.',
+            'Bootstrap',
+        );
     }
     app.enableCors({
         origin: allowAnyOrigin ? '*' : corsOrigins,
@@ -105,14 +104,12 @@ async function bootstrap() {
     });
 
     app.useGlobalPipes(
-
         new ValidationPipe({
             whitelist: true,
             forbidNonWhitelisted: true,
             transform: true,
             transformOptions: { enableImplicitConversion: true },
         }),
-        
     );
 
     app.useGlobalFilters(new AllExceptionsFilter());
@@ -141,7 +138,6 @@ async function bootstrap() {
     await app.listen(port);
 
     Logger.log(`back-os Backend listening on ${port}`, 'Bootstrap');
-
 }
 
 void bootstrap();

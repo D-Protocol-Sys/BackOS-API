@@ -21,11 +21,11 @@ import { buildAuthUserPrismaModels } from './auth-user.prisma-models';
  * SMTP is configured once, on Mailing, instead of being duplicated here.
  */
 export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
-
     // Unique blueprint identifier key used across the code generation engine
     key: 'auth-user',
     name: 'Auth & User',
-    description: 'Authentication for the generated platform: internal login with BackOS username + authenticator code, and optional e-mail OTP sign-up / login for external users.',
+    description:
+        'Authentication for the generated platform: internal login with BackOS username + authenticator code, and optional e-mail OTP sign-up / login for external users.',
 
     // Sends its OTP e-mails through the generated MailService.
     dependsOn: ['mailing'],
@@ -34,9 +34,9 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
     pnpmDependencies: {
         '@nestjs/jwt': '^11.0.0',
         '@nestjs/passport': '^11.0.0',
-        'passport': '^0.7.0',
+        passport: '^0.7.0',
         'passport-jwt': '^4.0.1',
-        'bcrypt': '^5.1.1',
+        bcrypt: '^5.1.1',
     },
 
     pnpmDevDependencies: {
@@ -47,11 +47,18 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
     // Config fields required from tenant users upon activating this service
     configFields: [
         { key: 'jwtSecret', label: 'Secret JWT', secret: true, required: true },
-        { key: 'jwtExpiresIn', label: 'Durée de validité du token', secret: false, required: false, placeholder: '15m' },
+        {
+            key: 'jwtExpiresIn',
+            label: 'Durée de validité du token',
+            secret: false,
+            required: false,
+            placeholder: '15m',
+        },
         {
             key: 'allowExternalUsers',
             label: 'Ouvrir aussi ce service aux utilisateurs externes ?',
-            description: 'Si activé, les visiteurs pourront créer un compte (nom, prénom, e-mail + code OTP reçu par e-mail) et se connecter avec leur e-mail + un nouveau code. Vous définirez ensuite les champs de leur profil. Sinon, seule la connexion interne (username + code authenticator) existe.',
+            description:
+                'Si activé, les visiteurs pourront créer un compte (nom, prénom, e-mail + code OTP reçu par e-mail) et se connecter avec leur e-mail + un nouveau code. Vous définirez ensuite les champs de leur profil. Sinon, seule la connexion interne (username + code authenticator) existe.',
             secret: false,
             required: false,
             type: 'boolean',
@@ -61,7 +68,14 @@ export const AUTH_USER_BLUEPRINT: ServiceBlueprint = {
         // ---- Internal fields (never shown in forms, see ServiceConfigField.system) ----
         // Shared secret proving to BackOS that a verification request really comes from THIS
         // platform's generated backend. Generated once, on first activation.
-        { key: 'internalAuthKey', label: 'Clé interne BackOS', secret: true, required: false, system: true, autoGenerate: true },
+        {
+            key: 'internalAuthKey',
+            label: 'Clé interne BackOS',
+            secret: true,
+            required: false,
+            system: true,
+            autoGenerate: true,
+        },
         // Profile fields of external users - edited through the dedicated profile-fields endpoint.
         { key: 'profileFields', label: 'Champs du profil externe', secret: false, required: false, system: true },
     ],

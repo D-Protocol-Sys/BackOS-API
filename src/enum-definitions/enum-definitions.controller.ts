@@ -49,7 +49,11 @@ export class EnumDefinitionsController {
     @ApiOperation({ summary: 'Delete an enum definition' })
     @ApiOkResponse({ description: 'Enum definition deleted successfully.' })
     @Delete(':enumDefinitionId')
-    delete(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('enumDefinitionId') enumDefinitionId: string) {
+    delete(
+        @CurrentUser() actor: Actor,
+        @Param('platformId') platformId: string,
+        @Param('enumDefinitionId') enumDefinitionId: string,
+    ) {
         return this.enumDefinitions.delete(actor, platformId, enumDefinitionId);
     }
 }

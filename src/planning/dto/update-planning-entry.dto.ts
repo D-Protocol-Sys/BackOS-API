@@ -7,13 +7,11 @@ import { CreatePlanningEntryDto } from './create-planning-entry.dto';
  *
  * Pattern Explanation:
  * 1. `OmitType(CreatePlanningEntryDto, ['type'] as const)`:
- * Removes the `type` property from the creation DTO because a planning entry's 
+ * Removes the `type` property from the creation DTO because a planning entry's
  * classification type is immutable once created.
  *
  * 2. `PartialType(...)`:
- * Makes all remaining fields optional while preserving their validation decorators 
+ * Makes all remaining fields optional while preserving their validation decorators
  * (e.g., `@IsString()`, `@MaxLength()`). This enables flexible partial payload updates.
  */
-export class UpdatePlanningEntryDto extends PartialType(
-    OmitType(CreatePlanningEntryDto, ['type'] as const),
-) {}
+export class UpdatePlanningEntryDto extends PartialType(OmitType(CreatePlanningEntryDto, ['type'] as const)) {}

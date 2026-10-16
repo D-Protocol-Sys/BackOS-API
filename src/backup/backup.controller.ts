@@ -44,7 +44,13 @@ export class BackupController {
     /** SEC-027: every database export is audited. */
     private async audit(actorId: string, scope: string, fileName?: string) {
         await this.auditLog
-            .log({ action: AUDIT_ACTIONS.BACKUP_EXPORTED, actorId, targetType: AUDIT_TARGETS.BACKUP, targetId: scope, metadata: { fileName: fileName ?? null } })
+            .log({
+                action: AUDIT_ACTIONS.BACKUP_EXPORTED,
+                actorId,
+                targetType: AUDIT_TARGETS.BACKUP,
+                targetId: scope,
+                metadata: { fileName: fileName ?? null },
+            })
             .catch(() => undefined);
     }
 
@@ -65,7 +71,11 @@ export class BackupController {
      */
     @RequirePermissions(PERMISSIONS.BACKUP_MANAGE)
     @Post('platforms/:platformId')
-    async dumpPlatform(@CurrentUser('userId') actorId: string, @Param('platformId') platformId: string, @Res() res: Response) {
+    async dumpPlatform(
+        @CurrentUser('userId') actorId: string,
+        @Param('platformId') platformId: string,
+        @Res() res: Response,
+    ) {
         const dump = await this.backupService.dumpPlatformDatabase(platformId);
         await this.audit(actorId, `platform:${platformId}`, dump.fileName);
         await this.streamAndCleanup(dump.filePath, dump.fileName, res);

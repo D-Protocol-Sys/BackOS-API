@@ -20,7 +20,6 @@ import { InternalAccountsSyncService } from './internal-accounts-sync.service';
 import { RuntimeRecoveryService } from './runtime-recovery.service';
 
 @Module({
-
     imports: [
         GeneratorQueueModule,
         ServiceCatalogModule,
@@ -52,7 +51,7 @@ import { RuntimeRecoveryService } from './runtime-recovery.service';
         ApiManifestService,
         InternalGeneratedAuthService,
     ],
-    
+
     exports: [
         ProvisioningService,
         SchemaBuilderService,
@@ -66,7 +65,5 @@ import { RuntimeRecoveryService } from './runtime-recovery.service';
         // it - see PlatformsService.archive()/purge().
         DockerRuntimeManagerService,
     ],
-
 })
-
 export class GeneratorModule {}

@@ -47,10 +47,7 @@ function extractSlug(requestPath: string, gatewayPrefix: string): string | null 
  * @param platformGateway - Resolves platform slugs to internal targets.
  * @param gatewayPrefix - The public path prefix this gateway is mounted under (default `/generated`).
  */
-export function createGeneratedBackendProxyMiddleware(
-    platformGateway: PlatformGatewayService,
-    gatewayPrefix: string,
-) {
+export function createGeneratedBackendProxyMiddleware(platformGateway: PlatformGatewayService, gatewayPrefix: string) {
     // `http-proxy-middleware` needs a synchronous `target`, so we use its `router` option to
     // resolve the target dynamically per-request from our async `PlatformGatewayService`.
     // Requests for a slug that cannot be resolved are intercepted and answered with 404 BEFORE
@@ -85,7 +82,8 @@ export function createGeneratedBackendProxyMiddleware(
             proxyRes: (proxyRes) => {
                 const contentType = String(proxyRes.headers['content-type'] ?? '');
                 if (contentType.includes('html') || contentType.includes('svg') || contentType.includes('xml')) {
-                    proxyRes.headers['content-security-policy'] = 'sandbox allow-scripts allow-forms allow-popups allow-downloads';
+                    proxyRes.headers['content-security-policy'] =
+                        'sandbox allow-scripts allow-forms allow-popups allow-downloads';
                 }
                 proxyRes.headers['x-content-type-options'] = 'nosniff';
             },
@@ -93,7 +91,9 @@ export function createGeneratedBackendProxyMiddleware(
                 logger.warn(`Proxy error for ${req.url}: ${err.message}`);
                 if (res && 'writeHead' in res && !res.headersSent) {
                     res.writeHead(502, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ statusCode: 502, message: 'The generated backend is currently unreachable.' }));
+                    res.end(
+                        JSON.stringify({ statusCode: 502, message: 'The generated backend is currently unreachable.' }),
+                    );
                 }
             },
         },

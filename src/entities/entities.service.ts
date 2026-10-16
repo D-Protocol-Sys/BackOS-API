@@ -1,8 +1,6 @@
 import { PlatformAccessService } from '../platforms/platform-access.service';
 import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
-import {
-    Injectable, NotFoundException, ForbiddenException, BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateEntityDto } from './dto/create-entity.dto';
 import { UpdateEntityDto } from './dto/update-entity.dto';
@@ -16,12 +14,11 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 type Actor = { userId: string; permissions: string[] };
 
 /**
- * Service managing platform dynamic entities (CRUD operations, access control, 
+ * Service managing platform dynamic entities (CRUD operations, access control,
  * table name generation, and feature flags like schedulable or auth protection).
  */
 @Injectable()
 export class EntitiesService {
-
     /**
      * @param prisma - Database client providing access to Prisma ORM methods.
      */
@@ -39,7 +36,7 @@ export class EntitiesService {
      */
     async list(actor: Actor, platformId: string, includeArchived = false) {
         await this.assertCanView(actor, platformId);
-        
+
         return this.prisma.entity.findMany({
             where: { platformId, ...(includeArchived ? {} : { isArchived: false }) },
             include: { fields: { orderBy: { order: 'asc' }, include: { enumDefinition: true } } },
@@ -57,7 +54,7 @@ export class EntitiesService {
     async getById(actor: Actor, platformId: string, entityId: string) {
         await this.assertCanView(actor, platformId);
         const entity = await this.findEntityOrThrow(platformId, entityId);
-        
+
         return this.prisma.entity.findUnique({
             where: { id: entity.id },
             include: { fields: { orderBy: { order: 'asc' }, include: { enumDefinition: true } } },
@@ -93,8 +90,8 @@ export class EntitiesService {
         await this.assertCanEdit(actor, platformId, PERMISSIONS.ENTITY_UPDATE);
         const entity = await this.findEntityOrThrow(platformId, entityId);
 
-        return this.prisma.entity.update({ 
-            where: { id: entity.id }, 
+        return this.prisma.entity.update({
+            where: { id: entity.id },
             data: { name: dto.name },
         });
     }
@@ -124,8 +121,8 @@ export class EntitiesService {
             }
         }
 
-        return this.prisma.entity.update({ 
-            where: { id: entity.id }, 
+        return this.prisma.entity.update({
+            where: { id: entity.id },
             data: { isSchedulable: enabled },
         });
     }
@@ -142,7 +139,7 @@ export class EntitiesService {
         const entity = await this.findEntityOrThrow(platformId, entityId);
 
         if (entity.isArchived) throw new BadRequestException('This entity is already archived.');
-        
+
         return this.prisma.entity.update({ where: { id: entity.id }, data: { isArchived: true } });
     }
 
@@ -158,7 +155,7 @@ export class EntitiesService {
         const entity = await this.findEntityOrThrow(platformId, entityId);
 
         if (!entity.isArchived) throw new BadRequestException('This entity is not archived.');
-        
+
         return this.prisma.entity.update({ where: { id: entity.id }, data: { isArchived: false } });
     }
 
@@ -252,7 +249,7 @@ export class EntitiesService {
     }
 
     /**
-     * Helper: Generates a unique, SQL-safe database table name by appending numeric suffixes 
+     * Helper: Generates a unique, SQL-safe database table name by appending numeric suffixes
      * (`_2`, `_3`, etc.) upon detecting existing name collisions within the same platform scope.
      */
     private async generateUniqueTableName(platformId: string, name: string): Promise<string> {
@@ -268,7 +265,11 @@ export class EntitiesService {
 
         let candidate = base;
         let counter = 2;
-        while (takenTables.has(candidate) || takenModels.has(toPascalCase(candidate)) || RESERVED_TABLE_NAMES.has(candidate)) {
+        while (
+            takenTables.has(candidate) ||
+            takenModels.has(toPascalCase(candidate)) ||
+            RESERVED_TABLE_NAMES.has(candidate)
+        ) {
             candidate = `${base}_${counter}`;
             counter++;
         }
@@ -316,5 +317,4 @@ export class EntitiesService {
             },
         });
     }
-
 }

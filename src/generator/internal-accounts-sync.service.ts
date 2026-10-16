@@ -21,7 +21,6 @@ import { GENERATED_BACKEND_API_PREFIX } from './generated-backend.constants';
  */
 @Injectable()
 export class InternalAccountsSyncService {
-
     private readonly logger = new Logger(InternalAccountsSyncService.name);
 
     constructor(
@@ -41,14 +40,17 @@ export class InternalAccountsSyncService {
             if (platform.runtimeStatus !== 'RUNNING' && platform.runtimeStatus !== 'STARTING') return;
 
             // No `auth-user` service (or no key yet) means there are no internal accounts to sync.
-            const config = await this.platformServices.getFullDecryptedConfig(platformId, 'auth-user').catch(() => null);
+            const config = await this.platformServices
+                .getFullDecryptedConfig(platformId, 'auth-user')
+                .catch(() => null);
             const internalKey = config?.internalAuthKey;
             if (typeof internalKey !== 'string' || internalKey.length === 0) return;
 
             // RT-003: same address as the gateway and the health check - GENERATED_BACKEND_HOST is the
             // bind address INSIDE the host, unreachable when the orchestrator itself runs in a container.
-            const host = this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST')
-                || this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1');
+            const host =
+                this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST') ||
+                this.configService.get<string>('GENERATED_BACKEND_HOST', '127.0.0.1');
             const response = await fetch(
                 `http://${host}:${platform.generatedPort}/${GENERATED_BACKEND_API_PREFIX}/auth/internal/sync`,
                 {
@@ -66,9 +68,8 @@ export class InternalAccountsSyncService {
         } catch (error) {
             this.logger.warn(
                 `Could not notify the generated backend of ${platformId} to resync its internal accounts: ` +
-                (error instanceof Error ? error.message : String(error)),
+                    (error instanceof Error ? error.message : String(error)),
             );
         }
     }
-
 }

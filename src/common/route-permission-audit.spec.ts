@@ -39,30 +39,44 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     'planning/personal-planning-program.controller.ts': {
         create: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
         list: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        getById: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        getById:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
         update: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
         delete: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        upsertWeek: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        deleteWeek: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        replaceDayEntries: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        schedule: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        preview: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        upsertWeek:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        deleteWeek:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        replaceDayEntries:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        schedule:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        preview:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
         apply: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
-        generate: 'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
+        generate:
+            'Personal templates: ownership (creatorId === actor) enforced in PlanningProgramService.assertCanView/EditProgram.',
     },
     'planning/platform-planning-program.controller.ts': {
         create: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
         list: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        getById: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        getById:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
         update: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
         delete: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        upsertWeek: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        deleteWeek: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        replaceDayEntries: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        schedule: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        preview: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        upsertWeek:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        deleteWeek:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        replaceDayEntries:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        schedule:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        preview:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
         apply: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
-        generate: 'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
+        generate:
+            'Platform templates: platform planning access enforced in PlanningProgramService (assertCanView/EditPlatformPlanning).',
     },
     'entities/entities.controller.ts': {
         list: 'Scoped via CurrentUser + platform membership checked in EntitiesService.',
@@ -106,8 +120,10 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     'generator/generator.controller.ts': {
         triggerGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         cancelGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
-        approveGeneration: 'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may approve, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
-        rejectGeneration: 'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may reject, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
+        approveGeneration:
+            'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may approve, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
+        rejectGeneration:
+            'Scoped via CurrentUser; only the platform owner (or a global GENERATOR_EXECUTE holder) may reject, checked in GeneratorController.assertOwnerOrGlobalGenerator().',
         listGenerations: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         getGeneration: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
         startRuntime: 'Scoped via CurrentUser + platform ownership/permission checked in GeneratorService.',
@@ -122,18 +138,20 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         enable: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
         disable: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
         getProfileFields: 'Scoped via CurrentUser + platform membership checked in PlatformServicesService.',
-        setProfileFields: 'Scoped via CurrentUser + platform membership / PLATFORM_UPDATE checked in PlatformServicesService.',
+        setProfileFields:
+            'Scoped via CurrentUser + platform membership / PLATFORM_UPDATE checked in PlatformServicesService.',
     },
     'generator/service-catalog.controller.ts': {
         list: 'Static, non-sensitive reference data (the service catalog) - authentication alone (global JwtAuthGuard) is intentionally sufficient; nothing here is user- or platform-specific.',
     },
     'messages/messages.controller.ts': {
         listConversations: 'Scoped via CurrentUser; conversation participation checked in MessagesService.',
-        getUnreadCount: 'Scoped via CurrentUser to the caller\'s own unread count only.',
+        getUnreadCount: "Scoped via CurrentUser to the caller's own unread count only.",
         getMessages: 'Scoped via CurrentUser; conversation participation checked in MessagesService.',
         sendToConversation: 'Scoped via CurrentUser; conversation participation checked in MessagesService.',
         sendDirectMessage: 'Scoped via CurrentUser as the sender; recipient validity checked in MessagesService.',
-        deleteMessage: 'Scoped via CurrentUser; conversation participation checked, and "everyone" scope additionally requires being the sender, in MessagesService.deleteMessage().',
+        deleteMessage:
+            'Scoped via CurrentUser; conversation participation checked, and "everyone" scope additionally requires being the sender, in MessagesService.deleteMessage().',
     },
     'planning/personal-planning.controller.ts': {
         create: "Personal planning: always scoped to the caller's own userId, never another user's.",
@@ -145,12 +163,16 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     'planning/platform-planning.controller.ts': {
         create: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
         list: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanViewPlatformPlanning().',
-        getResponsible: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanViewPlatformPlanning() (read-side counterpart to reassignResponsible).',
-        reassignResponsible: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning() (audit #1/#5 follow-up).',
+        getResponsible:
+            'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanViewPlatformPlanning() (read-side counterpart to reassignResponsible).',
+        reassignResponsible:
+            'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning() (audit #1/#5 follow-up).',
         update: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
         delete: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
-        addAssignee: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
-        removeAssignee: 'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
+        addAssignee:
+            'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
+        removeAssignee:
+            'Scoped via CurrentUser + platform membership checked in PlanningService.assertCanEditPlatformPlanning().',
     },
     'users/users.controller.ts': {
         getMe: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
@@ -158,13 +180,16 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         getMyProfileDetails: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
         updateMyProfileDetails: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
         exportMe: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
-        exportUser: "GDPR export of another user: allowed only for a global USERS_EXPORT holder or the owner/ADMIN of a platform the target belongs to, checked in UsersService.exportUserDataAs().",
-        deleteMe: "Always scoped to the caller's own userId via CurrentUser, and (audit #3) now additionally requires a fresh step-up TOTP code.",
+        exportUser:
+            'GDPR export of another user: allowed only for a global USERS_EXPORT holder or the owner/ADMIN of a platform the target belongs to, checked in UsersService.exportUserDataAs().',
+        deleteMe:
+            "Always scoped to the caller's own userId via CurrentUser, and (audit #3) now additionally requires a fresh step-up TOTP code.",
         uploadMyAvatar: "Always scoped to the caller's own userId via CurrentUser - never another user's data.",
-        getAvatar: 'Any authenticated user may view any team member\'s avatar - equivalent to a company directory photo, not sensitive data (global JwtAuthGuard is sufficient).',
+        getAvatar:
+            "Any authenticated user may view any team member's avatar - equivalent to a company directory photo, not sensitive data (global JwtAuthGuard is sufficient).",
     },
     'auth/auth.controller.ts': {
-        logout: 'Requires a valid access token (global JwtAuthGuard); revokes only the caller\'s own refresh token, never another user\'s.',
+        logout: "Requires a valid access token (global JwtAuthGuard); revokes only the caller's own refresh token, never another user's.",
     },
     'projects/projects.controller.ts': {
         list: 'Scoped via CurrentUser + manager/visibility checked in ProjectsService.list().',
@@ -174,13 +199,15 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
     },
     'platforms/platform-roles.controller.ts': {
         list: 'Scoped via CurrentUser + ownership/membership checked in PlatformRolesService.list().',
-        catalog: 'Scoped via CurrentUser + platform visibility checked in PlatformRolesService.catalog(); only flags what the caller may grant.',
+        catalog:
+            'Scoped via CurrentUser + platform visibility checked in PlatformRolesService.catalog(); only flags what the caller may grant.',
         create: 'Scoped via CurrentUser + platform.manage-roles permission and the permission-ceiling rule checked in PlatformRolesService.create().',
         update: 'Scoped via CurrentUser + platform.manage-roles permission and the permission-ceiling rule checked in PlatformRolesService.update().',
         remove: 'Scoped via CurrentUser + platform.manage-roles permission checked in PlatformRolesService.remove().',
     },
     'platforms/platforms.controller.ts': {
-        getMyAccess: "Always scoped to the caller's own userId via CurrentUser - never reveals another user's access; visibility checked in PlatformsService.getMyAccess().",
+        getMyAccess:
+            "Always scoped to the caller's own userId via CurrentUser - never reveals another user's access; visibility checked in PlatformsService.getMyAccess().",
         list: 'Scoped via CurrentUser; PlatformsService.list() returns only platforms the caller owns or is a member of.',
         getById: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.getById().',
         update: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.update().',
@@ -189,12 +216,17 @@ const MANUALLY_CHECKED_ROUTES: Record<string, Record<string, string>> = {
         purge: 'Scoped via CurrentUser + ownership checked in PlatformsService.purge().',
         transferOwnership: 'Scoped via CurrentUser + current-owner check in PlatformsService.transferOwnership().',
         listMembers: 'Scoped via CurrentUser + ownership/membership checked in PlatformsService.listMembers().',
-        addMember: 'Scoped via CurrentUser + platform.manage-members permission and role-grant ceiling checked in PlatformsService.addMember().',
-        updateMemberRole: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.updateMemberRole().',
+        addMember:
+            'Scoped via CurrentUser + platform.manage-members permission and role-grant ceiling checked in PlatformsService.addMember().',
+        updateMemberRole:
+            'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.updateMemberRole().',
         removeMember: 'Scoped via CurrentUser + ownership/admin-membership checked in PlatformsService.removeMember().',
-        confirmMemberRemoval: 'Scoped via CurrentUser; only the affected member or a platform admin may confirm, checked in PlatformsService.',
-        cancelMemberRemoval: 'Scoped via CurrentUser; only the affected member or a platform admin may cancel, checked in PlatformsService.',
-        getChannel: 'Scoped via CurrentUser + platform membership checked in MessagesService.getOrCreatePlatformChannel().',
+        confirmMemberRemoval:
+            'Scoped via CurrentUser; only the affected member or a platform admin may confirm, checked in PlatformsService.',
+        cancelMemberRemoval:
+            'Scoped via CurrentUser; only the affected member or a platform admin may cancel, checked in PlatformsService.',
+        getChannel:
+            'Scoped via CurrentUser + platform membership checked in MessagesService.getOrCreatePlatformChannel().',
     },
 };
 
@@ -362,9 +394,9 @@ describe('Route permission audit (audit #8)', () => {
                     .join('\n');
                 throw new Error(
                     `Route(s) sans @RequirePermissions, @Public, ni entrée dans MANUALLY_CHECKED_ROUTES ` +
-                    `pour ${relativeFile}:\n${details}\n\n` +
-                    `Ajoutez soit un décorateur, soit une entrée documentée et justifiée dans ` +
-                    `MANUALLY_CHECKED_ROUTES (route-permission-audit.spec.ts).`,
+                        `pour ${relativeFile}:\n${details}\n\n` +
+                        `Ajoutez soit un décorateur, soit une entrée documentée et justifiée dans ` +
+                        `MANUALLY_CHECKED_ROUTES (route-permission-audit.spec.ts).`,
                 );
             }
         });

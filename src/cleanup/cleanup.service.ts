@@ -44,7 +44,7 @@ export class CleanupService {
         this.logger.log('Starting daily cleanup...');
 
         let totalDeleted = 0;
-        
+
         // Sequential execution of distinct domain cleanup subroutines
         totalDeleted += await this.cleanupInvitations();
         totalDeleted += await this.cleanupRefreshTokens();
@@ -58,8 +58,7 @@ export class CleanupService {
 
         const durationMs = Date.now() - startedAt;
         this.logger.log(
-            `Daily cleanup completed successfully. ` +
-            `${totalDeleted} record(s)/file(s) deleted in ${durationMs}ms.`,
+            `Daily cleanup completed successfully. ` + `${totalDeleted} record(s)/file(s) deleted in ${durationMs}ms.`,
         );
     }
 
@@ -73,10 +72,7 @@ export class CleanupService {
     private async cleanupInvitations(): Promise<number> {
         try {
             // Retrieves retention window in days, falling back to 7 days if unconfigured
-            const retentionDays = this.getPositiveIntegerConfig(
-                'OTP_CLEANUP_RETENTION_DAYS',
-                7,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('OTP_CLEANUP_RETENTION_DAYS', 7);
             const cutoff = this.getCutoffDate(retentionDays);
 
             // Batch deletion using Prisma OR condition
@@ -99,13 +95,9 @@ export class CleanupService {
             });
 
             if (result.count > 0) {
-                this.logger.log(
-                    `Invitations cleanup: ${result.count} record(s) deleted.`,
-                );
+                this.logger.log(`Invitations cleanup: ${result.count} record(s) deleted.`);
             } else {
-                this.logger.debug(
-                    'Invitations cleanup: nothing to delete.',
-                );
+                this.logger.debug('Invitations cleanup: nothing to delete.');
             }
 
             return result.count;
@@ -123,10 +115,7 @@ export class CleanupService {
      */
     private async cleanupRefreshTokens(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'REFRESH_TOKEN_CLEANUP_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('REFRESH_TOKEN_CLEANUP_RETENTION_DAYS', 30);
 
             const cutoff = this.getCutoffDate(retentionDays);
 
@@ -148,13 +137,9 @@ export class CleanupService {
             });
 
             if (result.count > 0) {
-                this.logger.log(
-                    `Refresh token cleanup: ${result.count} record(s) deleted.`,
-                );
+                this.logger.log(`Refresh token cleanup: ${result.count} record(s) deleted.`);
             } else {
-                this.logger.debug(
-                    'Refresh token cleanup: nothing to delete.',
-                );
+                this.logger.debug('Refresh token cleanup: nothing to delete.');
             }
 
             return result.count;
@@ -171,10 +156,7 @@ export class CleanupService {
      */
     private async cleanupRecoveryCodes(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'RECOVERY_CODE_CLEANUP_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('RECOVERY_CODE_CLEANUP_RETENTION_DAYS', 30);
 
             const cutoff = this.getCutoffDate(retentionDays);
 
@@ -187,13 +169,9 @@ export class CleanupService {
             });
 
             if (result.count > 0) {
-                this.logger.log(
-                    `Recovery code cleanup: ${result.count} record(s) deleted.`,
-                );
+                this.logger.log(`Recovery code cleanup: ${result.count} record(s) deleted.`);
             } else {
-                this.logger.debug(
-                    'Recovery code cleanup: nothing to delete.',
-                );
+                this.logger.debug('Recovery code cleanup: nothing to delete.');
             }
 
             return result.count;
@@ -210,20 +188,14 @@ export class CleanupService {
      */
     private async cleanupGenerations(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'GENERATION_CLEANUP_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('GENERATION_CLEANUP_RETENTION_DAYS', 30);
 
             const cutoff = this.getCutoffDate(retentionDays);
 
             const result = await this.prisma.generation.deleteMany({
                 where: {
                     status: {
-                        in: [
-                            GenerationStatus.SUCCESS,
-                            GenerationStatus.FAILED,
-                        ],
+                        in: [GenerationStatus.SUCCESS, GenerationStatus.FAILED],
                     },
                     finishedAt: {
                         not: null, // Guarantees the task has concluded
@@ -233,13 +205,9 @@ export class CleanupService {
             });
 
             if (result.count > 0) {
-                this.logger.log(
-                    `Generation cleanup: ${result.count} record(s) deleted.`,
-                );
+                this.logger.log(`Generation cleanup: ${result.count} record(s) deleted.`);
             } else {
-                this.logger.debug(
-                    'Generation cleanup: nothing to delete.',
-                );
+                this.logger.debug('Generation cleanup: nothing to delete.');
             }
 
             return result.count;
@@ -264,17 +232,14 @@ export class CleanupService {
      */
     private async cleanupArchivedPlatforms(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'PLATFORM_ARCHIVE_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('PLATFORM_ARCHIVE_RETENTION_DAYS', 30);
 
             const purgedCount = await this.platforms.purgeExpiredArchives(retentionDays);
 
             if (purgedCount > 0) {
                 this.logger.log(
                     `Archived platform cleanup: ${purgedCount} platform(s) permanently deleted ` +
-                    `after ${retentionDays} consecutive day(s) archived.`,
+                        `after ${retentionDays} consecutive day(s) archived.`,
                 );
             } else {
                 this.logger.debug('Archived platform cleanup: nothing to delete.');
@@ -297,17 +262,14 @@ export class CleanupService {
      */
     private async cleanupArchivedClients(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'CLIENT_ARCHIVE_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('CLIENT_ARCHIVE_RETENTION_DAYS', 30);
 
             const purgedCount = await this.clients.purgeExpiredArchives(retentionDays);
 
             if (purgedCount > 0) {
                 this.logger.log(
                     `Archived client cleanup: ${purgedCount} client(s) permanently deleted ` +
-                    `after ${retentionDays} consecutive day(s) archived.`,
+                        `after ${retentionDays} consecutive day(s) archived.`,
                 );
             } else {
                 this.logger.debug('Archived client cleanup: nothing to delete.');
@@ -331,17 +293,14 @@ export class CleanupService {
      */
     private async cleanupArchivedContracts(): Promise<number> {
         try {
-            const retentionDays = this.getPositiveIntegerConfig(
-                'CONTRACT_ARCHIVE_RETENTION_DAYS',
-                30,
-            );
+            const retentionDays = this.getPositiveIntegerConfig('CONTRACT_ARCHIVE_RETENTION_DAYS', 30);
 
             const purgedCount = await this.clients.purgeExpiredContractArchives(retentionDays);
 
             if (purgedCount > 0) {
                 this.logger.log(
                     `Archived contract cleanup: ${purgedCount} contract(s) permanently deleted ` +
-                    `after ${retentionDays} consecutive day(s) archived.`,
+                        `after ${retentionDays} consecutive day(s) archived.`,
                 );
             } else {
                 this.logger.debug('Archived contract cleanup: nothing to delete.');
@@ -374,10 +333,7 @@ export class CleanupService {
      */
     private async cleanupBackupDumps(): Promise<number> {
         try {
-            const retentionHours = this.getPositiveIntegerConfig(
-                'BACKUP_DUMP_RETENTION_HOURS',
-                48,
-            );
+            const retentionHours = this.getPositiveIntegerConfig('BACKUP_DUMP_RETENTION_HOURS', 48);
             const outputDir = this.resolveBackupOutputDir();
             const cutoffMs = Date.now() - retentionHours * 60 * 60 * 1000;
 
@@ -421,9 +377,7 @@ export class CleanupService {
             }
 
             if (deletedCount > 0) {
-                this.logger.log(
-                    `Backup dump cleanup: ${deletedCount} unclaimed dump file(s) deleted.`,
-                );
+                this.logger.log(`Backup dump cleanup: ${deletedCount} unclaimed dump file(s) deleted.`);
             } else {
                 this.logger.debug('Backup dump cleanup: nothing to delete.');
             }
@@ -548,9 +502,7 @@ export class CleanupService {
      * @returns The calculated threshold Cutoff Date.
      */
     private getCutoffDate(retentionDays: number): Date {
-        return new Date(
-            Date.now() - retentionDays * 24 * 60 * 60 * 1000,
-        );
+        return new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
     }
 
     /**
@@ -559,10 +511,7 @@ export class CleanupService {
      * * @param key - The Environment variable key name.
      * @param defaultValue - Safe fallback integer value.
      */
-    private getPositiveIntegerConfig(
-        key: string,
-        defaultValue: number,
-    ): number {
+    private getPositiveIntegerConfig(key: string, defaultValue: number): number {
         const value = this.configService.get<string | number>(key);
 
         if (value === undefined || value === null || value === '') {
@@ -574,8 +523,7 @@ export class CleanupService {
         // Rejects NaN, floating point numbers, and non-positive values
         if (!Number.isInteger(parsed) || parsed <= 0) {
             this.logger.warn(
-                `Invalid cleanup configuration "${key}"="${value}". ` +
-                `Using safe default: ${defaultValue}.`,
+                `Invalid cleanup configuration "${key}"="${value}". ` + `Using safe default: ${defaultValue}.`,
             );
 
             return defaultValue;
@@ -588,30 +536,19 @@ export class CleanupService {
      * Utility: Formats and logs errors caught during maintenance execution.
      * Differentiates Prisma ORM errors from standard runtime JavaScript Errors.
      */
-    private logCleanupError(
-        resource: string,
-        error: unknown,
-    ): void {
+    private logCleanupError(resource: string, error: unknown): void {
         if (error instanceof Prisma.PrismaClientKnownRequestError) {
-            this.logger.error(
-                `Cleanup failed for ${resource}. ` +
-                `Prisma error code: ${error.code}.`,
-            );
+            this.logger.error(`Cleanup failed for ${resource}. ` + `Prisma error code: ${error.code}.`);
 
             return;
         }
 
         if (error instanceof Error) {
-            this.logger.error(
-                `Cleanup failed for ${resource}: ${error.message}`,
-            );
+            this.logger.error(`Cleanup failed for ${resource}: ${error.message}`);
 
             return;
         }
 
-        this.logger.error(
-            `Cleanup failed for ${resource}: unknown error.`,
-        );
+        this.logger.error(`Cleanup failed for ${resource}: unknown error.`);
     }
-    
 }

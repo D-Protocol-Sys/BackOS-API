@@ -3,7 +3,6 @@ import { PERMISSIONS } from '../common/constants/permissions.constant';
 import * as registry from '../features/feature-registry';
 
 describe('PermissionsSyncService - optional features', () => {
-
     const prisma = {
         permission: {
             upsert: jest.fn().mockResolvedValue({}),

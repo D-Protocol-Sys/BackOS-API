@@ -55,10 +55,10 @@ export const SAFE_USER_SELECT = {
     createdAt: true,
     updatedAt: true,
     userRoles: {
-        select: { 
-            role: { 
-                select: { id: true, name: true } 
-            } 
+        select: {
+            role: {
+                select: { id: true, name: true },
+            },
         },
     },
 } as const;
@@ -68,7 +68,6 @@ export const SAFE_USER_SELECT = {
  */
 @Injectable()
 export class UsersService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly configService: ConfigService,
@@ -98,11 +97,11 @@ export class UsersService {
 
         // 3. Persist new user entity
         const user = await this.prisma.user.create({
-            data: { 
+            data: {
                 workEmail: dto.workEmail,
                 personalEmail: dto.personalEmail,
-                firstName: dto.firstName, 
-                lastName: dto.lastName, 
+                firstName: dto.firstName,
+                lastName: dto.lastName,
                 username,
             },
         });
@@ -116,7 +115,7 @@ export class UsersService {
 
         // 4. Dispatch activation invitation email
         await this.authService.createInvitationForUser(user.id, actorId);
-        
+
         return user;
     }
 
@@ -227,7 +226,11 @@ export class UsersService {
             throw new NotFoundException('This user has no avatar.');
         }
         const dir = path.join(resolveUploadDir(), 'avatars');
-        for (const [extension, mimeType] of [['png', 'image/png'], ['jpg', 'image/jpeg'], ['webp', 'image/webp']] as const) {
+        for (const [extension, mimeType] of [
+            ['png', 'image/png'],
+            ['jpg', 'image/jpeg'],
+            ['webp', 'image/webp'],
+        ] as const) {
             const diskPath = path.join(dir, `${userId}.${extension}`);
             if (
                 await fs
@@ -270,7 +273,11 @@ export class UsersService {
             ...owned.map((platform) => ({ platform, role: 'OWNER' as const })),
             // `role` is the platform role's display name ("ADMIN" for the system role, or the custom
             // role's own name, e.g. "Data Operator"); `isSystemRole` lets the UI tell them apart.
-            ...memberships.map((m) => ({ platform: m.platform, role: m.platformRole.name, isSystemRole: m.platformRole.isSystem })),
+            ...memberships.map((m) => ({
+                platform: m.platform,
+                role: m.platformRole.name,
+                isSystemRole: m.platformRole.isSystem,
+            })),
         ];
     }
 
@@ -335,7 +342,7 @@ export class UsersService {
     }
 
     /**
-     * Updates administrative attributes of a target user account while enforcing 
+     * Updates administrative attributes of a target user account while enforcing
      * hierarchy permissions, uniqueness constraints, and audit logging.
      *
      * @param actorUserId - ID of the administrator issuing the update.
@@ -346,11 +353,7 @@ export class UsersService {
      * @throws ConflictException if updated workEmail or username is already taken.
      * @throws ForbiddenException if actor lacks hierarchy seniority over target or target is protected.
      */
-    async updateUser(
-        actorUserId: string,
-        targetUserId: string,
-        dto: AdminUpdateUserDto,
-    ) {
+    async updateUser(actorUserId: string, targetUserId: string, dto: AdminUpdateUserDto) {
         // 1. Security checks: Hierarchy seniority and protected owner verification
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'update');
         await this.assertNotProtectedOwner(targetUserId, 'update');
@@ -387,26 +390,26 @@ export class UsersService {
                 lastName: dto.lastName,
                 username: dto.username,
                 /*
-                * Fix Explanation:
-                * 'company' and 'jobTitle' belong to the UserProfile model.
-                * We use Prisma's nested update/upsert on the 'profile' relation 
-                * to update existing profile attributes or create the relation if missing.
-                */
+                 * Fix Explanation:
+                 * 'company' and 'jobTitle' belong to the UserProfile model.
+                 * We use Prisma's nested update/upsert on the 'profile' relation
+                 * to update existing profile attributes or create the relation if missing.
+                 */
                 ...(dto.company !== undefined || dto.jobTitle !== undefined
                     ? {
-                        profile: {
-                            upsert: {
-                                create: {
-                                    company: dto.company,
-                                    jobTitle: dto.jobTitle,
-                                },
-                                update: {
-                                    company: dto.company,
-                                    jobTitle: dto.jobTitle,
-                                },
-                            },
-                        },
-                    }
+                          profile: {
+                              upsert: {
+                                  create: {
+                                      company: dto.company,
+                                      jobTitle: dto.jobTitle,
+                                  },
+                                  update: {
+                                      company: dto.company,
+                                      jobTitle: dto.jobTitle,
+                                  },
+                              },
+                          },
+                      }
                     : {}),
             },
             select: SAFE_USER_SELECT,
@@ -433,15 +436,11 @@ export class UsersService {
      * @returns Deactivated safe user entity.
      * @throws ForbiddenException if actor is not senior or target is the sole system owner.
      */
-    async deactivateUser(
-        actorUserId: string,
-        targetUserId: string,
-        dto: ChangeUserStatusDto,
-    ) {
+    async deactivateUser(actorUserId: string, targetUserId: string, dto: ChangeUserStatusDto) {
         // 1. Security checks
         this.assertNotSelf(actorUserId, targetUserId, 'deactivate');
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'deactivate');
-        await this.assertNotProtectedOwner(targetUserId,'deactivate');
+        await this.assertNotProtectedOwner(targetUserId, 'deactivate');
 
         // 2. Update user and create status history atomically
         const updatedUser = await this.prisma.$transaction(async (tx) => {
@@ -458,9 +457,7 @@ export class UsersService {
 
             // Prevent redundant status transition
             if (targetUser.status === UserStatus.SUSPENDED) {
-                throw new BadRequestException(
-                    'User account is already suspended.',
-                );
+                throw new BadRequestException('User account is already suspended.');
             }
 
             // Update user status
@@ -520,15 +517,20 @@ export class UsersService {
         const deactivationCount = deactivationEvents.length;
 
         let totalDeactivatedDurationMs = 0;
-        
+
         for (let i = 0; i < history.length; i++) {
             const entry = history[i];
             if (entry.newStatus === UserStatus.SUSPENDED) {
-                const reactivationEntry = history.slice(0, i).reverse().find(
-                    (h) => h.createdAt > entry.createdAt && (h.newStatus === UserStatus.ACTIVE || h.newStatus === UserStatus.DISABLED)
-                );
+                const reactivationEntry = history
+                    .slice(0, i)
+                    .reverse()
+                    .find(
+                        (h) =>
+                            h.createdAt > entry.createdAt &&
+                            (h.newStatus === UserStatus.ACTIVE || h.newStatus === UserStatus.DISABLED),
+                    );
                 const endTime = reactivationEntry ? reactivationEntry.createdAt : new Date();
-                totalDeactivatedDurationMs += (endTime.getTime() - entry.createdAt.getTime());
+                totalDeactivatedDurationMs += endTime.getTime() - entry.createdAt.getTime();
             }
         }
         const totalDeactivatedDays = Math.round(totalDeactivatedDurationMs / (1000 * 3600 * 24));
@@ -541,7 +543,7 @@ export class UsersService {
     }
 
     /**
-     * Reactivates a suspended user account while enforcing role hierarchy checks, 
+     * Reactivates a suspended user account while enforcing role hierarchy checks,
      * resetting deactivation timestamps, and recording history and audit logs.
      *
      * @param actorUserId - ID of the administrator issuing the request.
@@ -552,11 +554,7 @@ export class UsersService {
      * @throws BadRequestException if the user account is not currently in SUSPENDED status.
      * @throws ForbiddenException if actor lacks hierarchy seniority over target.
      */
-    async activateUser(
-        actorUserId: string,
-        targetUserId: string,
-        dto: ChangeUserStatusDto,
-    ) {
+    async activateUser(actorUserId: string, targetUserId: string, dto: ChangeUserStatusDto) {
         // 1. Security check: Ensure the actor has higher hierarchy seniority than the target user
         // SECURITY FIX (SEC-002): `assertSeniorToTarget` returns early when actor = target, which let a
         // suspended user holding users.deactivate reactivate their own account.
@@ -578,9 +576,7 @@ export class UsersService {
 
             // Only accounts in SUSPENDED status are eligible for reactivation
             if (targetUser.status !== UserStatus.SUSPENDED) {
-                throw new BadRequestException(
-                    'Only suspended accounts can be reactivated.',
-                );
+                throw new BadRequestException('Only suspended accounts can be reactivated.');
             }
 
             // Update user status and reset deactivation timestamp
@@ -716,11 +712,7 @@ export class UsersService {
      * @throws BadRequestException if account is not in DISABLED status.
      * @throws ForbiddenException if actor lacks hierarchy seniority over target or target is protected owner.
      */
-    async processDisabledUser(
-        actorUserId: string,
-        targetUserId: string,
-        dto: ProcessDisabledUserDto,
-    ) {
+    async processDisabledUser(actorUserId: string, targetUserId: string, dto: ProcessDisabledUserDto) {
         // 1. Security checks
         await this.roleHierarchy.assertSeniorToTarget(actorUserId, targetUserId, 'process data for');
         await this.assertNotProtectedOwner(targetUserId, 'process data for');
@@ -744,11 +736,14 @@ export class UsersService {
 
         // 4. Option 2: GDPR Anonymization
         if (dto.action === RetentionAction.ANONYMIZE) {
-            const anonymousTag = `deleted-user-${targetUserId.replace(/-/g, "").slice(0, 16)}`;
+            const anonymousTag = `deleted-user-${targetUserId.replace(/-/g, '').slice(0, 16)}`;
 
             await this.prisma.$transaction(async (tx) => {
                 // PRIVACY/SECURITY FIX: an anonymized account keeps no credential of any kind.
-                await tx.refreshToken.updateMany({ where: { userId: targetUserId, revokedAt: null }, data: { revokedAt: new Date() } });
+                await tx.refreshToken.updateMany({
+                    where: { userId: targetUserId, revokedAt: null },
+                    data: { revokedAt: new Date() },
+                });
                 await tx.userMfa.deleteMany({ where: { userId: targetUserId } });
                 await tx.recoveryCode.deleteMany({ where: { userId: targetUserId } });
                 await tx.invitation.deleteMany({ where: { userId: targetUserId } });
@@ -836,9 +831,7 @@ export class UsersService {
             });
 
             if (ownerCount <= 1) {
-                throw new ForbiddenException(
-                    'Cannot remove the last owner from the system.',
-                );
+                throw new ForbiddenException('Cannot remove the last owner from the system.');
             }
         }
 
@@ -899,10 +892,10 @@ export class UsersService {
                 lastName: true,
                 username: true,
                 /*
-                * Fix Explanation:
-                * 'company' and 'jobTitle' belong to the UserProfile model ('profile' relation).
-                * Nested select is required here to query those fields from the related table.
-                */
+                 * Fix Explanation:
+                 * 'company' and 'jobTitle' belong to the UserProfile model ('profile' relation).
+                 * Nested select is required here to query those fields from the related table.
+                 */
                 profile: {
                     select: {
                         company: true,
@@ -957,9 +950,7 @@ export class UsersService {
         }
 
         if (user.platformOwned.length > 0) {
-            throw new ConflictException(
-                'Please transfer ownership of your platforms before deleting this account.',
-            );
+            throw new ConflictException('Please transfer ownership of your platforms before deleting this account.');
         }
 
         // SECURITY FIX (audit #1 follow-up - critical): `Planning.responsible` is now
@@ -1002,7 +993,10 @@ export class UsersService {
 
         // DB-008: FileAsset rows cascade with the user, but the files themselves used to stay on
         // disk forever (personal data included). They are removed first.
-        const ownedFiles = await this.prisma.fileAsset.findMany({ where: { uploaderId: userId }, select: { storedName: true } });
+        const ownedFiles = await this.prisma.fileAsset.findMany({
+            where: { uploaderId: userId },
+            select: { storedName: true },
+        });
 
         await this.prisma.$transaction([
             this.prisma.planning.deleteMany({
@@ -1105,9 +1099,7 @@ export class UsersService {
         });
 
         if (ownerCount <= 1) {
-            throw new ForbiddenException(
-                `Cannot ${action} the last owner in the system.`,
-            );
+            throw new ForbiddenException(`Cannot ${action} the last owner in the system.`);
         }
     }
 }

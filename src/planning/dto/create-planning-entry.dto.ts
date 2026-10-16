@@ -1,6 +1,4 @@
-import {
-    IsEnum, IsString, IsOptional, IsDateString, MinLength, MaxLength,
-} from 'class-validator';
+import { IsEnum, IsString, IsOptional, IsDateString, MinLength, MaxLength } from 'class-validator';
 import { PlanningItemType, PlanningItemStatus } from '@prismamodels/client';
 
 /**
@@ -8,7 +6,6 @@ import { PlanningItemType, PlanningItemStatus } from '@prismamodels/client';
  * Defines input payload validation constraints enforced at API runtime via `ValidationPipe`.
  */
 export class CreatePlanningEntryDto {
-
     /**
      * Category or type classification of the planning entry (e.g., TASK, EVENT, MILESTONE).
      * Must match a valid value defined in the `PlanningItemType` Prisma enum.
@@ -73,5 +70,4 @@ export class CreatePlanningEntryDto {
     @IsOptional()
     @IsEnum(PlanningItemStatus)
     status?: PlanningItemStatus;
-
 }

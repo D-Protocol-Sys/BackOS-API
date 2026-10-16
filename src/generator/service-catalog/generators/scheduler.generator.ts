@@ -6,11 +6,9 @@ export async function generateSchedulerFiles(
     projectPath: string,
     _config: Record<string, unknown>,
 ): Promise<BlueprintModuleRef[]> {
-
     await fs.mkdir(path.join(projectPath, 'src', 'tasks', 'dto'), { recursive: true });
 
     const files: Record<string, string> = {
-
         'src/tasks/dto/create-task.dto.ts': `
             import {
                 IsString, IsEnum, IsOptional, IsDateString, IsObject, IsBoolean, ValidateIf,
@@ -366,5 +364,5 @@ export async function generateSchedulerFiles(
         ),
     );
 
-  return [{ name: 'TasksModule', importPath: './tasks/tasks.module' }];
+    return [{ name: 'TasksModule', importPath: './tasks/tasks.module' }];
 }

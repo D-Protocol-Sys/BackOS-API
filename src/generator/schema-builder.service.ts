@@ -47,11 +47,16 @@ export class SchemaBuilderService {
         // Prisma `enum` block, emitted once (Prisma enums are schema-global, not per-model) even
         // when several fields - possibly on different entities - share the same one.
         const usedEnumIds = new Set(
-            entities.flatMap((entity) => entity.fields.filter((f) => f.type === 'ENUM' && f.enumDefinitionId).map((f) => f.enumDefinitionId as string)),
+            entities.flatMap((entity) =>
+                entity.fields
+                    .filter((f) => f.type === 'ENUM' && f.enumDefinitionId)
+                    .map((f) => f.enumDefinitionId as string),
+            ),
         );
-        const enumDefinitions = usedEnumIds.size > 0
-            ? await this.prisma.enumDefinition.findMany({ where: { id: { in: Array.from(usedEnumIds) } } })
-            : [];
+        const enumDefinitions =
+            usedEnumIds.size > 0
+                ? await this.prisma.enumDefinition.findMany({ where: { id: { in: Array.from(usedEnumIds) } } })
+                : [];
         const enumPrismaNameById = new Map(enumDefinitions.map((e) => [e.id, toEnumPrismaName(e.name)]));
         const enumBlocks = enumDefinitions
             .map((e) => `enum ${enumPrismaNameById.get(e.id)} {\n${e.values.map((v) => `  ${v}`).join('\n')}\n}`)
@@ -108,9 +113,7 @@ export class SchemaBuilderService {
     ): string {
         const modelName = toPascalCase(entity.tableName);
         const fieldLines = entity.fields.map((field) => this.buildFieldLine(field, enumPrismaNameById));
-        const schedulableLines = entity.isSchedulable
-            ? ['  publishAt DateTime?', '  unpublishAt DateTime?']
-            : [];
+        const schedulableLines = entity.isSchedulable ? ['  publishAt DateTime?', '  unpublishAt DateTime?'] : [];
 
         const lines = [
             `model ${modelName} {`,
@@ -177,7 +180,7 @@ export class SchemaBuilderService {
 
     /**
      * Parses and escapes raw user-defined default values into valid Prisma field decorators.
-     * Educational Note: String inputs are escaped to prevent accidental syntax injection 
+     * Educational Note: String inputs are escaped to prevent accidental syntax injection
      * when injecting values directly into the schema.
      */
     private buildDefaultAttribute(type: string, rawDefault: string | null): string | null {

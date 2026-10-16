@@ -1,12 +1,21 @@
-import { IsString, MinLength, MaxLength, IsOptional, IsArray, ArrayNotEmpty, IsString as IsStringEach, IsInt, Min } from 'class-validator';
+import {
+    IsString,
+    MinLength,
+    MaxLength,
+    IsOptional,
+    IsArray,
+    ArrayNotEmpty,
+    IsString as IsStringEach,
+    IsInt,
+    Min,
+} from 'class-validator';
 
 /**
  * Data Transfer Object (DTO) used when creating a custom user role.
- * Defines input payload validation rules for role metadata, hierarchy levels, 
+ * Defines input payload validation rules for role metadata, hierarchy levels,
  * and associated permission keys.
  */
 export class CreateRoleDto {
-
     /**
      * The unique name of the role (e.g., "Project Manager").
      * Required field: must be a string between 2 and 50 characters in length.
@@ -41,5 +50,4 @@ export class CreateRoleDto {
     @ArrayNotEmpty()
     @IsStringEach({ each: true })
     permissionKeys!: string[];
-    
 }

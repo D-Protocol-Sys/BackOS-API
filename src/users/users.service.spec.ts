@@ -20,16 +20,14 @@ describe('UsersService', () => {
         prismaMock = {
             user: { findUnique: jest.fn(), delete: jest.fn().mockResolvedValue({}) },
             userRole: { findMany: jest.fn().mockResolvedValue([]), count: jest.fn() },
-            planning: { 
-                count: jest.fn(), 
-                deleteMany: jest.fn().mockResolvedValue({ count: 0 })
+            planning: {
+                count: jest.fn(),
+                deleteMany: jest.fn().mockResolvedValue({ count: 0 }),
             },
             planningEntry: { count: jest.fn() },
             // hardDeleteUser() now also removes the user's uploaded files from disk (FILE-002).
             fileAsset: { findMany: jest.fn().mockResolvedValue([]) },
-            $transaction: jest.fn().mockImplementation((cb) => 
-                Array.isArray(cb) ? Promise.all(cb) : cb(prismaMock)
-            ),
+            $transaction: jest.fn().mockImplementation((cb) => (Array.isArray(cb) ? Promise.all(cb) : cb(prismaMock))),
         };
         roleHierarchyMock = { assertSeniorToTarget: jest.fn().mockResolvedValue(undefined) };
         auditLogMock = { log: jest.fn().mockResolvedValue(undefined) };
@@ -46,13 +44,11 @@ describe('UsersService', () => {
     });
 
     describe('hardDeleteUser - pré-contrôle Planning.responsible (audit #1 follow-up)', () => {
-        it('bloque la suppression tant que l\'utilisateur est responsable d\'un planning', async () => {
+        it("bloque la suppression tant que l'utilisateur est responsable d'un planning", async () => {
             prismaMock.user.findUnique.mockResolvedValue(activeUserNoPlatforms);
             prismaMock.planning.count.mockResolvedValue(1);
 
-            await expect(service.hardDeleteUser('actor', 'user-1')).rejects.toThrow(
-                ConflictException,
-            );
+            await expect(service.hardDeleteUser('actor', 'user-1')).rejects.toThrow(ConflictException);
             expect(prismaMock.user.delete).not.toHaveBeenCalled();
         });
 
@@ -74,9 +70,7 @@ describe('UsersService', () => {
             prismaMock.planning.count.mockResolvedValue(0);
             prismaMock.planningEntry.count.mockResolvedValue(3);
 
-            await expect(service.hardDeleteUser('actor', 'user-1')).rejects.toThrow(
-                ConflictException,
-            );
+            await expect(service.hardDeleteUser('actor', 'user-1')).rejects.toThrow(ConflictException);
             expect(prismaMock.user.delete).not.toHaveBeenCalled();
         });
     });
@@ -85,13 +79,9 @@ describe('UsersService', () => {
         const context = { ipAddress: '203.0.113.1', userAgent: 'jest' };
 
         it("n'appelle jamais hardDeleteUser (prisma.user.delete) si le step-up TOTP échoue", async () => {
-            authServiceMock.verifyStepUpTotp.mockRejectedValue(
-                new UnauthorizedException('Re-authentication failed.'),
-            );
+            authServiceMock.verifyStepUpTotp.mockRejectedValue(new UnauthorizedException('Re-authentication failed.'));
 
-            await expect(
-                service.deleteOwnAccount('user-1', '000000', context),
-            ).rejects.toThrow(UnauthorizedException);
+            await expect(service.deleteOwnAccount('user-1', '000000', context)).rejects.toThrow(UnauthorizedException);
 
             expect(prismaMock.user.findUnique).not.toHaveBeenCalled();
             expect(prismaMock.user.delete).not.toHaveBeenCalled();
@@ -105,11 +95,7 @@ describe('UsersService', () => {
 
             await service.deleteOwnAccount('user-1', '123456', context);
 
-            expect(authServiceMock.verifyStepUpTotp).toHaveBeenCalledWith(
-                'user-1',
-                '123456',
-                context,
-            );
+            expect(authServiceMock.verifyStepUpTotp).toHaveBeenCalledWith('user-1', '123456', context);
             expect(prismaMock.user.delete).toHaveBeenCalledWith({ where: { id: 'user-1' } });
         });
     });

@@ -22,8 +22,8 @@ export async function bootstrapOwnerSession(app: INestApplication): Promise<{ ac
     if (!fs.existsSync(OWNER_INVITATION_FILE)) {
         throw new Error(
             `${OWNER_INVITATION_FILE} not found - did test/global-setup-e2e.ts run? ` +
-            'If prisma/seed.ts\'s console.log format for "Activation Link"/"OTP Code" changed, ' +
-            'update the regex in global-setup-e2e.ts to match.',
+                'If prisma/seed.ts\'s console.log format for "Activation Link"/"OTP Code" changed, ' +
+                'update the regex in global-setup-e2e.ts to match.',
         );
     }
     const { token, code, workEmail } = JSON.parse(fs.readFileSync(OWNER_INVITATION_FILE, 'utf-8'));
@@ -32,10 +32,7 @@ export async function bootstrapOwnerSession(app: INestApplication): Promise<{ ac
     // 1. Consume the invitation - returns the raw (plaintext) TOTP secret for manual entry
     // (`manualEntryKey`, see AuthService.consumeInvitation()'s return), which is exactly what
     // an authenticator app would show a human scanning the QR code.
-    const consumeRes = await http
-        .post('/api/auth/invitation/consume')
-        .send({ token, code })
-        .expect(200);
+    const consumeRes = await http.post('/api/auth/invitation/consume').send({ token, code }).expect(200);
     const totpSecret: string = consumeRes.body.manualEntryKey;
 
     // 2. Confirm MFA enrollment with a code computed from that secret - activates the account

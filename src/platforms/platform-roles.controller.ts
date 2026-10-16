@@ -14,7 +14,6 @@ import type { Actor } from './platform-access.service';
 @ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/roles')
 export class PlatformRolesController {
-
     constructor(private readonly platformRolesService: PlatformRolesService) {}
 
     @Get()
@@ -47,5 +46,4 @@ export class PlatformRolesController {
     remove(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('roleId') roleId: string) {
         return this.platformRolesService.remove(actor, platformId, roleId);
     }
-
 }

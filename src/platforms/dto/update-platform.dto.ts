@@ -5,7 +5,6 @@ import { IsString, IsOptional, IsUrl, MinLength, MaxLength } from 'class-validat
  * All properties are optional to allow flexible partial updates (PATCH requests).
  */
 export class UpdatePlatformDto {
-
     /**
      * An optional updated name for the platform.
      * Optional field: if provided, must be a string between 2 and 100 characters in length.
@@ -33,5 +32,4 @@ export class UpdatePlatformDto {
     @IsOptional()
     @IsUrl({ require_tld: false })
     url?: string;
-    
 }

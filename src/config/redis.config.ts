@@ -6,7 +6,6 @@ import { registerAs } from '@nestjs/config';
  * Accessible via `ConfigService.get('redis.property')`.
  */
 export default registerAs('redis', () => ({
-
     /**
      * Hostname or IP address of the Redis server.
      * * Fallback: 'localhost'
@@ -19,5 +18,4 @@ export default registerAs('redis', () => ({
      * * Fallback: 6379
      */
     port: parseInt(process.env.REDIS_PORT ?? '6379', 10),
-
 }));

@@ -1,14 +1,11 @@
-import {
-    IsString, IsEnum, IsOptional, IsBoolean, IsUUID, MinLength, MaxLength,
-} from 'class-validator';
+import { IsString, IsEnum, IsOptional, IsBoolean, IsUUID, MinLength, MaxLength } from 'class-validator';
 import { FieldType } from '@prismamodels/client';
 
 /**
- * Data Transfer Object (DTO) defining the schema and validation rules 
+ * Data Transfer Object (DTO) defining the schema and validation rules
  * for updating an existing field/column within a dynamic entity.
  */
 export class UpdateFieldDto {
-
     /**
      * Optional updated name/label for the field (e.g., "Primary Email").
      * * `@IsOptional()` - Allows partial updates; field can be omitted if unchanged.
@@ -78,11 +75,10 @@ export class UpdateFieldDto {
     defaultValue?: string;
 
     /**
-     * Optional updated flexible JSON metadata store for extended field configuration 
+     * Optional updated flexible JSON metadata store for extended field configuration
      * (e.g., updated select options, validation rules, or UI masks).
      * * `@IsOptional()` - Field can be omitted.
      */
     @IsOptional()
     config?: Record<string, unknown>;
-    
 }

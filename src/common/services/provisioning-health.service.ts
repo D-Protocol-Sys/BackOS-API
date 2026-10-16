@@ -2,7 +2,7 @@ import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 
 /**
- * Interface mapping PostgreSQL `pg_roles` system catalog attributes 
+ * Interface mapping PostgreSQL `pg_roles` system catalog attributes
  * required for database provisioning capabilities.
  */
 interface ProvisioningRoleState {
@@ -18,13 +18,9 @@ interface ProvisioningRoleState {
  */
 @Injectable()
 export class ProvisioningHealthService implements OnModuleInit {
-    private readonly logger = new Logger(
-        ProvisioningHealthService.name,
-    );
+    private readonly logger = new Logger(ProvisioningHealthService.name);
 
-    constructor(
-        private readonly prisma: PrismaService,
-    ) {}
+    constructor(private readonly prisma: PrismaService) {}
 
     /**
      * NestJS Lifecycle Hook executing automatically during application startup.
@@ -42,14 +38,10 @@ export class ProvisioningHealthService implements OnModuleInit {
         const roleName = process.env.POSTGRES_PROVISIONING_ROLE;
 
         if (!roleName) {
-            throw new Error(
-                'POSTGRES_PROVISIONING_ROLE is not configured.',
-            );
+            throw new Error('POSTGRES_PROVISIONING_ROLE is not configured.');
         }
 
-        this.logger.log(
-            `Checking PostgreSQL provisioning role "${roleName}"...`,
-        );
+        this.logger.log(`Checking PostgreSQL provisioning role "${roleName}"...`);
 
         // Query the PostgreSQL catalog directly for role attributes
         const result = await this.prisma.$queryRaw<ProvisioningRoleState[]>`
@@ -63,35 +55,22 @@ export class ProvisioningHealthService implements OnModuleInit {
         `;
 
         if (result.length === 0) {
-            this.logger.error(
-                `CRITICAL: PostgreSQL provisioning role "${roleName}" does not exist.`,
-            );
+            this.logger.error(`CRITICAL: PostgreSQL provisioning role "${roleName}" does not exist.`);
 
-            throw new Error(
-                `Required PostgreSQL provisioning role "${roleName}" does not exist.`,
-            );
+            throw new Error(`Required PostgreSQL provisioning role "${roleName}" does not exist.`);
         }
 
         const role = result[0];
 
         // Assert that the role possesses all required administrative capabilities
-        const valid =
-            role.rolcanlogin === true &&
-            role.rolcreatedb === true &&
-            role.rolcreaterole === true;
+        const valid = role.rolcanlogin === true && role.rolcreatedb === true && role.rolcreaterole === true;
 
         if (!valid) {
-            this.logger.error(
-                `CRITICAL: PostgreSQL provisioning role "${roleName}" has invalid privileges.`,
-            );
+            this.logger.error(`CRITICAL: PostgreSQL provisioning role "${roleName}" has invalid privileges.`);
 
-            throw new Error(
-                `PostgreSQL provisioning role "${roleName}" does not have the required privileges.`,
-            );
+            throw new Error(`PostgreSQL provisioning role "${roleName}" does not have the required privileges.`);
         }
 
-        this.logger.log(
-            `PostgreSQL provisioning role "${roleName}" is valid.`,
-        );
+        this.logger.log(`PostgreSQL provisioning role "${roleName}" is valid.`);
     }
 }

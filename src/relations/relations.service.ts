@@ -1,8 +1,6 @@
 import { PlatformAccessService } from '../platforms/platform-access.service';
 import { PLATFORM_PERMISSIONS } from '../common/constants/platform-permissions.constant';
-import {
-    Injectable, NotFoundException, ForbiddenException, BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ForbiddenException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRelationDto } from './dto/create-relation.dto';
 import { sanitizeRelationFieldName } from '../common/utils/relation-name.util';
@@ -19,7 +17,6 @@ type Actor = { userId: string; permissions: string[] };
  */
 @Injectable()
 export class RelationsService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly access: PlatformAccessService,
@@ -43,7 +40,6 @@ export class RelationsService {
      * Sanitizes field names and ensures field name availability on both entities.
      */
     async create(actor: Actor, platformId: string, dto: CreateRelationDto) {
-
         await this.assertCanEdit(actor, platformId, PERMISSIONS.ENTITY_UPDATE);
 
         // Fetch and validate that both target entities belong to the target platform concurrently

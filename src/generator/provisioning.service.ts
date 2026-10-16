@@ -74,7 +74,9 @@ export class ProvisioningService {
 
             const roleIdentifier = escapeIdentifier(dbUser);
             const databaseIdentifier = escapeIdentifier(dbName);
-            const provisionRoleIdentifier = escapeIdentifier(this.configService.getOrThrow<string>('database.provisioningRole'));
+            const provisionRoleIdentifier = escapeIdentifier(
+                this.configService.getOrThrow<string>('database.provisioningRole'),
+            );
 
             // Leftovers of a crashed previous attempt for THIS platform (names are platform-id-derived).
             const leftoverRole = await adminClient.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [dbUser]);
@@ -82,7 +84,7 @@ export class ProvisioningService {
             if ((leftoverRole.rowCount ?? 0) > 0 || (leftoverDatabase.rowCount ?? 0) > 0) {
                 this.logger.warn(
                     `Found PostgreSQL leftovers for platform "${platformId}" without a metadata record ` +
-                    `(interrupted provisioning). Dropping "${dbName}" / "${dbUser}" before recreating them.`,
+                        `(interrupted provisioning). Dropping "${dbName}" / "${dbUser}" before recreating them.`,
                 );
                 await this.dropPlatformResources(adminClient, dbName, dbUser);
             }
@@ -123,7 +125,9 @@ export class ProvisioningService {
                     metadataError instanceof Error ? metadataError.stack : String(metadataError),
                 );
                 await this.cleanupCreatedResources(adminClient, dbName, dbUser, resources);
-                throw new InternalServerErrorException('PostgreSQL database created, but internal registration failed.');
+                throw new InternalServerErrorException(
+                    'PostgreSQL database created, but internal registration failed.',
+                );
             }
 
             return {
@@ -268,7 +272,13 @@ export class ProvisioningService {
     }
 
     /** Standard Postgres connection string, encoding special characters and handling IPv6 hosts. */
-    private buildDatabaseUrl(host: string, port: number, databaseName: string, databaseUser: string, password: string): string {
+    private buildDatabaseUrl(
+        host: string,
+        port: number,
+        databaseName: string,
+        databaseUser: string,
+        password: string,
+    ): string {
         const normalizedHost = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
         return `postgresql://${encodeURIComponent(databaseUser)}:${encodeURIComponent(password)}@${normalizedHost}:${port}/${encodeURIComponent(databaseName)}?schema=public`;
     }
@@ -306,14 +316,20 @@ export class ProvisioningService {
 
             const roleExists = await adminClient.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [shadowRole]);
             if (roleExists.rowCount === 0) {
-                await adminClient.query(`CREATE ROLE ${roleIdentifier} WITH LOGIN PASSWORD ${escapeLiteral(shadowPassword)}`);
+                await adminClient.query(
+                    `CREATE ROLE ${roleIdentifier} WITH LOGIN PASSWORD ${escapeLiteral(shadowPassword)}`,
+                );
             } else {
-                await adminClient.query(`ALTER ROLE ${roleIdentifier} WITH LOGIN PASSWORD ${escapeLiteral(shadowPassword)}`);
+                await adminClient.query(
+                    `ALTER ROLE ${roleIdentifier} WITH LOGIN PASSWORD ${escapeLiteral(shadowPassword)}`,
+                );
             }
 
             await adminClient.query(`GRANT ${roleIdentifier} TO ${provisionRoleIdentifier}`);
             try {
-                const existing = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [shadowDbName]);
+                const existing = await adminClient.query('SELECT 1 FROM pg_database WHERE datname = $1', [
+                    shadowDbName,
+                ]);
                 if (existing.rowCount === 0) {
                     await adminClient.query(`CREATE DATABASE ${databaseIdentifier} OWNER ${roleIdentifier}`);
                     this.logger.log(`Shadow database created for migration diffs: "${shadowDbName}".`);

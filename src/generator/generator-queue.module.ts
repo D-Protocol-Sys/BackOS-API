@@ -47,5 +47,4 @@ export const GENERATION_JOB_RETENTION = {
     ],
     exports: [BullModule],
 })
-
 export class GeneratorQueueModule {}

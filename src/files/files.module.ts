@@ -4,7 +4,6 @@ import { FilesController } from './files.controller';
 import { PlanningModule } from '../planning/planning.module';
 
 @Module({
-
     imports: [PlanningModule],
 
     controllers: [FilesController],
@@ -12,7 +11,5 @@ import { PlanningModule } from '../planning/planning.module';
     providers: [FilesService],
 
     exports: [FilesService],
-
 })
-
 export class FilesModule {}

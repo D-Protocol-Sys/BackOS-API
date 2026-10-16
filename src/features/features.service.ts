@@ -14,7 +14,6 @@ import type { FeatureInfo, FeatureManifest } from './feature.types';
  */
 @Injectable()
 export class FeaturesService {
-
     private readonly logger = new Logger(FeaturesService.name);
     private readonly enabled: Set<string>;
 

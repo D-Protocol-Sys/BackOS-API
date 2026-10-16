@@ -10,7 +10,6 @@ import { ConfigService } from '@nestjs/config';
  */
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
-
     /**
      * Configures the JWT extraction and signature verification rules.
      * * @param configService - Injected service to retrieve environment variables safely.

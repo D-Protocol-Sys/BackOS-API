@@ -15,27 +15,82 @@ export interface ValidatorSpec {
 }
 
 export const FIELD_TYPE_VALIDATORS: Record<FieldType, ValidatorSpec> = {
-    STRING: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
-    TEXT: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
-    IMAGE: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
-    FILE: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
-    VIDEO: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
-    MEDIA: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
+    STRING: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
+    TEXT: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
+    IMAGE: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
+    FILE: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
+    VIDEO: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
+    MEDIA: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
     URL: {
         decorators: ['@IsString()', '@IsUrl({ require_tld: false })'],
         eachDecorators: ['@IsString({ each: true })', '@IsUrl({ require_tld: false }, { each: true })'],
         tsType: 'string',
         isDateField: false,
     },
-    NUMBER: { decorators: ['@IsNumber()'], eachDecorators: ['@IsNumber({}, { each: true })'], tsType: 'number', isDateField: false },
-    BOOLEAN: { decorators: ['@IsBoolean()'], eachDecorators: ['@IsBoolean({ each: true })'], tsType: 'boolean', isDateField: false },
-    DATE: { decorators: ['@IsDateString()'], eachDecorators: ['@IsDateString({}, { each: true })'], tsType: 'string', isDateField: true },
-    JSON: { decorators: ['@IsObject()'], eachDecorators: ['@IsObject({ each: true })'], tsType: 'Record<string, unknown>', isDateField: false },
+    NUMBER: {
+        decorators: ['@IsNumber()'],
+        eachDecorators: ['@IsNumber({}, { each: true })'],
+        tsType: 'number',
+        isDateField: false,
+    },
+    BOOLEAN: {
+        decorators: ['@IsBoolean()'],
+        eachDecorators: ['@IsBoolean({ each: true })'],
+        tsType: 'boolean',
+        isDateField: false,
+    },
+    DATE: {
+        decorators: ['@IsDateString()'],
+        eachDecorators: ['@IsDateString({}, { each: true })'],
+        tsType: 'string',
+        isDateField: true,
+    },
+    JSON: {
+        decorators: ['@IsObject()'],
+        eachDecorators: ['@IsObject({ each: true })'],
+        tsType: 'Record<string, unknown>',
+        isDateField: false,
+    },
     // Never actually read: an ENUM field's decorators/tsType depend on ITS OWN EnumDefinition
     // (the allowed values, and the Prisma enum type name), so `buildDtoFieldsSource()` and
     // `SchemaBuilderService` special-case ENUM before consulting this map. Present only so this
     // Record stays exhaustive over every FieldType.
-    ENUM: { decorators: ['@IsString()'], eachDecorators: ['@IsString({ each: true })'], tsType: 'string', isDateField: false },
+    ENUM: {
+        decorators: ['@IsString()'],
+        eachDecorators: ['@IsString({ each: true })'],
+        tsType: 'string',
+        isDateField: false,
+    },
 };
 
 /**

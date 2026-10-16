@@ -2,7 +2,7 @@
 import { IsEnum } from 'class-validator';
 
 /**
- * Enumeration defining allowable GDPR/data retention actions 
+ * Enumeration defining allowable GDPR/data retention actions
  * for handling disabled user accounts.
  */
 export enum RetentionAction {

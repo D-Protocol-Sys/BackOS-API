@@ -22,4 +22,3 @@ export default async function globalTeardown() {
     console.log('[e2e] Stopping test infra...');
     execSync(`docker compose -f "${composeFile}" down -v`, { stdio: 'inherit' });
 }
-

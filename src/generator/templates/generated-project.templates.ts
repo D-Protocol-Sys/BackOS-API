@@ -1,9 +1,9 @@
-import { toPascalCase } from "../../common/utils/case.util";
-import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from "../generated-backend.constants";
+import { toPascalCase } from '../../common/utils/case.util';
+import { GENERATED_BACKEND_API_PREFIX, GENERATED_BACKEND_CONTAINER_PORT } from '../generated-backend.constants';
 
 /**
  * Builds the `package.json` object structure for a generated NestJS application.
- * Merges baseline dependencies (NestJS, Prisma v7 with Pg adapter, class-validator) 
+ * Merges baseline dependencies (NestJS, Prisma v7 with Pg adapter, class-validator)
  * with dynamic plugin dependencies required by activated service blueprints.
  * * @param slug - The project name identifier.
  * @param extraDependencies - Additional runtime package dependencies injected from service blueprints.
@@ -16,14 +16,13 @@ export function packageJsonObject(
         devDependencies?: Record<string, string>;
     } = {},
 ) {
-    
     return {
-        'name': slug,
-        'version': '0.0.1',
-        'private': true,
+        name: slug,
+        version: '0.0.1',
+        private: true,
         scripts: {
-            'build': 'nest build',
-            'start': 'nest start',
+            build: 'nest build',
+            start: 'nest start',
             'start:dev': 'nest start --watch',
             // NOTE: matches the actual tsc/nest-cli output layout (outDir './dist', sourceRoot
             // 'src' -> dist/src/main.js), and DockerRuntimeManagerService.start() spawns this exact
@@ -39,22 +38,22 @@ export function packageJsonObject(
             '@nestjs/platform-express': '^11.0.1',
             '@prisma/client': '^7.9.0',
             '@prisma/adapter-pg': '^7.9.0',
-            'bullmq': '^5.81.3',
-            'pg': '^8.13.0',
+            bullmq: '^5.81.3',
+            pg: '^8.13.0',
             'class-validator': '^0.14.1',
             'class-transformer': '^0.5.1',
             'reflect-metadata': '^0.2.2',
-            'rxjs': '^7.8.1',
-            'dotenv': '^16.4.5',
+            rxjs: '^7.8.1',
+            dotenv: '^16.4.5',
             // Added alongside the loopback-binding / Swagger-in-prod security fix in
             // `mainTsTemplate()`, which now calls `app.use(helmet())` on every generated backend.
-            'helmet': '^8.0.0',
+            helmet: '^8.0.0',
             // Backs UploadsController (see uploadsMulterConfigTemplate()). Declared explicitly
             // rather than relying on it as a transitive dependency of `@nestjs/platform-express`
             // - pnpm's default strict, non-hoisted node_modules layout does NOT expose
             // transitive packages to `require()`, so omitting this would fail at runtime with
             // "Cannot find module 'multer'" the first time an upload is attempted.
-            'multer': '^1.4.5-lts.1',
+            multer: '^1.4.5-lts.1',
             ...(extraDependencies.dependencies ?? {}),
         },
         devDependencies: {
@@ -65,9 +64,9 @@ export function packageJsonObject(
             '@types/multer': '^1.4.12',
             // Types required by optional generated services.
             ...(extraDependencies.devDependencies ?? {}),
-            'prisma': '^7.9.0',
-            'tsx': '^4.19.0',
-            'typescript': '^5.7.3',
+            prisma: '^7.9.0',
+            tsx: '^4.19.0',
+            typescript: '^5.7.3',
         },
     };
 }
@@ -89,7 +88,7 @@ export const NEST_CLI_JSON = JSON.stringify(
 
 /**
  * Static JSON configuration for `tsconfig.json` in generated projects.
- * Configures decorator metadata support, ES target, and module path aliases 
+ * Configures decorator metadata support, ES target, and module path aliases
  * pointing `@prismamodels/*` to generated Prisma Client outputs.
  */
 export const TSCONFIG_JSON = JSON.stringify(
@@ -106,13 +105,10 @@ export const TSCONFIG_JSON = JSON.stringify(
             strict: true,
             skipLibCheck: true,
             paths: {
-                "@prismamodels/*": ["./prisma/generated/prisma/*"]
-            }
+                '@prismamodels/*': ['./prisma/generated/prisma/*'],
+            },
         },
-        include: [
-            "src",
-            "prisma/generated"
-        ],
+        include: ['src', 'prisma/generated'],
     },
     null,
     2,
@@ -137,7 +133,7 @@ export function prismaConfigTemplate(): string {
 
 /**
  * Generates the source code for `PrismaService` inside generated target apps.
- * Utilizes the modern Prisma PostgreSQL driver adapter (`PrismaPg`) 
+ * Utilizes the modern Prisma PostgreSQL driver adapter (`PrismaPg`)
  * and handles lifecycle database connection management (`$connect` / `$disconnect`).
  */
 export function prismaServiceTemplate(): string {
@@ -170,7 +166,7 @@ export function prismaServiceTemplate(): string {
 
 /**
  * Generates source code for global `PrismaModule`.
- * Decorated with `@Global()` to make the singleton `PrismaService` available across 
+ * Decorated with `@Global()` to make the singleton `PrismaService` available across
  * all entity modules without explicit re-importing.
  */
 export function prismaModuleTemplate(): string {
@@ -189,7 +185,7 @@ export function prismaModuleTemplate(): string {
 
 /**
  * Generates the `main.ts` application bootstrap entrypoint for target generated apps.
- * Configures global pipes (`ValidationPipe`), global API route prefix (`/api`), 
+ * Configures global pipes (`ValidationPipe`), global API route prefix (`/api`),
  * and Swagger OpenAPI documentation served at `/api/docs`.
  *
  * SECURITY FIX (bind address): `app.listen(port)` with no host argument binds Node's HTTP
@@ -319,7 +315,7 @@ export function mainTsTemplate(): string {
 }
 
 /**
- * Generates root `AppModule` class source code dynamically, assembling imports 
+ * Generates root `AppModule` class source code dynamically, assembling imports
  * for dynamic entities and feature modules provided by blueprints.
  * * @param entities - List of platform entity table definitions.
  * @param extraModules - Injected module references generated from service blueprints.
@@ -328,14 +324,11 @@ export function appModuleTemplate(
     entities: { tableName: string }[],
     extraModules: { name: string; importPath: string }[] = [],
 ): string {
-
     const entityImports = entities
         .map((e) => `import { ${toPascalCase(e.tableName)}Module } from './${e.tableName}/${e.tableName}.module';`)
         .join('\n');
 
-    const extraImports = extraModules
-        .map((m) => `import { ${m.name} } from '${m.importPath}';`)
-        .join('\n');
+    const extraImports = extraModules.map((m) => `import { ${m.name} } from '${m.importPath}';`).join('\n');
 
     const moduleList = [
         'PrismaModule',
@@ -359,7 +352,7 @@ export function appModuleTemplate(
 }
 
 /**
- * Generates `.env` file string content for target applications, converting camelCase 
+ * Generates `.env` file string content for target applications, converting camelCase
  * configuration keys into standard UPPER_SNAKE_CASE environment variable keys.
  * * @param databaseUrl - Target database connection string.
  * @param port - HTTP port assignment.
@@ -380,7 +373,6 @@ export function envTemplate(
     host: string = '127.0.0.1',
     corsOrigins: string[] = [],
 ): string {
-
     const lines = [
         `DATABASE_URL="${databaseUrl}"`,
         `PORT=${port}`,
@@ -393,6 +385,8 @@ export function envTemplate(
         // field definitions of the Auth & User service, which is an array of objects) is consumed
         // by its own code generator instead - stringifying it here would emit `[object Object]`.
         if (value === undefined || value === null || typeof value === 'object') continue;
+        // `value` is a scalar here: objects were skipped just above.
+        // eslint-disable-next-line @typescript-eslint/no-base-to-string
         lines.push(`${toEnvKey(key)}=${formatEnvValue(String(value))}`);
     }
 
@@ -414,7 +408,7 @@ function formatEnvValue(value: string): string {
 }
 
 /**
- * Helper function converting camelCase identifiers into standard UPPER_SNAKE_CASE 
+ * Helper function converting camelCase identifiers into standard UPPER_SNAKE_CASE
  * env variable names (e.g., `smtpPassword` -> `SMTP_PASSWORD`).
  */
 function toEnvKey(camelKey: string): string {
@@ -1034,16 +1028,18 @@ allowBuilds:
  * a build context is a broader leak surface than a spawned process's env would ever be).
  */
 export function dockerignoreTemplate(): string {
-    return [
-        'node_modules',
-        'dist',
-        '.env',
-        '.env.*',
-        'run.log',
-        '.git',
-        '*.log',
-        // Runtime data, bind-mounted read-write by DockerRuntimeManagerService.start() - never
-        // baked into the image (see the '-v ...:/app/uploads:rw' mount and its comment there).
-        'uploads',
-    ].join('\n') + '\n';
+    return (
+        [
+            'node_modules',
+            'dist',
+            '.env',
+            '.env.*',
+            'run.log',
+            '.git',
+            '*.log',
+            // Runtime data, bind-mounted read-write by DockerRuntimeManagerService.start() - never
+            // baked into the image (see the '-v ...:/app/uploads:rw' mount and its comment there).
+            'uploads',
+        ].join('\n') + '\n'
+    );
 }

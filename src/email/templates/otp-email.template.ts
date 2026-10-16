@@ -1,5 +1,4 @@
 export function buildOtpEmail(code: string, firstName: string) {
-
     const subject = 'Votre code de connexion • Back OS';
 
     const text = `
@@ -201,5 +200,4 @@ Merci de ne pas répondre à ce message.
         text,
         html,
     };
-
 }

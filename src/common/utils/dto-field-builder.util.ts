@@ -102,7 +102,9 @@ export function collectFieldValidatorImports(fields: DtoFieldInput[]): Set<strin
         }
 
         const spec = FIELD_TYPE_VALIDATORS[field.type as keyof typeof FIELD_TYPE_VALIDATORS];
-        const decorators = field.isArray ? ['@IsArray()', '@ArrayNotEmpty()', ...spec.eachDecorators] : [...spec.decorators];
+        const decorators = field.isArray
+            ? ['@IsArray()', '@ArrayNotEmpty()', ...spec.eachDecorators]
+            : [...spec.decorators];
 
         for (const decorator of decorators) {
             const match = decorator.match(/@(\w+)/);

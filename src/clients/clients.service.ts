@@ -18,7 +18,6 @@ import { ClientStatus, ContractStatus } from '@prismamodels/client';
  */
 @Injectable()
 export class ClientsService {
-
     private readonly logger = new Logger(ClientsService.name);
 
     constructor(
@@ -34,7 +33,7 @@ export class ClientsService {
     /**
      * Creates a new client in the database while ensuring email uniqueness.
      * Logs an audit event upon successful creation.
-     * 
+     *
      * @param dto - Client creation payload.
      * @param actorId - ID of the user performing the action.
      * @param context - Additional contextual metadata for auditing (e.g., IP, user agent).
@@ -85,7 +84,7 @@ export class ClientsService {
      * Mirrors `PlatformsService.list()`: archived clients are excluded from the default view
      * unless `includeArchived` is explicitly set, the same way an archived platform doesn't
      * show up in the default platform list either.
-     * 
+     *
      * @param page - Current page index (defaults to 1).
      * @param limit - Number of records per page (defaults to 20).
      * @param status - Optional status filter.
@@ -102,8 +101,8 @@ export class ClientsService {
         const where = status
             ? { status: status as ClientStatus }
             : includeArchived
-                ? {}
-                : { status: { not: ClientStatus.ARCHIVED } };
+              ? {}
+              : { status: { not: ClientStatus.ARCHIVED } };
 
         // Execute query and count simultaneously using Promise.all to optimize performance
         const [items, total] = await Promise.all([
@@ -120,19 +119,19 @@ export class ClientsService {
             this.prisma.client.count({ where }),
         ]);
 
-        return { 
-            items, 
-            total, 
-            page, 
-            limit, 
-            totalPages: Math.ceil(total / limit) 
+        return {
+            items,
+            total,
+            page,
+            limit,
+            totalPages: Math.ceil(total / limit),
         };
     }
 
     /**
      * Fetches a single client record by unique ID, including platform and contracts relations.
      * Throws NotFoundException if the record does not exist.
-     * 
+     *
      * @param id - Unique identifier of the client.
      */
     async findOne(id: string) {
@@ -152,16 +151,14 @@ export class ClientsService {
 
     /**
      * Retrieves paginated clients assigned to a specific platform ID.
-     * 
+     *
      * @param platformId - Unique identifier of the platform filter.
      * @param page - Current page index.
      * @param limit - Number of records per page.
      */
     async findByPlatform(platformId: string, page = 1, limit = 20, includeArchived = false) {
         const skip = (page - 1) * limit;
-        const where = includeArchived
-            ? { platformId }
-            : { platformId, status: { not: ClientStatus.ARCHIVED } };
+        const where = includeArchived ? { platformId } : { platformId, status: { not: ClientStatus.ARCHIVED } };
 
         const [items, total] = await Promise.all([
             this.prisma.client.findMany({
@@ -189,7 +186,7 @@ export class ClientsService {
     /**
      * Updates an existing client record.
      * Triggers an audit log entry if the client status is changed.
-     * 
+     *
      * @param id - Unique client identifier.
      * @param dto - Partial payload with fields to update.
      * @param actorId - ID of the user performing the action.
@@ -591,14 +588,15 @@ export class ClientsService {
     // ==========================================
 
     /**
-     * Generates a cryptographically secure, time-limited token allowing a client 
+     * Generates a cryptographically secure, time-limited token allowing a client
      * to submit a review without requiring authentication.
-     * 
+     *
      * @param id - Target client ID.
      * @param actorId - ID of the user issuing the invitation.
      * @param context - Optional audit context.
      */
-    async generateTestimonialInvite(id: string, actorId: string, context?: AuditContext) {
+    // NOTE: `_actorId` and `_context` are accepted but not used yet: this method records no audit entry.
+    async generateTestimonialInvite(id: string, _actorId: string, _context?: AuditContext) {
         const client = await this.findOne(id);
 
         // An archived client is meant to be winding down toward permanent deletion (see
@@ -650,7 +648,7 @@ export class ClientsService {
     /**
      * Submits a testimonial using an unexpired single-use validation token.
      * Consumes the token upon completion and places the review in moderation status.
-     * 
+     *
      * @param token - Secure access token.
      * @param dto - Feedback content and numeric rating payload.
      */
@@ -682,7 +680,7 @@ export class ClientsService {
             throw new NotFoundException('Invalid or expired invitation link.');
         }
 
-        const updated = await this.prisma.client.update({
+        await this.prisma.client.update({
             where: { id: client.id },
             data: {
                 testimonialText: dto.testimonialText,
@@ -706,7 +704,7 @@ export class ClientsService {
 
     /**
      * Toggles whether a client's testimonial is visible on public listings.
-     * 
+     *
      * @param id - Unique client identifier.
      * @param isPublic - Target visibility flag.
      * @param actorId - Admin user making the update.
@@ -765,7 +763,7 @@ export class ClientsService {
 
     /**
      * Attaches a new contractual record to a specific client profile.
-     * 
+     *
      * @param clientId - Target client ID.
      * @param dto - Contract specifications payload.
      * @param actorId - ID of user creating the contract.
@@ -796,10 +794,10 @@ export class ClientsService {
             actorId,
             targetType: AUDIT_TARGETS.CLIENT_CONTRACT,
             targetId: contract.id,
-            metadata: { 
-                clientId, 
-                contractNumber: contract.contractNumber, 
-                amount: contract.billingAmount 
+            metadata: {
+                clientId,
+                contractNumber: contract.contractNumber,
+                amount: contract.billingAmount,
             },
             context,
         });

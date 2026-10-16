@@ -18,7 +18,6 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/entities')
 export class EntitiesController {
-    
     /**
      * @param entitiesService - Service injected to encapsulate domain and database business logic.
      */
@@ -33,9 +32,9 @@ export class EntitiesController {
      */
     @Get()
     list(
-        @CurrentUser() actor: Actor, 
+        @CurrentUser() actor: Actor,
         @Param('platformId') platformId: string,
-        @Query('includeArchived') includeArchived?: string
+        @Query('includeArchived') includeArchived?: string,
     ) {
         // Converts query string representation to a strict boolean value
         return this.entitiesService.list(actor, platformId, includeArchived === 'true');
@@ -49,11 +48,7 @@ export class EntitiesController {
      * @param entityId - Target entity ID.
      */
     @Get(':entityId')
-    getById(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Param('entityId') entityId: string,
-    ) {
+    getById(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('entityId') entityId: string) {
         return this.entitiesService.getById(actor, platformId, entityId);
     }
 
@@ -65,11 +60,7 @@ export class EntitiesController {
      * @param dto - Validated body payload mapped to `CreateEntityDto`.
      */
     @Post()
-    create(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Body() dto: CreateEntityDto,
-    ) {
+    create(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Body() dto: CreateEntityDto) {
         return this.entitiesService.create(actor, platformId, dto);
     }
 
@@ -99,11 +90,7 @@ export class EntitiesController {
      * @param entityId - Target entity ID.
      */
     @Delete(':entityId')
-    delete(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Param('entityId') entityId: string,
-    ) {
+    delete(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('entityId') entityId: string) {
         return this.entitiesService.delete(actor, platformId, entityId);
     }
 
@@ -133,11 +120,7 @@ export class EntitiesController {
      * @param entityId - Target entity ID.
      */
     @Patch(':entityId/archive')
-    archive(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Param('entityId') entityId: string,
-    ) {
+    archive(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('entityId') entityId: string) {
         return this.entitiesService.archive(actor, platformId, entityId);
     }
 
@@ -149,11 +132,7 @@ export class EntitiesController {
      * @param entityId - Target entity ID.
      */
     @Patch(':entityId/restore')
-    restore(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Param('entityId') entityId: string,
-    ) {
+    restore(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('entityId') entityId: string) {
         return this.entitiesService.restore(actor, platformId, entityId);
     }
 
@@ -174,5 +153,4 @@ export class EntitiesController {
     ) {
         return this.entitiesService.setAuthProtection(actor, platformId, entityId, flags);
     }
-
 }

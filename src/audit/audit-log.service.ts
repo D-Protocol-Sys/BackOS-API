@@ -64,12 +64,11 @@ export interface AuditLogEntry {
 
 /**
  * Audit Log Service
- * * Central service responsible for recording critical security events, system mutations, 
+ * * Central service responsible for recording critical security events, system mutations,
  * and administrative actions into an immutable audit trail for accountability and compliance.
  */
 @Injectable()
 export class AuditLogService {
-
     constructor(private readonly prisma: PrismaService) {}
 
     /**
@@ -102,15 +101,15 @@ export class AuditLogService {
         return this.prisma.auditLog.findMany({
             orderBy: { createdAt: 'desc' },
             take: limit,
-            include: { 
-                actor: { 
+            include: {
+                actor: {
                     select: {
                         id: true,
                         workEmail: true,
                         firstName: true,
                         lastName: true,
                     },
-                }, 
+                },
             },
         });
     }

@@ -1,5 +1,15 @@
 import { Type } from 'class-transformer';
-import { ArrayMaxSize, IsArray, IsBoolean, IsIn, IsOptional, IsString, MaxLength, MinLength, ValidateNested } from 'class-validator';
+import {
+    ArrayMaxSize,
+    IsArray,
+    IsBoolean,
+    IsIn,
+    IsOptional,
+    IsString,
+    MaxLength,
+    MinLength,
+    ValidateNested,
+} from 'class-validator';
 import { FIELD_TYPE_TO_PRISMA } from '../../common/utils/field-type-mapper.util';
 import { MAX_PROFILE_FIELDS } from '../service-catalog/profile-fields.util';
 

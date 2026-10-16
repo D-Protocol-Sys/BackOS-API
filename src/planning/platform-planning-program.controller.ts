@@ -1,5 +1,15 @@
 import {
-    Body, Controller, Delete, Get, Param, ParseEnumPipe, ParseIntPipe, Patch, Post, Put, Query,
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    ParseEnumPipe,
+    ParseIntPipe,
+    Patch,
+    Post,
+    Put,
+    Query,
 } from '@nestjs/common';
 import { PlanningWeekDay } from '@prismamodels/client';
 import { PlanningProgramService } from './planning-program.service';

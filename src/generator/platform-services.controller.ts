@@ -41,11 +41,7 @@ export class PlatformServicesController {
      * @param dto - Data transfer object containing the serviceKey and configuration options.
      */
     @Post()
-    enable(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Body() dto: EnableServiceDto,
-    ) {
+    enable(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Body() dto: EnableServiceDto) {
         return this.platformServices.enable(actor, platformId, dto.serviceKey, dto.config);
     }
 

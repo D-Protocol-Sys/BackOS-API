@@ -35,7 +35,6 @@ export const SYSTEM_ADMIN_ROLE_NAME = 'ADMIN';
  */
 @Injectable()
 export class PlatformsService {
-
     private readonly logger = new Logger(PlatformsService.name);
 
     constructor(
@@ -49,7 +48,12 @@ export class PlatformsService {
     ) {}
 
     /** SEC-027: platform operations are audited; an audit failure never blocks the operation. */
-    private async audit(actorId: string | null, action: AuditAction, platformId: string, metadata: Record<string, unknown> = {}) {
+    private async audit(
+        actorId: string | null,
+        action: AuditAction,
+        platformId: string,
+        metadata: Record<string, unknown> = {},
+    ) {
         try {
             await this.auditLog.log({
                 action,
@@ -59,7 +63,10 @@ export class PlatformsService {
                 metadata: metadata as never,
             });
         } catch (error) {
-            this.logger.error(`Audit log failed for ${action} on ${platformId}.`, error instanceof Error ? error.stack : String(error));
+            this.logger.error(
+                `Audit log failed for ${action} on ${platformId}.`,
+                error instanceof Error ? error.stack : String(error),
+            );
         }
     }
 
@@ -70,29 +77,30 @@ export class PlatformsService {
      * "member with no role" state - see `PlatformMember` in schema.prisma).
      */
     async create(actor: Actor, dto: CreatePlatformDto) {
-
         const slug = await this.generateUniqueSlug(dto.name);
 
-        return this.prisma.$transaction(async (tx) => {
-            const platform = await tx.platform.create({
-                data: {
-                    name: dto.name,
-                    description: dto.description,
-                    url: dto.url,
-                    slug,
-                    ownerId: actor.userId,
-                },
-            });
+        return this.prisma
+            .$transaction(async (tx) => {
+                const platform = await tx.platform.create({
+                    data: {
+                        name: dto.name,
+                        description: dto.description,
+                        url: dto.url,
+                        slug,
+                        ownerId: actor.userId,
+                    },
+                });
 
-            await tx.platformRole.create({
-                data: { platformId: platform.id, name: SYSTEM_ADMIN_ROLE_NAME, isSystem: true },
-            });
+                await tx.platformRole.create({
+                    data: { platformId: platform.id, name: SYSTEM_ADMIN_ROLE_NAME, isSystem: true },
+                });
 
-            return platform;
-        }).then(async (platform) => {
-            await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_CREATE, platform.id, { slug: platform.slug });
-            return platform;
-        });
+                return platform;
+            })
+            .then(async (platform) => {
+                await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_CREATE, platform.id, { slug: platform.slug });
+                return platform;
+            });
     }
 
     /**
@@ -100,27 +108,20 @@ export class PlatformsService {
      * Actors with global read permissions see all platforms; others see only owned/joined platforms.
      */
     async list(actor: Actor, includeArchived = false) {
-
         const canSeeAll = actor.permissions.includes(PERMISSIONS.PLATFORM_READ);
 
         return this.prisma.platform.findMany({
-
             where: {
                 ...(includeArchived ? {} : { status: { not: 'ARCHIVED' } }),
                 ...(canSeeAll
-                ? {}
-                : {
-                    OR: [
-                        { ownerId: actor.userId },
-                        { members: { some: { userId: actor.userId } } },
-                    ],
-                    }),
+                    ? {}
+                    : {
+                          OR: [{ ownerId: actor.userId }, { members: { some: { userId: actor.userId } } }],
+                      }),
             },
 
             orderBy: { createdAt: 'desc' },
-
         });
-
     }
 
     /**
@@ -137,7 +138,12 @@ export class PlatformsService {
      */
     async update(actor: Actor, id: string, dto: UpdatePlatformDto) {
         const platform = await this.findPlatformOrThrow(id);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_UPDATE, PERMISSIONS.PLATFORM_UPDATE);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_UPDATE,
+            PERMISSIONS.PLATFORM_UPDATE,
+        );
 
         return this.prisma.platform.update({ where: { id }, data: dto });
     }
@@ -222,7 +228,7 @@ export class PlatformsService {
         if (platform.status !== 'ARCHIVED') {
             throw new BadRequestException(
                 'Only an archived platform can be permanently deleted. Archive it first with ' +
-                'DELETE /platforms/:id.',
+                    'DELETE /platforms/:id.',
             );
         }
 
@@ -253,12 +259,15 @@ export class PlatformsService {
         for (const platform of expired) {
             try {
                 await this.purgePlatform(platform.id, platform.slug);
-                await this.audit(null, AUDIT_ACTIONS.PLATFORM_PURGED, platform.id, { slug: platform.slug, reason: 'retention' });
+                await this.audit(null, AUDIT_ACTIONS.PLATFORM_PURGED, platform.id, {
+                    slug: platform.slug,
+                    reason: 'retention',
+                });
                 purgedCount++;
             } catch (error) {
                 this.logger.error(
                     `Failed to auto-purge archived platform ${platform.id} (${platform.slug}) ` +
-                    `after retention window expired.`,
+                        `after retention window expired.`,
                     error instanceof Error ? error.stack : String(error),
                 );
             }
@@ -277,7 +286,9 @@ export class PlatformsService {
         // Scenario F of the audit: never delete files and database under a running generation.
         const running = await this.prisma.generation.count({ where: { platformId, status: 'RUNNING' } });
         if (running > 0) {
-            throw new ConflictException('A generation is still running for this platform. Cancel it or wait for it to finish.');
+            throw new ConflictException(
+                'A generation is still running for this platform. Cancel it or wait for it to finish.',
+            );
         }
 
         await this.stopRuntimeBestEffort(platformId);
@@ -296,8 +307,7 @@ export class PlatformsService {
             // far smaller problem than leaving the platform (and its running container, if the
             // stop above failed too) permanently un-deletable.
             this.logger.warn(
-                `Could not fully remove generated files for platform ${platformId} (${slug}) ` +
-                `during purge.`,
+                `Could not fully remove generated files for platform ${platformId} (${slug}) ` + `during purge.`,
                 error instanceof Error ? error.stack : String(error),
             );
         }
@@ -364,7 +374,10 @@ export class PlatformsService {
             return result;
         });
         // The new owner gets an internal account on the generated backend right away.
-        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_OWNERSHIP_TRANSFERRED, id, { from: platform.ownerId, to: dto.newOwnerId });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_OWNERSHIP_TRANSFERRED, id, {
+            from: platform.ownerId,
+            to: dto.newOwnerId,
+        });
         void this.internalAccountsSync.notify(id);
         return updated;
     }
@@ -417,7 +430,12 @@ export class PlatformsService {
      */
     async addMember(actor: Actor, platformId: string, dto: AddMemberDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
         const role = await this.resolveRoleOrThrow(platformId, dto.platformRoleId);
         await this.assertCanGrantRole(actor, platform, role);
 
@@ -438,7 +456,10 @@ export class PlatformsService {
         });
         // Immediate effect on the generated backend: an ADMIN / data-role member gets their
         // internal account created now (no restart, no regeneration) - see InternalAccountsSyncService.
-        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ADDED, platformId, { userId: dto.userId, platformRoleId: role.id });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ADDED, platformId, {
+            userId: dto.userId,
+            platformRoleId: role.id,
+        });
         void this.internalAccountsSync.notify(platformId);
         return member;
     }
@@ -448,7 +469,12 @@ export class PlatformsService {
      */
     async updateMemberRole(actor: Actor, platformId: string, targetUserId: string, dto: UpdateMemberRoleDto) {
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
         const role = await this.resolveRoleOrThrow(platformId, dto.platformRoleId);
         await this.assertCanGrantRole(actor, platform, role);
 
@@ -463,7 +489,10 @@ export class PlatformsService {
             data: { platformRoleId: role.id },
         });
         // Gaining OR losing data access changes who holds an internal account.
-        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ROLE_CHANGED, platformId, { userId: targetUserId, platformRoleId: role.id });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_ROLE_CHANGED, platformId, {
+            userId: targetUserId,
+            platformRoleId: role.id,
+        });
         void this.internalAccountsSync.notify(platformId);
         return updated;
     }
@@ -473,9 +502,13 @@ export class PlatformsService {
      * otherwise flags a pending removal request requiring confirmation.
      */
     async removeMember(actor: Actor, platformId: string, targetUserId: string) {
-
         const platform = await this.findPlatformOrThrow(platformId);
-        await this.access.assertHasPermission(actor, platform, PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+        await this.access.assertHasPermission(
+            actor,
+            platform,
+            PLATFORM_PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+            PERMISSIONS.PLATFORM_MANAGE_MEMBERS,
+        );
 
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
@@ -483,8 +516,7 @@ export class PlatformsService {
         if (!membership) throw new NotFoundException('This member is not part of the platform.');
 
         const isOwnerOrGlobal =
-            platform.ownerId === actor.userId ||
-            actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+            platform.ownerId === actor.userId || actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
 
         if (!isOwnerOrGlobal) {
             await this.assertCanManageExistingMember(actor, platform, targetUserId);
@@ -506,16 +538,16 @@ export class PlatformsService {
             data: { removalRequestedAt: new Date(), removalRequestedById: actor.userId },
         });
 
-        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED, platformId, { userId: targetUserId });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVAL_REQUESTED, platformId, {
+            userId: targetUserId,
+        });
         return { ...updated, status: 'pending_approval' };
-    
     }
 
     /**
      * Confirms and executes a pending member removal request.
      */
     async confirmMemberRemoval(actor: Actor, platformId: string, targetUserId: string) {
-
         const platform = await this.findPlatformOrThrow(platformId);
         this.assertOwnerOrGlobalPermission(actor, platform, PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
 
@@ -528,7 +560,10 @@ export class PlatformsService {
         }
 
         await this.prisma.platformMember.delete({ where: { id: membership.id } });
-        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED, platformId, { userId: targetUserId, confirmed: true });
+        await this.audit(actor.userId, AUDIT_ACTIONS.PLATFORM_MEMBER_REMOVED, platformId, {
+            userId: targetUserId,
+            confirmed: true,
+        });
         // Their internal account on the generated backend is revoked right away.
         void this.internalAccountsSync.notify(platformId);
         return { message: 'Removal confirmed, member deleted.' };
@@ -538,7 +573,6 @@ export class PlatformsService {
      * Cancels a pending member removal request.
      */
     async cancelMemberRemoval(actor: Actor, platformId: string, targetUserId: string) {
-
         const platform = await this.findPlatformOrThrow(platformId);
         const membership = await this.prisma.platformMember.findUnique({
             where: { platformId_userId: { platformId, userId: targetUserId } },
@@ -549,8 +583,7 @@ export class PlatformsService {
         }
 
         const isOwnerOrGlobal =
-            platform.ownerId === actor.userId ||
-            actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
+            platform.ownerId === actor.userId || actor.permissions.includes(PERMISSIONS.PLATFORM_MANAGE_MEMBERS);
         const isRequester = membership.removalRequestedById === actor.userId;
 
         if (!isOwnerOrGlobal && !isRequester) {
@@ -599,11 +632,7 @@ export class PlatformsService {
     /**
      * Asserts action is executed by the platform owner or an actor with global permission.
      */
-    private assertOwnerOrGlobalPermission(
-        actor: Actor,
-        platform: { ownerId: string },
-        globalPermission: string,
-    ) {
+    private assertOwnerOrGlobalPermission(actor: Actor, platform: { ownerId: string }, globalPermission: string) {
         if (platform.ownerId === actor.userId) return;
         if (actor.permissions.includes(globalPermission)) return;
         throw new ForbiddenException('Action reserved for the platform owner.');
@@ -698,5 +727,4 @@ export class PlatformsService {
         }
         return candidate;
     }
-
 }

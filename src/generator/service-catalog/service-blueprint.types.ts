@@ -1,6 +1,6 @@
 /**
  * Interface defining a configuration field required by a pluggable service.
- * Used by front-end forms and validation pipelines to dynamically render 
+ * Used by front-end forms and validation pipelines to dynamically render
  * and validate service settings (e.g., API keys, port numbers, passwords).
  */
 export interface ServiceConfigField {
@@ -48,7 +48,7 @@ export type ServicePrismaModels = string | ((config: Record<string, unknown>) =>
 
 /**
  * Interface representing a service blueprint manifest.
- * Serves as the master contract for dynamically injected platform features 
+ * Serves as the master contract for dynamically injected platform features
  * (such as Auth, Mailing, or Scheduler modules).
  */
 export interface ServiceBlueprint {

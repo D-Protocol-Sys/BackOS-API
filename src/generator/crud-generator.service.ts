@@ -36,7 +36,6 @@ function withEnumValues(fields: EntityWithFields['fields']) {
  */
 @Injectable()
 export class CrudGeneratorService {
-
     /**
      * Generates DTO properties supporting schedulable/publishable entities (`publishAt`, `unpublishAt`).
      * @returns String template representing DTO property entries.
@@ -59,7 +58,6 @@ export class CrudGeneratorService {
         relationFieldsByEntity: Map<string, RelationFieldMeta[]>,
         entityIdByTableName: Map<string, string>,
     ): Promise<string[]> {
-
         const moduleNames: string[] = [];
 
         for (const entity of entities) {
@@ -160,10 +158,10 @@ export class CrudGeneratorService {
         const body = [
             this.buildDtoFields(fields, false),
             this.buildRelationDtoFields(relations, false),
-            isSchedulable ? this.schedulableDtoFields() : ''
+            isSchedulable ? this.schedulableDtoFields() : '',
         ]
-        .filter(Boolean)
-        .join('\n\n');
+            .filter(Boolean)
+            .join('\n\n');
 
         return `
             import { ${Array.from(imports).sort().join(', ')} } from 'class-validator';
@@ -181,17 +179,17 @@ export class CrudGeneratorService {
         modelName: string,
         fields: EntityWithFields['fields'],
         relations: RelationFieldMeta[],
-        isSchedulable: boolean
+        isSchedulable: boolean,
     ): string {
         const imports = new Set(this.collectImports(fields, relations).split(', '));
         if (isSchedulable) imports.add('IsDateString');
         const body = [
             this.buildDtoFields(fields, true),
             this.buildRelationDtoFields(relations, true),
-            isSchedulable ? this.schedulableDtoFields() : ''
+            isSchedulable ? this.schedulableDtoFields() : '',
         ]
-        .filter(Boolean)
-        .join('\n\n');
+            .filter(Boolean)
+            .join('\n\n');
 
         return `
             import { ${Array.from(imports).sort().join(', ')} } from 'class-validator';
@@ -212,7 +210,7 @@ export class CrudGeneratorService {
         tableName: string,
         fields: EntityWithFields['fields'],
         relations: RelationFieldMeta[],
-        isSchedulable: boolean
+        isSchedulable: boolean,
     ): string {
         const modelCamel = toCamelCase(tableName);
         const dateFields = fields.filter(
@@ -395,7 +393,6 @@ export class CrudGeneratorService {
         isSchedulable: boolean,
         authFlags: { create: boolean; read: boolean; update: boolean; delete: boolean },
     ): string {
-
         const anyProtected = authFlags.create || authFlags.read || authFlags.update || authFlags.delete;
         const anyWriteProtected = authFlags.create || authFlags.update || authFlags.delete;
         // A SCHEDULABLE entity (availability window: publishAt / unpublishAt) also guards its read
@@ -406,14 +403,20 @@ export class CrudGeneratorService {
             ? `\nimport { UseGuards } from '@nestjs/common';${
                   anyProtected ? `\nimport { JwtAuthGuard } from '../common/guards/jwt-auth.guard';` : ''
               }${anyWriteProtected ? `\nimport { InternalOnlyGuard } from '../common/guards/internal-only.guard';` : ''}${
-                  isSchedulable ? `\nimport { UnpublishedAccessGuard } from '../common/guards/unpublished-access.guard';` : ''
+                  isSchedulable
+                      ? `\nimport { UnpublishedAccessGuard } from '../common/guards/unpublished-access.guard';`
+                      : ''
               }`
             : '';
         // READ routes: any signed-in account (internal staff, or an external visitor / customer).
         // WRITE routes (create / update / delete): INTERNAL accounts only - an external user is a
         // visitor and never holds administration rights, whatever the entity.
         const guardDecorator = (protect: boolean, writes = false) =>
-            protect ? (writes ? '  @UseGuards(JwtAuthGuard, InternalOnlyGuard)\n' : '  @UseGuards(JwtAuthGuard)\n') : '';
+            protect
+                ? writes
+                    ? '  @UseGuards(JwtAuthGuard, InternalOnlyGuard)\n'
+                    : '  @UseGuards(JwtAuthGuard)\n'
+                : '';
 
         // READ routes of a schedulable entity: whoever is allowed to read the entity only ever sees
         // PUBLISHED records, unless they ask for `?includeUnpublished=true` AND hold an internal
@@ -445,7 +448,7 @@ export class CrudGeneratorService {
                 }`;
 
         const queryImport = isSchedulable ? ', Query' : '';
-        
+
         return `
             import { Body, Controller, Delete, Get, Param, Patch, Post${queryImport} } from '@nestjs/common';
             import { ApiTags${needsGuards ? ', ApiBearerAuth' : ''} } from '@nestjs/swagger';${guardImport}

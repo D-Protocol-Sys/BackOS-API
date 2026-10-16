@@ -2,7 +2,7 @@ import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 
 /**
  * Registry managing execution cancellation for async generation tasks.
- * Educational Note: Uses native `AbortController` instances stored in an in-memory `Map` 
+ * Educational Note: Uses native `AbortController` instances stored in an in-memory `Map`
  * to send cancellation signals to long-running tasks across asynchronous boundaries.
  */
 @Injectable()

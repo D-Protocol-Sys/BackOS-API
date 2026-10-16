@@ -17,9 +17,7 @@ import { QrCodeService } from '../common/utils/qr-code.service';
 // module instead of this one - no behavioural change for anything in this module.
 
 @Module({
-
     imports: [
-
         PassportModule,
         JwtModule.registerAsync({
             imports: [ConfigModule],
@@ -35,17 +33,8 @@ import { QrCodeService } from '../common/utils/qr-code.service';
 
     controllers: [AuthController],
 
-    providers: [
-        AuthService,
-        JwtStrategy,
-        RecoveryCodeService,
-        MfaService,
-        TotpService,
-        QrCodeService,
-    ],
+    providers: [AuthService, JwtStrategy, RecoveryCodeService, MfaService, TotpService, QrCodeService],
 
     exports: [AuthService],
-
 })
-
 export class AuthModule {}

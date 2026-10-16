@@ -40,9 +40,7 @@ describe('BackupService.resolveDumpPath (audit #6)', () => {
     });
 
     it("lève NotFoundException si le fichier n'existe pas sur disque", () => {
-        expect(() => service.resolveDumpPath('platform-abc_20260101-120000.sql.gz')).toThrow(
-            NotFoundException,
-        );
+        expect(() => service.resolveDumpPath('platform-abc_20260101-120000.sql.gz')).toThrow(NotFoundException);
     });
 
     it('rejette un nom contenant un séparateur de chemin ("/") - tentative de traversal', () => {
@@ -50,9 +48,7 @@ describe('BackupService.resolveDumpPath (audit #6)', () => {
     });
 
     it('rejette un nom contenant un séparateur de chemin ("\\\\")', () => {
-        expect(() => service.resolveDumpPath('..\\..\\windows\\system32')).toThrow(
-            BadRequestException,
-        );
+        expect(() => service.resolveDumpPath('..\\..\\windows\\system32')).toThrow(BadRequestException);
     });
 
     it("rejette un nom qui ne correspond pas au motif attendu (n'importe quelle extension)", () => {

@@ -7,7 +7,6 @@ import { IsUUID } from 'class-validator';
  * `PlatformsService.assertCanGrantRole()` for the rules on who can grant which role.
  */
 export class AddMemberDto {
-
     /** The unique identifier (UUID v4) of the target user to add. */
     @IsUUID()
     userId!: string;
@@ -15,5 +14,4 @@ export class AddMemberDto {
     /** The id of the `PlatformRole` (on this same platform) to assign the user. */
     @IsUUID()
     platformRoleId!: string;
-
 }

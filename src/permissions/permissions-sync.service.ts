@@ -5,23 +5,21 @@ import { collectFeaturePermissions } from '../features/feature-registry';
 
 /**
  * Service responsible for synchronizing application permissions with the database.
- * Implements `OnApplicationBootstrap` to execute permission indexing automatically 
+ * Implements `OnApplicationBootstrap` to execute permission indexing automatically
  * when the NestJS application starts up.
  */
 @Injectable()
 export class PermissionsSyncService implements OnApplicationBootstrap {
-
     private readonly logger = new Logger(PermissionsSyncService.name);
 
     constructor(private readonly prisma: PrismaService) {}
 
     /**
      * NestJS Lifecycle Hook triggered once all application modules have initialized.
-     * Iterates over all defined permission keys and performs an idempotent upsert 
+     * Iterates over all defined permission keys and performs an idempotent upsert
      * in the database to keep the catalog up to date with code constants.
      */
     async onApplicationBootstrap() {
-
         // OPTIONAL FEATURES: the permissions declared by EVERY installed feature are part of the
         // catalog, whether the feature is currently enabled or not. Leaving a disabled feature's
         // permissions out would make the purge below delete them, and with them every role's
@@ -55,14 +53,13 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
         if (deleted.count > 0) {
             this.logger.warn(
                 `Permission catalog purge: removed ${deleted.count} stale permission(s) no ` +
-                `longer defined in code (and revoked them from any role that still held them).`,
+                    `longer defined in code (and revoked them from any role that still held them).`,
             );
         }
 
         await this.syncOwnerRolePermissions();
 
         this.logger.log(`Permission catalog successfully synchronized (${keys.length} permissions).`);
-    
     }
 
     /**
@@ -80,7 +77,6 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
      * On a brand-new database the role doesn't exist yet (the seed creates it), so this is a no-op.
      */
     private async syncOwnerRolePermissions() {
-
         const ownerRole = await this.prisma.role.findUnique({ where: { name: 'owner' } });
         if (!ownerRole) return;
 
@@ -95,5 +91,4 @@ export class PermissionsSyncService implements OnApplicationBootstrap {
             this.logger.log(`Owner role: granted ${result.count} new permission(s) automatically.`);
         }
     }
-    
 }

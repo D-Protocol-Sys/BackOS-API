@@ -25,7 +25,6 @@ export type PlatformLike = { id: string; ownerId: string };
  */
 @Injectable()
 export class PlatformAccessService {
-
     constructor(private readonly prisma: PrismaService) {}
 
     /**
@@ -49,7 +48,10 @@ export class PlatformAccessService {
      *   (`PLATFORM_ADMIN_IMPLICIT_PERMISSIONS`), never read from `PlatformRolePermission` rows;
      * - any other (custom) role holds exactly the permissions stored on its row.
      */
-    async getEffectivePermissions(actor: Actor, platform: PlatformLike): Promise<{
+    async getEffectivePermissions(
+        actor: Actor,
+        platform: PlatformLike,
+    ): Promise<{
         isOwner: boolean;
         isAdmin: boolean;
         permissions: Set<PlatformPermissionKey>;
@@ -139,7 +141,11 @@ export class PlatformAccessService {
                         platformRole: {
                             OR: [
                                 { isSystem: true },
-                                { rolePermissions: { some: { platformPermission: { key: { in: dataPermissionKeys } } } } },
+                                {
+                                    rolePermissions: {
+                                        some: { platformPermission: { key: { in: dataPermissionKeys } } },
+                                    },
+                                },
                             ],
                         },
                     },
@@ -156,5 +162,4 @@ export class PlatformAccessService {
         });
         return users.map((user) => ({ userId: user.id, username: user.username }));
     }
-
 }

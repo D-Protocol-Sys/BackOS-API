@@ -16,7 +16,6 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 @ApiBearerAuth('access-token')
 @Controller('roles')
 export class RolesController {
-    
     constructor(private readonly rolesService: RolesService) {}
 
     /**
@@ -59,11 +58,7 @@ export class RolesController {
      */
     @RequirePermissions(PERMISSIONS.ROLES_UPDATE)
     @Patch(':id')
-    update(
-        @CurrentUser() actor: { userId: string },
-        @Param('id') id: string,
-        @Body() dto: UpdateRoleDto,
-    ) {
+    update(@CurrentUser() actor: { userId: string }, @Param('id') id: string, @Body() dto: UpdateRoleDto) {
         return this.rolesService.update(actor.userId, id, dto);
     }
 

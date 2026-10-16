@@ -12,7 +12,6 @@ import { ServiceBlueprint } from '../service-blueprint.types';
  * `MailService` instead of carrying their own SMTP settings - so Mailing must be enabled first.
  */
 export const MAILING_BLUEPRINT: ServiceBlueprint = {
-
     // Unique blueprint identifier key used across the code generation engine
     key: 'mailing',
     name: 'Mailing',
@@ -20,7 +19,7 @@ export const MAILING_BLUEPRINT: ServiceBlueprint = {
 
     // Required npm/pnpm dependencies injected into the target project's package.json
     pnpmDependencies: {
-        'nodemailer': '^6.9.16',
+        nodemailer: '^6.9.16',
     },
 
     pnpmDevDependencies: {
@@ -34,7 +33,13 @@ export const MAILING_BLUEPRINT: ServiceBlueprint = {
         { key: 'smtpUser', label: 'Utilisateur SMTP', secret: false, required: true },
         { key: 'smtpPassword', label: 'Mot de passe SMTP', secret: true, required: true },
         { key: 'fromEmail', label: 'Adresse expéditeur', secret: false, required: true },
-        { key: 'requiresAuth', label: 'Protéger /mail/send (nécessite Auth & User actif)', secret: false, required: false, type: 'boolean', placeholder: 'false' },
+        {
+            key: 'requiresAuth',
+            label: 'Protéger /mail/send (nécessite Auth & User actif)',
+            secret: false,
+            required: false,
+            type: 'boolean',
+            placeholder: 'false',
+        },
     ],
-
 };

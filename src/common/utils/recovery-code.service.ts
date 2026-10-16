@@ -7,7 +7,6 @@ import { randomBytes, createHash } from 'crypto';
  */
 @Injectable()
 export class RecoveryCodeService {
-
     /**
      * Generates a unique list of cryptographically secure recovery codes.
      * * Format: `XXXX-XXXX-XXXX-XXXX` (16 uppercase hexadecimal characters split into four blocks).
@@ -36,9 +35,7 @@ export class RecoveryCodeService {
         // Normalize input by trimming spaces and converting to uppercase
         const normalized = rawCode.trim().toUpperCase();
 
-        return createHash('sha256')
-            .update(normalized)
-            .digest('hex');
+        return createHash('sha256').update(normalized).digest('hex');
     }
 
     /**

@@ -21,9 +21,7 @@ export interface FeaturesModuleOptions {
  */
 @Module({})
 export class FeaturesModule {
-
     static register(options: FeaturesModuleOptions = {}): DynamicModule {
-
         const manifests = options.manifests ?? discoverFeatures();
 
         return {

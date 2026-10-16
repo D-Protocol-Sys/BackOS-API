@@ -21,7 +21,6 @@ export enum ProgramActivationMode {
  * (`PATCH /.../programs/:id/schedule`).
  */
 export class ScheduleProgramDto {
-
     /**
      * Which activation mode to switch the program into.
      */

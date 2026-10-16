@@ -24,7 +24,6 @@ import { PrismaService } from '../../prisma/prisma.service';
  */
 @Injectable()
 export class RoleHierarchyService {
-
     /**
      * @param prisma - Database access service powered by Prisma ORM.
      */
@@ -89,7 +88,7 @@ export class RoleHierarchyService {
     }
 
     /**
-     * Asserts that an acting user strictly outranks a target user before allowing actions 
+     * Asserts that an acting user strictly outranks a target user before allowing actions
      * such as modifying, banning, or deleting their profile.
      * * @param actorUserId - User initiating the action.
      * @param targetUserId - User receiving the action.
@@ -114,9 +113,7 @@ export class RoleHierarchyService {
         // Enforces hierarchy rule: A lower or equal level value means equal or greater rank.
         // E.g., actorLevel (10) >= targetLevel (5) means actor is equal or weaker than target.
         if (actorLevel >= targetLevel) {
-            throw new ForbiddenException(
-                `Cannot ${action} a user of equal or higher rank than yourself.`,
-            );
+            throw new ForbiddenException(`Cannot ${action} a user of equal or higher rank than yourself.`);
         }
     }
 
@@ -147,9 +144,7 @@ export class RoleHierarchyService {
 
         // Rule #1 (hierarchy): actor must have a role, and cannot assign a role at level <= their own
         if (actorLevel === null || actorLevel >= role.level) {
-            throw new ForbiddenException(
-                'Cannot assign a role of equal or higher rank than yourself.',
-            );
+            throw new ForbiddenException('Cannot assign a role of equal or higher rank than yourself.');
         }
 
         // Rule #2 (permission containment): the role being granted must not carry any permission
@@ -191,9 +186,7 @@ export class RoleHierarchyService {
         if (!role) throw new NotFoundException('Role not found.');
 
         if (actorLevel === null || actorLevel >= role.level) {
-            throw new ForbiddenException(
-                `Cannot ${action} a role of equal or higher rank than yourself.`,
-            );
+            throw new ForbiddenException(`Cannot ${action} a role of equal or higher rank than yourself.`);
         }
     }
 
@@ -208,9 +201,7 @@ export class RoleHierarchyService {
 
         // Prevents privilege escalation: Users cannot create roles of equal or higher authority (<= level)
         if (actorLevel === null || level <= actorLevel) {
-            throw new ForbiddenException(
-                'Cannot create a role of equal or higher rank than yourself.',
-            );
+            throw new ForbiddenException('Cannot create a role of equal or higher rank than yourself.');
         }
     }
 

@@ -1,9 +1,4 @@
-import {
-    Injectable,
-    NotFoundException,
-    ConflictException,
-    BadRequestException,
-} from '@nestjs/common';
+import { Injectable, NotFoundException, ConflictException, BadRequestException } from '@nestjs/common';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateRoleDto } from './dto/create-role.dto';
 import { UpdateRoleDto } from './dto/update-role.dto';
@@ -18,7 +13,6 @@ import { AUDIT_TARGETS } from '../common/constants/audit-target.constant';
  */
 @Injectable()
 export class RolesService {
-
     constructor(
         private readonly prisma: PrismaService,
         private readonly roleHierarchy: RoleHierarchyService,
@@ -56,7 +50,7 @@ export class RolesService {
     }
 
     /**
-     * Creates a new role with assigned permissions after asserting 
+     * Creates a new role with assigned permissions after asserting
      * that the requesting actor has sufficient hierarchy level privileges.
      *
      * SECURITY: two independent checks are required here, not one. Checking only the
@@ -67,7 +61,6 @@ export class RolesService {
      * gap by refusing to let anyone grant a permission they do not already hold.
      */
     async create(actorUserId: string, dto: CreateRoleDto) {
-
         await this.roleHierarchy.assertCanCreateAtLevel(actorUserId, dto.level);
         await this.roleHierarchy.assertPermissionsAreOwnedByActor(actorUserId, dto.permissionKeys);
 
@@ -84,7 +77,11 @@ export class RolesService {
             },
             include: { rolePermissions: { include: { permission: true } } },
         });
-        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_CREATED, created.id, { name: dto.name, level: dto.level, permissions: dto.permissionKeys });
+        await this.audit(actorUserId, AUDIT_ACTIONS.ROLE_CREATED, created.id, {
+            name: dto.name,
+            level: dto.level,
+            permissions: dto.permissionKeys,
+        });
         return created;
     }
 
@@ -149,9 +146,7 @@ export class RolesService {
             where: { roleId: id },
         });
         if (assignedCount > 0) {
-            throw new ConflictException(
-                'This role is still assigned to users. Remove it from users first.',
-            );
+            throw new ConflictException('This role is still assigned to users. Remove it from users first.');
         }
 
         const deleted = await this.prisma.role.delete({ where: { id } });
@@ -172,9 +167,7 @@ export class RolesService {
         if (permissions.length !== keys.length) {
             const foundKeys = permissions.map((p) => p.key);
             const missing = keys.filter((k) => !foundKeys.includes(k));
-            throw new BadRequestException(
-                `Unknown permissions: ${missing.join(', ')}`,
-            );
+            throw new BadRequestException(`Unknown permissions: ${missing.join(', ')}`);
         }
         return permissions;
     }
@@ -186,9 +179,7 @@ export class RolesService {
         const role = await this.prisma.role.findUnique({ where: { id } });
         if (!role) throw new NotFoundException('Role not found.');
         if (role.isSystem) {
-            throw new ConflictException(
-                `Cannot ${action} a system role ("${role.name}").`,
-            );
+            throw new ConflictException(`Cannot ${action} a system role ("${role.name}").`);
         }
     }
 }

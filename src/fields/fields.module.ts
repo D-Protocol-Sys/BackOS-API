@@ -4,13 +4,10 @@ import { FieldsService } from './fields.service';
 import { FieldsController } from './fields.controller';
 
 @Module({
-
     imports: [PlatformAccessModule],
 
     controllers: [FieldsController],
 
     providers: [FieldsService],
-
 })
-
 export class FieldsModule {}

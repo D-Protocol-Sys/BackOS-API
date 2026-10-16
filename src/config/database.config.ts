@@ -2,14 +2,13 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * Database Configuration Factory ('database' namespace)
- * * Organizes database-related environment variables into a strongly-typed, 
+ * * Organizes database-related environment variables into a strongly-typed,
  * isolated configuration object using NestJS's `registerAs` helper.
  * * Usage:
  * - Inject via ConfigService: `this.configService.get<string>('database.url')`
  * - Or use custom configuration decorators for direct property access.
  */
 export default registerAs('database', () => ({
-
     /**
      * Main Application Connection String.
      * * Points to the primary application database with standard application-level privileges.
@@ -59,5 +58,4 @@ export default registerAs('database', () => ({
      * * @example "backos_migration_shadow"
      */
     shadowDatabaseName: process.env.POSTGRES_SHADOW_DATABASE_NAME ?? 'migration_shadow',
-
 }));

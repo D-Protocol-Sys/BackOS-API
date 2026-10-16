@@ -39,8 +39,8 @@ export function discoverFeatures(dir: string = __dirname): FeatureManifest[] {
             if (files.some((file) => SOURCE_FILE.test(file) && !DECLARATION_FILE.test(file))) {
                 throw new Error(
                     `Feature folder "${folder}" has no feature.ts. ` +
-                    'Every sub-folder of src/features/ must declare its manifest there ' +
-                    '(prefix the folder with "_" if it only holds shared helper code).',
+                        'Every sub-folder of src/features/ must declare its manifest there ' +
+                        '(prefix the folder with "_" if it only holds shared helper code).',
                 );
             }
             continue;
@@ -48,8 +48,7 @@ export function discoverFeatures(dir: string = __dirname): FeatureManifest[] {
 
         // eslint-disable-next-line @typescript-eslint/no-require-imports
         const loaded = require(path.join(folderPath, 'feature')) as
-            | { default?: FeatureManifest; feature?: FeatureManifest }
-            | undefined;
+            { default?: FeatureManifest; feature?: FeatureManifest } | undefined;
         const manifest = loaded?.default ?? loaded?.feature;
         if (!manifest) {
             throw new Error(`src/features/${folder}/feature.ts must export its manifest as the default export.`);
@@ -60,13 +59,15 @@ export function discoverFeatures(dir: string = __dirname): FeatureManifest[] {
         if (manifest.name !== folder) {
             throw new Error(
                 `The manifest in src/features/${folder}/feature.ts is named "${manifest.name}": ` +
-                'the feature name and its folder name must be identical.',
+                    'the feature name and its folder name must be identical.',
             );
         }
 
         for (const key of Object.keys(manifest.permissions ?? {})) {
             if (coreKeys.has(key)) {
-                throw new Error(`Feature "${manifest.name}" declares permission "${key}", which already exists in the core.`);
+                throw new Error(
+                    `Feature "${manifest.name}" declares permission "${key}", which already exists in the core.`,
+                );
             }
             const owner = seenPermissions.get(key);
             if (owner) {

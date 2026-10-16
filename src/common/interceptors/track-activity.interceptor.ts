@@ -22,10 +22,11 @@ export class TrackActivityInterceptor implements NestInterceptor {
             // The SQL condition throttles DB updates to execute only if the last update was > 1 minute ago,
             // avoiding unnecessary write load without requiring a prior SELECT query.
             this.prisma
-                .$executeRaw`UPDATE users SET "lastActiveAt" = now() WHERE id = ${userId} AND ("lastActiveAt" IS NULL OR "lastActiveAt" < now() - interval '1 minute')`
-                .catch(() => {
+                .$executeRaw`UPDATE users SET "lastActiveAt" = now() WHERE id = ${userId} AND ("lastActiveAt" IS NULL OR "lastActiveAt" < now() - interval '1 minute')`.catch(
+                () => {
                     /* Silent error handling: a tracking failure should never disrupt the primary request flow */
-                });
+                },
+            );
         }
 
         return next.handle();

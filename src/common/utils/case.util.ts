@@ -20,7 +20,7 @@ export function toPascalCase(snakeCase: string): string {
 
 /**
  * Converts a string formatted in snake_case to camelCase.
- * * Reuses `toPascalCase` to handle word split and capitalization logic, 
+ * * Reuses `toPascalCase` to handle word split and capitalization logic,
  * then simply lowers the first character.
  * * @param snakeCase - The input string using underscores (e.g., "user_account_setting").
  * @returns The formatted camelCase string (e.g., "userAccountSetting").
@@ -30,7 +30,7 @@ export function toPascalCase(snakeCase: string): string {
 export function toCamelCase(snakeCase: string): string {
     // Converts the string to PascalCase first (e.g., "UserFirstName")
     const pascal = toPascalCase(snakeCase);
-    
+
     // Lowers the very first character while preserving the rest of the string
     return pascal.charAt(0).toLowerCase() + pascal.slice(1);
 }

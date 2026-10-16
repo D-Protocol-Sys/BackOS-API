@@ -81,7 +81,9 @@ export class DockerRuntimeManagerService {
 
     private async ensurePlatformNetwork(slug: string): Promise<string> {
         const networkName = this.platformNetworkName(slug);
-        await this.runDockerCommand(['network', 'create', '--driver', 'bridge', networkName], undefined, { ignoreFailure: true });
+        await this.runDockerCommand(['network', 'create', '--driver', 'bridge', networkName], undefined, {
+            ignoreFailure: true,
+        });
         return networkName;
     }
 
@@ -107,8 +109,11 @@ export class DockerRuntimeManagerService {
         // keep their old attachment: recreate the network once - `docker network rm <name>` after
         // stopping the platform - to pick the alias up.)
         const dbAlias = this.configService.get<string>('GENERATED_BACKEND_DOCKER_DB_HOST');
-        const aliasArgs = dbAlias && dbAlias !== 'host.docker.internal' && dbAlias !== dbContainerName ? ['--alias', dbAlias] : [];
-        await this.runDockerCommand(['network', 'connect', ...aliasArgs, networkName, dbContainerName], undefined, { ignoreFailure: true });
+        const aliasArgs =
+            dbAlias && dbAlias !== 'host.docker.internal' && dbAlias !== dbContainerName ? ['--alias', dbAlias] : [];
+        await this.runDockerCommand(['network', 'connect', ...aliasArgs, networkName, dbContainerName], undefined, {
+            ignoreFailure: true,
+        });
     }
 
     /**
@@ -177,7 +182,9 @@ export class DockerRuntimeManagerService {
                 }
             }
             if (/[\r\n]/.test(value)) {
-                this.logger.warn(`Skipping multi-line environment value "${match[1]}" (unsupported by Docker env files).`);
+                this.logger.warn(
+                    `Skipping multi-line environment value "${match[1]}" (unsupported by Docker env files).`,
+                );
                 continue;
             }
             env[match[1]] = value;
@@ -196,7 +203,12 @@ export class DockerRuntimeManagerService {
      * START is a reasonable follow-up, but touches the core generation pipeline rather than
      * just the runtime layer, so it is deliberately left out of this pass.
      */
-    private async buildImage(platformId: string, slug: string, projectPath: string, schemaVersion: number): Promise<void> {
+    private async buildImage(
+        platformId: string,
+        slug: string,
+        projectPath: string,
+        schemaVersion: number,
+    ): Promise<void> {
         const tag = this.imageTag(slug);
         // PERF FIX (RT-001): the image used to be rebuilt on every start, synchronously inside the
         // HTTP request. It is now rebuilt only when missing or built from an older generation
@@ -228,15 +240,16 @@ export class DockerRuntimeManagerService {
      */
     private async waitForContainerRemoval(name: string, attempts = 10, delayMs = 300): Promise<void> {
         for (let i = 0; i < attempts; i++) {
-            const stillThere = await this.runDockerCommand(
-                ['inspect', '--format', '{{.Id}}', name],
-                undefined,
-                { capture: true, ignoreFailure: true },
-            );
+            const stillThere = await this.runDockerCommand(['inspect', '--format', '{{.Id}}', name], undefined, {
+                capture: true,
+                ignoreFailure: true,
+            });
             if (!stillThere) return; // `docker inspect` failed - the name is free.
             await new Promise((resolve) => setTimeout(resolve, delayMs));
         }
-        this.logger.warn(`Container "${name}" still present after removal wait - proceeding anyway, the next docker run may race it.`);
+        this.logger.warn(
+            `Container "${name}" still present after removal wait - proceeding anyway, the next docker run may race it.`,
+        );
     }
 
     async start(platformId: string) {
@@ -329,32 +342,49 @@ export class DockerRuntimeManagerService {
         const dockerEnvFile = path.join(projectPath, '.env.docker');
         await fsp.writeFile(
             dockerEnvFile,
-            Object.entries(containerEnv).map(([key, value]) => `${key}=${value}`).join('\n') + '\n',
+            Object.entries(containerEnv)
+                .map(([key, value]) => `${key}=${value}`)
+                .join('\n') + '\n',
             { encoding: 'utf-8', mode: 0o600 },
         );
 
         const args = [
             'run',
             '-d',
-            '--name', name,
+            '--name',
+            name,
             // RT-002: bounded restarts instead of an infinite crash loop.
-            '--restart', 'on-failure:5',
+            '--restart',
+            'on-failure:5',
             // Loopback-only publish: the container is never reachable from outside this machine directly.
-            '-p', `${boundHost}:${platform.generatedPort}:${GENERATED_BACKEND_CONTAINER_PORT}`,
-            '--network', network,
-            '--add-host', 'host.docker.internal:host-gateway',
-            '--memory', memoryLimit,
-            '--cpus', cpuLimit,
+            '-p',
+            `${boundHost}:${platform.generatedPort}:${GENERATED_BACKEND_CONTAINER_PORT}`,
+            '--network',
+            network,
+            '--add-host',
+            'host.docker.internal:host-gateway',
+            '--memory',
+            memoryLimit,
+            '--cpus',
+            cpuLimit,
             // RT-002: hardening - no Linux capabilities, bounded process count and log size.
-            '--pids-limit', '256',
-            '--cap-drop', 'ALL',
-            '--log-opt', 'max-size=10m',
-            '--log-opt', 'max-file=3',
+            '--pids-limit',
+            '256',
+            '--cap-drop',
+            'ALL',
+            '--log-opt',
+            'max-size=10m',
+            '--log-opt',
+            'max-file=3',
             '--read-only',
-            '--tmpfs', '/tmp:rw,size=64m',
-            '-v', `${useUploadsVolume ? `${name}-uploads` : uploadsHostDir}:/app/uploads:rw`,
-            '--security-opt', 'no-new-privileges',
-            '--env-file', dockerEnvFile,
+            '--tmpfs',
+            '/tmp:rw,size=64m',
+            '-v',
+            `${useUploadsVolume ? `${name}-uploads` : uploadsHostDir}:/app/uploads:rw`,
+            '--security-opt',
+            'no-new-privileges',
+            '--env-file',
+            dockerEnvFile,
             this.imageTag(platform.slug),
         ];
 
@@ -370,7 +400,9 @@ export class DockerRuntimeManagerService {
         });
         this.platformGateway.invalidate(platform.slug);
 
-        this.logger.log(`Started generated backend container "${name}" for "${platform.slug}" (bound to ${boundHost}:${platform.generatedPort})`);
+        this.logger.log(
+            `Started generated backend container "${name}" for "${platform.slug}" (bound to ${boundHost}:${platform.generatedPort})`,
+        );
         return { message: 'Starting container…', container: name };
     }
 
@@ -451,7 +483,10 @@ export class DockerRuntimeManagerService {
         const platform = await this.prisma.platform.findUniqueOrThrow({ where: { id: platformId } });
         const name = this.containerName(platform.slug);
         try {
-            const logs = await this.runDockerCommand(['logs', '--tail', String(tailLines), name], platformId, { capture: true, ignoreFailure: true });
+            const logs = await this.runDockerCommand(['logs', '--tail', String(tailLines), name], platformId, {
+                capture: true,
+                ignoreFailure: true,
+            });
             return { logs: logs ?? '' };
         } catch {
             return { logs: '' };
@@ -481,11 +516,10 @@ export class DockerRuntimeManagerService {
 
     private async isContainerRunning(name: string): Promise<boolean> {
         try {
-            const output = await this.runDockerCommand(
-                ['inspect', '-f', '{{.State.Running}}', name],
-                undefined,
-                { capture: true, ignoreFailure: true },
-            );
+            const output = await this.runDockerCommand(['inspect', '-f', '{{.State.Running}}', name], undefined, {
+                capture: true,
+                ignoreFailure: true,
+            });
             return output?.trim() === 'true';
         } catch {
             return false;
@@ -496,7 +530,9 @@ export class DockerRuntimeManagerService {
         try {
             // Same address the gateway uses to reach the backend (see GENERATED_BACKEND_GATEWAY_HOST).
             const host = this.configService.get<string>('GENERATED_BACKEND_GATEWAY_HOST') || 'localhost';
-            const res = await fetch(`http://${host}:${port}/${GENERATED_BACKEND_API_PREFIX}/health`, { signal: AbortSignal.timeout(2000) });
+            const res = await fetch(`http://${host}:${port}/${GENERATED_BACKEND_API_PREFIX}/health`, {
+                signal: AbortSignal.timeout(2000),
+            });
             if (!res.ok) return false;
             const body = await res.json();
             if (body.status === 'ok') {
@@ -552,8 +588,12 @@ export class DockerRuntimeManagerService {
             }, timeoutMs);
             timer.unref();
 
-            child.stdout?.on('data', (d: Buffer) => { stdout = append(stdout, d); });
-            child.stderr?.on('data', (d: Buffer) => { stderr = append(stderr, d); });
+            child.stdout?.on('data', (d: Buffer) => {
+                stdout = append(stdout, d);
+            });
+            child.stderr?.on('data', (d: Buffer) => {
+                stderr = append(stderr, d);
+            });
             child.on('error', (err) => {
                 clearTimeout(timer);
                 if (opts.ignoreFailure) return resolve(undefined);
@@ -570,7 +610,9 @@ export class DockerRuntimeManagerService {
                     return;
                 }
                 const reason = signal === 'SIGKILL' ? `timed out after ${timeoutMs} ms` : `exit ${code}`;
-                this.logger.error(`docker ${args[0]} failed (${reason})${platformId ? ` [platform=${platformId}]` : ''}: ${redactSecrets(stderr.trim())}`);
+                this.logger.error(
+                    `docker ${args[0]} failed (${reason})${platformId ? ` [platform=${platformId}]` : ''}: ${redactSecrets(stderr.trim())}`,
+                );
                 reject(new BadRequestException(`Docker command failed: ${redactSecrets(stderr.trim()) || reason}`));
             });
         });

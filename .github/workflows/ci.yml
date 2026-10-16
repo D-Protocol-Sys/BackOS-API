@@ -74,7 +74,7 @@ jobs:
 
       # Step 6: Execute static code analysis (ESLint/Biome)
       - name: Execute linter checks
-        run: pnpm run lint
+        run: pnpm run lint:check   # no --fix: the CI must report problems, not repair them
 
       # Step 7: Check if source files follow Prettier code styling rules
       - name: Verify code formatting with Prettier
@@ -177,12 +177,16 @@ jobs:
 
       # Generate runtime .env configuration with secret keys from GitHub Secrets
       - name: Populate test environment configuration from repository secrets
+        env:
+          CI_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
+          CI_JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
         run: |
+          # .env.test.example already holds working test values. The repository secrets, when they
+          # are defined, replace them. An UNDEFINED secret is an empty string: it must not be
+          # written, or it would blank the working values and the application would not start.
           cp .env.test.example .env.test
-          {
-            echo "ENCRYPTION_KEY=${{ secrets.CI_ENCRYPTION_KEY }}"
-            echo "JWT_SECRET=${{ secrets.CI_JWT_SECRET }}"
-          } >> .env.test
+          [ -z "$CI_ENCRYPTION_KEY" ] || echo "ENCRYPTION_KEY=$CI_ENCRYPTION_KEY" >> .env.test
+          [ -z "$CI_JWT_SECRET" ] || echo "JWT_SECRET=$CI_JWT_SECRET" >> .env.test
 
       # Execute full stack end-to-end tests
       - name: Execute end-to-end integration suite
@@ -248,12 +252,16 @@ jobs:
         run: pnpm exec prisma generate
 
       - name: Populate test environment configuration from repository secrets
+        env:
+          CI_ENCRYPTION_KEY: ${{ secrets.CI_ENCRYPTION_KEY }}
+          CI_JWT_SECRET: ${{ secrets.CI_JWT_SECRET }}
         run: |
+          # .env.test.example already holds working test values. The repository secrets, when they
+          # are defined, replace them. An UNDEFINED secret is an empty string: it must not be
+          # written, or it would blank the working values and the application would not start.
           cp .env.test.example .env.test
-          {
-            echo "ENCRYPTION_KEY=${{ secrets.CI_ENCRYPTION_KEY }}"
-            echo "JWT_SECRET=${{ secrets.CI_JWT_SECRET }}"
-          } >> .env.test
+          [ -z "$CI_ENCRYPTION_KEY" ] || echo "ENCRYPTION_KEY=$CI_ENCRYPTION_KEY" >> .env.test
+          [ -z "$CI_JWT_SECRET" ] || echo "JWT_SECRET=$CI_JWT_SECRET" >> .env.test
 
       - name: Boot the application and check the features
         run: pnpm exec cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand features.e2e-spec
@@ -358,6 +366,7 @@ jobs:
           scan-type: fs
           scan-ref: .
           severity: CRITICAL,HIGH
+          ignore-unfixed: true     # a vulnerability with no published fix cannot be fixed by updating
           exit-code: "1"           # Fails the pipeline if critical/high issues are found
 
       # Scan local Docker image layers for vulnerable OS packages or libraries
@@ -371,7 +380,7 @@ jobs:
 
       # Upload Trivy vulnerability report to GitHub Code Scanning dashboard
       - name: Upload Trivy security findings
-        if: always()               # Upload report even if Trivy identified vulnerabilities
-        uses: github/codeql-action/upload-sarif@v3
+        if: always() && hashFiles('trivy-image.sarif') != ''   # nothing to upload when the scan did not run
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: trivy-image.sarif

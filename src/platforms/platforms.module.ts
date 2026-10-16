@@ -8,7 +8,6 @@ import { MessagesModule } from '../messages/messages.module';
 import { GeneratorModule } from '../generator/generator.module';
 
 @Module({
-
     // GeneratorModule gives PlatformsService access to DockerRuntimeManagerService (stop a
     // platform's runtime when it's archived/purged) and ProjectScaffolderService (remove its
     // generated project directory when it's permanently deleted). PlatformAccessModule gives
@@ -21,7 +20,5 @@ import { GeneratorModule } from '../generator/generator.module';
     providers: [PlatformsService, PlatformRolesService],
 
     exports: [PlatformsService],
-
 })
-
 export class PlatformsModule {}

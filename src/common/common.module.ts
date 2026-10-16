@@ -11,11 +11,8 @@ import { CryptoService } from './services/crypto.service';
  */
 @Global()
 @Module({
-
     providers: [RoleHierarchyService, CryptoService],
 
     exports: [RoleHierarchyService, CryptoService],
-
 })
-
 export class CommonModule {}

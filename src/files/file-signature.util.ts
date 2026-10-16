@@ -37,17 +37,19 @@ const startsWith = (buf: Buffer, bytes: number[]): boolean =>
 const isWebp = (buf: Buffer): boolean =>
     buf.length >= 12 &&
     startsWith(buf, [0x52, 0x49, 0x46, 0x46]) && // "RIFF"
-    buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50; // "WEBP"
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50; // "WEBP"
 
 /** Legacy OLE2/CFBF container - shared by pre-2007 .doc / .xls / .ppt. */
-const isCfbf = (buf: Buffer): boolean =>
-    startsWith(buf, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
+const isCfbf = (buf: Buffer): boolean => startsWith(buf, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]);
 
 /** Modern Office formats (.docx/.xlsx/.pptx) and plain .zip are all ZIP containers. */
 const isZip = (buf: Buffer): boolean =>
     startsWith(buf, [0x50, 0x4b, 0x03, 0x04]) || // normal
     startsWith(buf, [0x50, 0x4b, 0x05, 0x06]) || // empty archive
-    startsWith(buf, [0x50, 0x4b, 0x07, 0x08]);   // spanned archive
+    startsWith(buf, [0x50, 0x4b, 0x07, 0x08]); // spanned archive
 
 /** No NUL byte in the sampled header - simple but effective binary-vs-text heuristic. */
 const looksLikeText = (buf: Buffer): boolean => !buf.subarray(0, SIGNATURE_SAMPLE_BYTES).includes(0x00);

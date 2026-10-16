@@ -7,7 +7,6 @@ import * as QRCode from 'qrcode';
  */
 @Injectable()
 export class QrCodeService {
-
     /**
      * Converts a string payload into a Base64-encoded Data URL representation of a QR Code.
      * * Primary Use Case: Direct rendering in HTML/React frontend image tags (`<img src="..." />`).
@@ -19,7 +18,7 @@ export class QrCodeService {
         try {
             // Generate Base64 Data URL directly from content string
             return await QRCode.toDataURL(content);
-        } catch (error) {
+        } catch {
             throw new InternalServerErrorException('Failed to generate QR Code Data URL.');
         }
     }
@@ -35,7 +34,7 @@ export class QrCodeService {
         try {
             // Generate binary PNG Buffer directly from content string
             return await QRCode.toBuffer(content);
-        } catch (error) {
+        } catch {
             throw new InternalServerErrorException('Failed to generate QR Code Buffer.');
         }
     }

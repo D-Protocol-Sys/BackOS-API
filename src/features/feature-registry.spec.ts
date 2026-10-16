@@ -27,7 +27,6 @@ const manifestFile = (name: string, extra = '') => `
 `;
 
 describe('discoverFeatures', () => {
-
     const created: string[] = [];
     const make = (tree: Record<string, Record<string, string>>) => {
         const dir = fixture(tree);
@@ -80,21 +79,27 @@ describe('discoverFeatures', () => {
     });
 
     it('refuses an invalid manifest', () => {
-        const dir = make({ alpha: { 'feature.js': manifestFile('alpha').replace("description: 'Fixture alpha'", "description: ''") } });
+        const dir = make({
+            alpha: { 'feature.js': manifestFile('alpha').replace("description: 'Fixture alpha'", "description: ''") },
+        });
 
         expect(() => discoverFeatures(dir)).toThrow(/description/);
     });
 
     it('refuses a permission that is not namespaced with the feature name', () => {
         // `users.read` is a core permission and does not start with "alpha." either.
-        const dir = make({ alpha: { 'feature.js': manifestFile('alpha', "permissions: { 'alpha.read': 'x', 'users.read': 'y' },") } });
+        const dir = make({
+            alpha: { 'feature.js': manifestFile('alpha', "permissions: { 'alpha.read': 'x', 'users.read': 'y' },") },
+        });
 
         expect(() => discoverFeatures(dir)).toThrow(/must start with "alpha\./);
     });
 
     it('refuses a feature named like a core permission namespace', () => {
         // A feature called "backup" would declare "backup.manage", which the core already owns.
-        const dir = make({ backup: { 'feature.js': manifestFile('backup', "permissions: { 'backup.manage': 'x' },") } });
+        const dir = make({
+            backup: { 'feature.js': manifestFile('backup', "permissions: { 'backup.manage': 'x' },") },
+        });
 
         expect(() => discoverFeatures(dir)).toThrow(/already exists in the core/);
     });

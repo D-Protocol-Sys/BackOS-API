@@ -9,7 +9,27 @@ import { PlatformServicesService } from './platform-services.service';
 import { ServiceCatalog } from './service-catalog/service-catalog';
 import { SERVICE_FILE_GENERATORS } from './service-catalog/service-file-generators';
 import { PrismaService } from '../prisma/prisma.service';
-import { packageJsonObject, NEST_CLI_JSON, TSCONFIG_JSON, prismaConfigTemplate, prismaServiceTemplate, prismaModuleTemplate, mainTsTemplate, appModuleTemplate, envTemplate, healthControllerTemplate, healthModuleTemplate, dockerfileTemplate, dockerignoreTemplate, npmrcTemplate, pnpmWorkspaceYamlTemplate, uploadsControllerTemplate, uploadsModuleTemplate, uploadsMulterConfigTemplate, uploadsPolicyGuardTemplate } from './templates/generated-project.templates';
+import {
+    packageJsonObject,
+    NEST_CLI_JSON,
+    TSCONFIG_JSON,
+    prismaConfigTemplate,
+    prismaServiceTemplate,
+    prismaModuleTemplate,
+    mainTsTemplate,
+    appModuleTemplate,
+    envTemplate,
+    healthControllerTemplate,
+    healthModuleTemplate,
+    dockerfileTemplate,
+    dockerignoreTemplate,
+    npmrcTemplate,
+    pnpmWorkspaceYamlTemplate,
+    uploadsControllerTemplate,
+    uploadsModuleTemplate,
+    uploadsMulterConfigTemplate,
+    uploadsPolicyGuardTemplate,
+} from './templates/generated-project.templates';
 import { computeRelationFieldsByEntity } from '../common/utils/relation-metadata.util';
 
 const SAFE_SLUG_PATTERN = /^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/;
@@ -61,10 +81,10 @@ export class ProjectScaffolderService {
         if (isInsideCwd) {
             this.logger.warn(
                 `GENERATED_PROJECTS_ROOT ("${resolvedRoot}") is located INSIDE this backend's own working directory ` +
-                `("${cwd}"). If this process runs under a dev-mode file watcher (nest start --watch / nodemon / ` +
-                `ts-node-dev), every project regeneration will rewrite a large number of files under this path and ` +
-                `is very likely to trigger the watcher to restart this backend mid-generation. Set GENERATED_PROJECTS_ROOT ` +
-                `to an absolute path outside this project's directory (e.g. /var/lib/backos/generated) to fix this.`,
+                    `("${cwd}"). If this process runs under a dev-mode file watcher (nest start --watch / nodemon / ` +
+                    `ts-node-dev), every project regeneration will rewrite a large number of files under this path and ` +
+                    `is very likely to trigger the watcher to restart this backend mid-generation. Set GENERATED_PROJECTS_ROOT ` +
+                    `to an absolute path outside this project's directory (e.g. /var/lib/backos/generated) to fix this.`,
             );
         }
     }
@@ -170,10 +190,12 @@ export class ProjectScaffolderService {
                 // read or forge BackOS jobs. A dedicated Redis for generated backends is configured
                 // with GENERATED_BACKEND_REDIS_*; the orchestrator's password is never handed out,
                 // and every platform gets its own key prefix.
-                extraEnvVars.redisHost = this.configService.get<string>('GENERATED_BACKEND_REDIS_HOST')
-                    || this.configService.get<string>('REDIS_HOST', 'localhost');
-                extraEnvVars.redisPort = this.configService.get<number>('GENERATED_BACKEND_REDIS_PORT')
-                    || this.configService.get<number>('REDIS_PORT', 6379);
+                extraEnvVars.redisHost =
+                    this.configService.get<string>('GENERATED_BACKEND_REDIS_HOST') ||
+                    this.configService.get<string>('REDIS_HOST', 'localhost');
+                extraEnvVars.redisPort =
+                    this.configService.get<number>('GENERATED_BACKEND_REDIS_PORT') ||
+                    this.configService.get<number>('REDIS_PORT', 6379);
                 const tenantRedisPassword = this.configService.get<string>('GENERATED_BACKEND_REDIS_PASSWORD');
                 if (tenantRedisPassword) extraEnvVars.redisPassword = tenantRedisPassword;
                 extraEnvVars.redisKeyPrefix = `backos-tenant-${params.slug}`;
@@ -184,11 +206,16 @@ export class ProjectScaffolderService {
                 const blueprint = this.serviceCatalog.getByKey(service.serviceKey);
                 Object.assign(extraPnpmDeps, blueprint.pnpmDependencies);
                 Object.assign(extraPnpmDevDeps, blueprint.pnpmDevDependencies ?? {});
-                const fullConfig = await this.platformServices.getFullDecryptedConfig(params.platformId, service.serviceKey);
+                const fullConfig = await this.platformServices.getFullDecryptedConfig(
+                    params.platformId,
+                    service.serviceKey,
+                );
                 // A service's tables may depend on its configuration (e.g. the external-user profile
                 // of Auth & User), hence resolved here, once the full config is known.
                 const prismaModels = this.serviceCatalog.resolvePrismaModels(service.serviceKey, fullConfig);
-                if (prismaModels) { prismaBlocks.push(prismaModels); }
+                if (prismaModels) {
+                    prismaBlocks.push(prismaModels);
+                }
                 Object.assign(extraEnvVars, fullConfig);
                 const generatorFn = SERVICE_FILE_GENERATORS[service.serviceKey];
                 if (generatorFn) {
@@ -226,14 +253,25 @@ export class ProjectScaffolderService {
 
             // Verify auth service active status if any entities specify auth protection rules
             const activeServiceKeys = new Set(activeServices.map((service) => service.serviceKey));
-            const entitiesRequiringAuth = entities.filter((entity) => entity.authProtectCreate || entity.authProtectRead || entity.authProtectUpdate || entity.authProtectDelete);
+            const entitiesRequiringAuth = entities.filter(
+                (entity) =>
+                    entity.authProtectCreate ||
+                    entity.authProtectRead ||
+                    entity.authProtectUpdate ||
+                    entity.authProtectDelete,
+            );
             if (entitiesRequiringAuth.length > 0 && !activeServiceKeys.has('auth-user')) {
-                throw new BadRequestException(`Les entités suivantes exigent une authentification mais "Auth & User" n'est plus actif : ${entitiesRequiringAuth.map((entity) => entity.tableName).join(', ')}`);
+                throw new BadRequestException(
+                    `Les entités suivantes exigent une authentification mais "Auth & User" n'est plus actif : ${entitiesRequiringAuth.map((entity) => entity.tableName).join(', ')}`,
+                );
             }
 
             // Map relationship metadata across dynamic entities
             const relations = await this.prisma.relation.findMany({ where: { platformId: params.platformId } });
-            const relationFieldsByEntity = computeRelationFieldsByEntity(entities.map((entity) => ({ id: entity.id, tableName: entity.tableName })), relations);
+            const relationFieldsByEntity = computeRelationFieldsByEntity(
+                entities.map((entity) => ({ id: entity.id, tableName: entity.tableName })),
+                relations,
+            );
             const entityIdByTableName = new Map(entities.map((entity) => [entity.tableName, entity.id]));
 
             // Write core application configuration files, schema, and base templates
@@ -266,14 +304,46 @@ export class ProjectScaffolderService {
                 ),
                 fs.writeFile(path.join(projectPath, 'prisma', 'schema.prisma'), schemaContent, 'utf8'),
                 fs.writeFile(path.join(projectPath, 'src', 'main.ts'), mainTsTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.service.ts'), prismaServiceTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'prisma', 'prisma.module.ts'), prismaModuleTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'health', 'health.controller.ts'), healthControllerTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'health', 'health.module.ts'), healthModuleTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.controller.ts'), uploadsControllerTemplate(activeServices.some((service) => service.serviceKey === 'auth-user')), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.policy.guard.ts'), uploadsPolicyGuardTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.module.ts'), uploadsModuleTemplate(), 'utf8'),
-                fs.writeFile(path.join(projectPath, 'src', 'uploads', 'uploads.multer-config.ts'), uploadsMulterConfigTemplate(), 'utf8'),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'prisma', 'prisma.service.ts'),
+                    prismaServiceTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'prisma', 'prisma.module.ts'),
+                    prismaModuleTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'health', 'health.controller.ts'),
+                    healthControllerTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'health', 'health.module.ts'),
+                    healthModuleTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'uploads', 'uploads.controller.ts'),
+                    uploadsControllerTemplate(activeServices.some((service) => service.serviceKey === 'auth-user')),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'uploads', 'uploads.policy.guard.ts'),
+                    uploadsPolicyGuardTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'uploads', 'uploads.module.ts'),
+                    uploadsModuleTemplate(),
+                    'utf8',
+                ),
+                fs.writeFile(
+                    path.join(projectPath, 'src', 'uploads', 'uploads.multer-config.ts'),
+                    uploadsMulterConfigTemplate(),
+                    'utf8',
+                ),
                 // Written unconditionally on every generation, whether or not Docker isolation
                 // is currently enabled (see DockerRuntimeManagerService / GENERATED_BACKEND_RUNTIME),
                 // so switching the runtime mode never requires a fresh generation first.
@@ -289,12 +359,23 @@ export class ProjectScaffolderService {
             ]);
 
             // Generate full CRUD controllers/services for each dynamic entity
-            await this.crudGenerator.generateModulesForEntities(projectPath, entities, relationFieldsByEntity, entityIdByTableName);
+            await this.crudGenerator.generateModulesForEntities(
+                projectPath,
+                entities,
+                relationFieldsByEntity,
+                entityIdByTableName,
+            );
 
             // Assemble root application module linking all CRUD and service modules
-            await fs.writeFile(path.join(projectPath, 'src', 'app.module.ts'), appModuleTemplate(entities, extraModules), 'utf8');
+            await fs.writeFile(
+                path.join(projectPath, 'src', 'app.module.ts'),
+                appModuleTemplate(entities, extraModules),
+                'utf8',
+            );
 
-            this.logger.log(`Projet généré : ${projectPath} (services: ${activeServices.map((service) => service.serviceKey).join(', ') || 'aucun'}, migrations: ${hasExistingMigrations ? 'existantes' : 'initiales'})`);
+            this.logger.log(
+                `Projet généré : ${projectPath} (services: ${activeServices.map((service) => service.serviceKey).join(', ') || 'aucun'}, migrations: ${hasExistingMigrations ? 'existantes' : 'initiales'})`,
+            );
 
             return { projectPath, isFirstGeneration: !hasExistingMigrations };
         } catch (error) {
@@ -305,7 +386,10 @@ export class ProjectScaffolderService {
                     await fs.rename(preservedMigrationsPath, path.join(projectPath, 'prisma', 'migrations'));
                     preservedMigrationsPath = null;
                 } catch (restoreError) {
-                    this.logger.error(`Impossible de restaurer l'historique des migrations pour "${params.slug}".`, restoreError instanceof Error ? restoreError.stack : String(restoreError));
+                    this.logger.error(
+                        `Impossible de restaurer l'historique des migrations pour "${params.slug}".`,
+                        restoreError instanceof Error ? restoreError.stack : String(restoreError),
+                    );
                 }
             }
             if (preservedUploadsPath) {
@@ -313,7 +397,10 @@ export class ProjectScaffolderService {
                     await fs.rename(preservedUploadsPath, uploadsPath);
                     preservedUploadsPath = null;
                 } catch (restoreError) {
-                    this.logger.error(`Impossible de restaurer les fichiers uploadés pour "${params.slug}".`, restoreError instanceof Error ? restoreError.stack : String(restoreError));
+                    this.logger.error(
+                        `Impossible de restaurer les fichiers uploadés pour "${params.slug}".`,
+                        restoreError instanceof Error ? restoreError.stack : String(restoreError),
+                    );
                 }
             }
             throw error;
@@ -326,7 +413,7 @@ export class ProjectScaffolderService {
             if (preservedMigrationsPath) {
                 this.logger.error(
                     `Migration history of "${params.slug}" could not be restored and was KEPT at ` +
-                    `"${preservedMigrationsPath}". It will be recovered at the next generation.`,
+                        `"${preservedMigrationsPath}". It will be recovered at the next generation.`,
                 );
             }
             if (preservedUploadsPath) {
@@ -348,7 +435,9 @@ export class ProjectScaffolderService {
             const blueprint = this.serviceCatalog.getByKey(key);
             const missing = (blueprint.dependsOn ?? []).filter((dependency) => !activeServiceKeys.has(dependency));
             if (missing.length > 0) {
-                const names = missing.map((dependency) => `"${this.serviceCatalog.getByKey(dependency).name}"`).join(', ');
+                const names = missing
+                    .map((dependency) => `"${this.serviceCatalog.getByKey(dependency).name}"`)
+                    .join(', ');
                 throw new BadRequestException(
                     `Le service "${blueprint.name}" nécessite ${names}, qui n'est pas actif. Activez-le puis relancez la génération.`,
                 );
@@ -402,8 +491,8 @@ export class ProjectScaffolderService {
      */
     private async createProjectDirectories(projectPath: string): Promise<void> {
         await fs.mkdir(path.join(projectPath, 'src', 'prisma'), { recursive: true });
-        await fs.mkdir(path.join(projectPath, 'src', 'health'), { recursive: true }),
-        await fs.mkdir(path.join(projectPath, 'src', 'uploads'), { recursive: true }),
+        await fs.mkdir(path.join(projectPath, 'src', 'health'), { recursive: true });
+        await fs.mkdir(path.join(projectPath, 'src', 'uploads'), { recursive: true });
         await fs.mkdir(path.join(projectPath, 'prisma'), { recursive: true });
     }
 
@@ -453,14 +542,19 @@ export class ProjectScaffolderService {
         await fs.mkdir(path.join(projectPath, 'prisma'), { recursive: true });
         await fs.rm(migrationsPath, { recursive: true, force: true });
         await fs.rename(backupPath, migrationsPath);
-        this.logger.warn(`Recovered migration history of "${path.basename(path.dirname(projectPath))}" from "${backupPath}".`);
+        this.logger.warn(
+            `Recovered migration history of "${path.basename(path.dirname(projectPath))}" from "${backupPath}".`,
+        );
     }
 
     private async preserveMigrations(projectPath: string): Promise<string> {
         const migrationsPath = path.join(projectPath, 'prisma', 'migrations');
         const projectParent = path.dirname(projectPath);
         const projectName = path.basename(projectPath);
-        const temporaryPath = path.join(projectParent, `.migration-preservation-${projectName}-${Date.now()}-${process.pid}`);
+        const temporaryPath = path.join(
+            projectParent,
+            `.migration-preservation-${projectName}-${Date.now()}-${process.pid}`,
+        );
 
         await fs.rename(migrationsPath, temporaryPath);
         return temporaryPath;
@@ -477,7 +571,10 @@ export class ProjectScaffolderService {
         const projectPath = path.dirname(uploadsPath);
         const projectParent = path.dirname(projectPath);
         const projectName = path.basename(projectPath);
-        const temporaryPath = path.join(projectParent, `.uploads-preservation-${projectName}-${Date.now()}-${process.pid}`);
+        const temporaryPath = path.join(
+            projectParent,
+            `.uploads-preservation-${projectName}-${Date.now()}-${process.pid}`,
+        );
 
         try {
             await fs.rename(uploadsPath, temporaryPath);

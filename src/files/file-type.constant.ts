@@ -7,10 +7,10 @@ import { FileCategory } from '@prismamodels/client';
 export interface FileTypeSpec {
     /** High-level file categorization for business logic and filtering. */
     category: FileCategory;
-    
+
     /** Standardized file extension for safe storage naming conventions. */
     extension: string;
-    
+
     /** Maximum allowed file size in Megabytes for this specific MIME type. */
     maxSizeMb: number;
 }

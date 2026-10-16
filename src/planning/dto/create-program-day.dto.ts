@@ -9,7 +9,6 @@ import { CreateProgramEntryDto } from './create-program-entry.dto';
  * "2 or 3 days a week" program (e.g. Monday/Wednesday/Saturday) simply omits the other days.
  */
 export class CreateProgramDayDto {
-
     /**
      * Which day of the week this entry list applies to.
      */

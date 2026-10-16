@@ -8,7 +8,6 @@ const GRANTABLE_KEYS = Object.values(PLATFORM_PERMISSIONS);
  * Never usable on the system "ADMIN" role - see `PlatformRolesService.update()`.
  */
 export class UpdatePlatformRoleDto {
-
     @IsOptional()
     @IsString()
     @Length(2, 50)
@@ -21,5 +20,4 @@ export class UpdatePlatformRoleDto {
     @ArrayMaxSize(GRANTABLE_KEYS.length)
     @IsIn(GRANTABLE_KEYS, { each: true })
     permissions?: PlatformPermissionKey[];
-
 }

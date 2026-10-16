@@ -10,15 +10,12 @@ import { generateSchedulerFiles } from './generators/scheduler.generator';
  * @param config - Service configuration key-value dictionary.
  * @returns Promise resolving to an array of generated NestJS module references (`BlueprintModuleRef[]`).
  */
-type FileGenerator = (
-    projectPath: string,
-    config: Record<string, unknown>,
-) => Promise<BlueprintModuleRef[]>;
+type FileGenerator = (projectPath: string, config: Record<string, unknown>) => Promise<BlueprintModuleRef[]>;
 
 /**
  * Mapping table associating service keys (e.g., 'auth-user', 'mailing', 'scheduler')
  * with their corresponding file code generator functions.
- * * Enables dynamic invocation during application build / generation pipelines based on 
+ * * Enables dynamic invocation during application build / generation pipelines based on
  * activated platform service keys.
  */
 export const SERVICE_FILE_GENERATORS: Record<string, FileGenerator> = {

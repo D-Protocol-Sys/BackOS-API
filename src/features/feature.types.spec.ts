@@ -13,11 +13,12 @@ const valid = (overrides: Partial<FeatureManifest> = {}): FeatureManifest => ({
 });
 
 describe('defineFeature / assertValidManifest', () => {
-
     it('accepts a valid manifest and freezes it', () => {
-        const manifest = defineFeature(valid({
-            permissions: { 'demo-board.read': 'View boards' },
-        }));
+        const manifest = defineFeature(
+            valid({
+                permissions: { 'demo-board.read': 'View boards' },
+            }),
+        );
 
         expect(manifest.name).toBe('demo-board');
         expect(Object.isFrozen(manifest)).toBe(true);
@@ -32,15 +33,21 @@ describe('defineFeature / assertValidManifest', () => {
         ['a non-boolean defaultEnabled', { defaultEnabled: 'no' as unknown as boolean }],
         ['a module that is not a class', { module: {} as never }],
     ])('rejects %s', (_label, overrides) => {
-        expect(() => assertValidManifest(valid(overrides as Partial<FeatureManifest>))).toThrow(/Invalid feature manifest/);
+        expect(() => assertValidManifest(valid(overrides as Partial<FeatureManifest>))).toThrow(
+            /Invalid feature manifest/,
+        );
     });
 
     it('requires permissions to be namespaced with the feature name', () => {
-        expect(() => assertValidManifest(valid({ permissions: { 'users.read': 'x' } }))).toThrow(/must start with "demo-board\."/);
+        expect(() => assertValidManifest(valid({ permissions: { 'users.read': 'x' } }))).toThrow(
+            /must start with "demo-board\."/,
+        );
     });
 
     it('requires a description for every permission', () => {
-        expect(() => assertValidManifest(valid({ permissions: { 'demo-board.read': '' } }))).toThrow(/needs a description/);
+        expect(() => assertValidManifest(valid({ permissions: { 'demo-board.read': '' } }))).toThrow(
+            /needs a description/,
+        );
     });
 
     it('requires environment variables to carry the feature prefix', () => {

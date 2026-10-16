@@ -9,7 +9,6 @@ import { CreateProgramEntryDto } from './create-program-entry.dto';
  * or to change just one day's content (e.g. next week's Monday workout changes).
  */
 export class ReplaceProgramDayDto {
-
     /**
      * The recurring items scheduled on this day (can be empty to clear the day).
      */

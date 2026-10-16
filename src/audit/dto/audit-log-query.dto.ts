@@ -2,11 +2,10 @@ import { IsOptional, IsInt, Min, Max } from 'class-validator';
 import { Type } from 'class-transformer';
 
 /**
- * Data Transfer Object (DTO) used to validate and transform 
+ * Data Transfer Object (DTO) used to validate and transform
  * incoming query parameters for retrieving audit logs.
  */
 export class AuditLogQueryDto {
-
     /**
      * Optional 'limit' parameter to control pagination/result size.
      * * @IsOptional() - Allows the field to be omitted without failing validation.

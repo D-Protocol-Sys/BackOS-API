@@ -49,10 +49,7 @@ export class MessagesService {
         const existing = await this.prisma.conversation.findFirst({
             where: {
                 type: 'DIRECT',
-                AND: [
-                    { participants: { some: { userId: userAId } } },
-                    { participants: { some: { userId: userBId } } },
-                ],
+                AND: [{ participants: { some: { userId: userAId } } }, { participants: { some: { userId: userBId } } }],
             },
         });
         if (existing) return existing;
@@ -132,7 +129,10 @@ export class MessagesService {
         // PERF FIX (PERF-001): one aggregated query for every conversation's unread count,
         // instead of 2 queries per conversation on an endpoint the frontend polls.
         const conversationIds = all.map((conv) => conv.id);
-        const unreadRows = conversationIds.length === 0 ? [] : await this.prisma.$queryRaw<{ conversationId: string; unread: bigint }[]>`
+        const unreadRows =
+            conversationIds.length === 0
+                ? []
+                : await this.prisma.$queryRaw<{ conversationId: string; unread: bigint }[]>`
             SELECT m."conversationId" AS "conversationId", count(*) AS unread
             FROM messages m
             LEFT JOIN conversation_reads r

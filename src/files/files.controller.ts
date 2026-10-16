@@ -1,5 +1,15 @@
 import {
-    Controller, Post, Get, Delete, Param, Query, Body, UploadedFile, UseInterceptors, UseGuards, Res, NotFoundException,
+    Controller,
+    Post,
+    Get,
+    Delete,
+    Param,
+    Body,
+    UploadedFile,
+    UseInterceptors,
+    UseGuards,
+    Res,
+    NotFoundException,
 } from '@nestjs/common';
 import { Throttle, ThrottlerGuard } from '@nestjs/throttler';
 import { FileInterceptor } from '@nestjs/platform-express';
@@ -18,7 +28,7 @@ import { streamFileToResponse } from '../common/utils/stream-file.util';
 type Actor = { userId: string; permissions: string[] };
 
 /**
- * NestJS Controller responsible for HTTP endpoints handling file uploads, 
+ * NestJS Controller responsible for HTTP endpoints handling file uploads,
  * metadata retrieval, secure stream downloading, and file deletions.
  */
 @ApiTags('files')

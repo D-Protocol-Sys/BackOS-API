@@ -25,9 +25,7 @@ export function buildContentDisposition(originalName: string): string {
     // ASCII-only fallback: strip anything outside the printable ASCII range and drop characters
     // that would otherwise need escaping inside a quoted-string, so this half never needs its
     // own percent-encoding.
-    const asciiFallback = originalName
-        .replace(/[^\x20-\x7E]/g, '_')
-        .replace(/["\\]/g, '_') || 'download';
+    const asciiFallback = originalName.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '_') || 'download';
 
     // RFC 5987 `attr-char` = ALPHA / DIGIT / "!" / "#" / "$" / "&" / "+" / "-" / "." / "^" / "_"
     // / "`" / "|" / "~". Everything else - including characters `encodeURIComponent` leaves

@@ -1,11 +1,11 @@
-import { 
+import {
     BadRequestException,
-    Body, 
-    Controller, 
-    Delete, 
-    Get, 
-    Param, 
-    Patch, 
+    Body,
+    Controller,
+    Delete,
+    Get,
+    Param,
+    Patch,
     Post,
     Req,
     Res,
@@ -70,10 +70,7 @@ export class UsersController {
     @ApiOperation({ summary: 'Update basic user credentials (e.g. personal email)' })
     @ApiOkResponse({ description: 'User credentials updated successfully.' })
     @Patch('me')
-    updateMe(
-        @CurrentUser() user: { userId: string },
-        @Body() dto: UpdateProfileDetailsDto,
-    ) {
+    updateMe(@CurrentUser() user: { userId: string }, @Body() dto: UpdateProfileDetailsDto) {
         return this.usersService.updateMe(user.userId, dto);
     }
 
@@ -93,10 +90,7 @@ export class UsersController {
     @ApiOperation({ summary: 'Upsert extended profile details for current user' })
     @ApiOkResponse({ description: 'Extended profile details updated successfully.' })
     @Patch('me/profile-details')
-    updateMyProfileDetails(
-        @CurrentUser() user: { userId: string }, 
-        @Body() dto: UpdateProfileDetailsDto,
-    ) {
+    updateMyProfileDetails(@CurrentUser() user: { userId: string }, @Body() dto: UpdateProfileDetailsDto) {
         return this.usersService.updateMyProfileDetails(user.userId, dto);
     }
 
@@ -161,11 +155,7 @@ export class UsersController {
     @ApiOperation({ summary: 'Delete own user account permanently (requires fresh TOTP code)' })
     @ApiOkResponse({ description: 'User account deleted successfully.' })
     @Delete('me')
-    deleteMe(
-        @CurrentUser() user: { userId: string },
-        @Body() dto: DeleteOwnAccountDto,
-        @Req() req: Request,
-    ) {
+    deleteMe(@CurrentUser() user: { userId: string }, @Body() dto: DeleteOwnAccountDto, @Req() req: Request) {
         return this.usersService.deleteOwnAccount(user.userId, dto.totpCode, extractContext(req));
     }
 
@@ -224,11 +214,7 @@ export class UsersController {
     @ApiOkResponse({ description: 'Target user administrative details updated successfully.' })
     @RequirePermissions(PERMISSIONS.USERS_UPDATE)
     @Patch(':id')
-    updateUser(
-        @CurrentUser() actor: { userId: string },
-        @Param('id') id: string, 
-        @Body() dto: AdminUpdateUserDto,
-    ) {
+    updateUser(@CurrentUser() actor: { userId: string }, @Param('id') id: string, @Body() dto: AdminUpdateUserDto) {
         return this.usersService.updateUser(actor.userId, id, dto);
     }
 
@@ -240,7 +226,7 @@ export class UsersController {
     @RequirePermissions(PERMISSIONS.USERS_DEACTIVATE)
     @Patch(':id/deactivate')
     deactivateUser(
-        @CurrentUser() actor: { userId: string }, 
+        @CurrentUser() actor: { userId: string },
         @Param('id') id: string,
         @Body() dto: ChangeUserStatusDto,
     ) {
@@ -254,11 +240,7 @@ export class UsersController {
     @ApiOkResponse({ description: 'User account reactivated successfully.' })
     @RequirePermissions(PERMISSIONS.USERS_DEACTIVATE)
     @Patch(':id/activate')
-    activateUser(
-        @CurrentUser() actor: { userId: string }, 
-        @Param('id') id: string,
-        @Body() dto: ChangeUserStatusDto,
-    ) {
+    activateUser(@CurrentUser() actor: { userId: string }, @Param('id') id: string, @Body() dto: ChangeUserStatusDto) {
         return this.usersService.activateUser(actor.userId, id, dto);
     }
 
@@ -306,11 +288,7 @@ export class UsersController {
     @ApiOkResponse({ description: 'Role assigned to user successfully.' })
     @RequirePermissions(PERMISSIONS.USERS_MANAGE_ROLES)
     @Post(':id/roles')
-    assignRole(
-        @CurrentUser() actor: { userId: string },
-        @Param('id') id: string,
-        @Body() dto: AssignRoleDto,
-    ) {
+    assignRole(@CurrentUser() actor: { userId: string }, @Param('id') id: string, @Body() dto: AssignRoleDto) {
         return this.usersService.assignRole(actor.userId, id, dto.roleId);
     }
 
@@ -321,11 +299,7 @@ export class UsersController {
     @ApiOkResponse({ description: 'Role revoked from user successfully.' })
     @RequirePermissions(PERMISSIONS.USERS_MANAGE_ROLES)
     @Delete(':id/roles/:roleId')
-    removeRole(
-        @CurrentUser() actor: { userId: string },
-        @Param('id') id: string,
-        @Param('roleId') roleId: string,
-    ) {
+    removeRole(@CurrentUser() actor: { userId: string }, @Param('id') id: string, @Param('roleId') roleId: string) {
         return this.usersService.removeRole(actor.userId, id, roleId);
     }
 

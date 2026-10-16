@@ -19,7 +19,6 @@ import { CurrentUser } from '../common/decorators/current-user.decorator';
 @ApiBearerAuth('access-token')
 @Controller('contracts')
 export class ContractsController {
-
     constructor(private readonly clientsService: ClientsService) {}
 
     /**
@@ -77,11 +76,7 @@ export class ContractsController {
     @ApiParam({ name: 'id', description: 'Contract unique identifier' })
     @ApiResponse({ status: 200, description: 'Contract archived successfully.' })
     @ApiResponse({ status: 404, description: 'Contract not found.' })
-    archive(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    archive(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.archiveContract(id, userId, {
             ipAddress: req.ip,
             userAgent: req.headers['user-agent'],
@@ -100,11 +95,7 @@ export class ContractsController {
     @ApiParam({ name: 'id', description: 'Contract unique identifier' })
     @ApiResponse({ status: 200, description: 'Contract restored successfully.' })
     @ApiResponse({ status: 404, description: 'Contract not found.' })
-    restore(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    restore(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.restoreContract(id, userId, {
             ipAddress: req.ip,
             userAgent: req.headers['user-agent'],
@@ -124,11 +115,7 @@ export class ContractsController {
     @ApiParam({ name: 'id', description: 'Contract unique identifier' })
     @ApiResponse({ status: 200, description: 'Contract permanently deleted.' })
     @ApiResponse({ status: 404, description: 'Contract not found.' })
-    purge(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    purge(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.purgeContract(id, userId, {
             ipAddress: req.ip,
             userAgent: req.headers['user-agent'],

@@ -23,7 +23,7 @@ describe('CryptoService', () => {
     });
 
     describe('encrypt / decrypt (clé dérivée par hash, hex)', () => {
-        it('un round-trip restitue exactement la valeur d\'origine', () => {
+        it("un round-trip restitue exactement la valeur d'origine", () => {
             const plain = 'JBSWY3DPEHPK3PXP'; // forme typique d'un secret TOTP en base32
             const ciphertext = service.encrypt(plain);
             expect(service.decrypt(ciphertext)).toBe(plain);
@@ -55,7 +55,7 @@ describe('CryptoService', () => {
     });
 
     describe('encryptWithRawKey / decryptWithRawKey (clé fournie, base64)', () => {
-        it('un round-trip restitue exactement la valeur d\'origine', () => {
+        it("un round-trip restitue exactement la valeur d'origine", () => {
             const plain = 'mot-de-passe-genere-pour-une-db-de-plateforme';
             const ciphertext = service.encryptWithRawKey(plain, encryptionKeyHex);
             expect(service.decryptWithRawKey(ciphertext, encryptionKeyHex)).toBe(plain);

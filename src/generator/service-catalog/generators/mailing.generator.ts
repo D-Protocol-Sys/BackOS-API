@@ -6,7 +6,6 @@ export async function generateMailingFiles(
     projectPath: string,
     config: Record<string, unknown>,
 ): Promise<BlueprintModuleRef[]> {
-
     await fs.mkdir(path.join(projectPath, 'src', 'mail', 'dto'), { recursive: true });
 
     const requiresAuth = config.requiresAuth === true || config.requiresAuth === 'true';
@@ -17,7 +16,6 @@ export async function generateMailingFiles(
     const guardDecorator = requiresAuth ? '  @UseGuards(JwtAuthGuard, InternalOnlyGuard)\n' : '';
 
     const files: Record<string, string> = {
-
         'src/mail/mail.service.ts': `
             import { Injectable, Logger } from '@nestjs/common';
             import * as nodemailer from 'nodemailer';

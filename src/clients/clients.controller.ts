@@ -29,7 +29,6 @@ import { Public } from '../common/decorators/public.decorator';
 @ApiBearerAuth('access-token')
 @Controller('clients')
 export class ClientsController {
-
     constructor(private readonly clientsService: ClientsService) {}
 
     // ==========================================
@@ -100,10 +99,7 @@ export class ClientsController {
         status: 404,
         description: 'Invalid or expired token.',
     })
-    submitByToken(
-        @Query('token') token: string,
-        @Body() dto: SubmitTestimonialDto,
-    ) {
+    submitByToken(@Query('token') token: string, @Body() dto: SubmitTestimonialDto) {
         return this.clientsService.submitTestimonialByToken(token, dto);
     }
 
@@ -138,14 +134,10 @@ export class ClientsController {
         status: 409,
         description: 'Conflict: Email already exists.',
     })
-    create(
-        @Body() dto: CreateClientDto,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    create(@Body() dto: CreateClientDto, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.create(dto, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -162,7 +154,12 @@ export class ClientsController {
     @ApiQuery({ name: 'page', required: false, type: Number, example: 1 })
     @ApiQuery({ name: 'limit', required: false, type: Number, example: 20 })
     @ApiQuery({ name: 'status', required: false, type: String })
-    @ApiQuery({ name: 'includeArchived', required: false, type: Boolean, description: 'Include archived clients (excluded by default)' })
+    @ApiQuery({
+        name: 'includeArchived',
+        required: false,
+        type: Boolean,
+        description: 'Include archived clients (excluded by default)',
+    })
     @ApiResponse({
         status: 200,
         description: 'Paginated client list retrieved successfully.',
@@ -259,8 +256,8 @@ export class ClientsController {
         @Req() req: any,
     ) {
         return this.clientsService.update(id, dto, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -287,14 +284,10 @@ export class ClientsController {
         status: 404,
         description: 'Client not found.',
     })
-    remove(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    remove(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.archive(id, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -317,14 +310,10 @@ export class ClientsController {
         status: 404,
         description: 'Client not found.',
     })
-    restore(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    restore(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.restore(id, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -349,14 +338,10 @@ export class ClientsController {
         status: 404,
         description: 'Client not found.',
     })
-    purge(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    purge(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.purge(id, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -383,14 +368,10 @@ export class ClientsController {
         status: 404,
         description: 'Client not found.',
     })
-    generateInvite(
-        @Param('id') id: string,
-        @CurrentUser('userId') userId: string,
-        @Req() req: any,
-    ) {
+    generateInvite(@Param('id') id: string, @CurrentUser('userId') userId: string, @Req() req: any) {
         return this.clientsService.generateTestimonialInvite(id, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -407,10 +388,10 @@ export class ClientsController {
     @ApiParam({ name: 'id', description: 'Client unique identifier' })
     @ApiBody({
         schema: {
-        type: 'object',
-        properties: {
-            isPublic: { type: 'boolean', example: true },
-        },
+            type: 'object',
+            properties: {
+                isPublic: { type: 'boolean', example: true },
+            },
         },
     })
     @ApiResponse({
@@ -428,8 +409,8 @@ export class ClientsController {
         @Req() req: any,
     ) {
         return this.clientsService.toggleTestimonialVisibility(id, isPublic, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 
@@ -463,8 +444,8 @@ export class ClientsController {
         @Req() req: any,
     ) {
         return this.clientsService.addContract(clientId, dto, userId, {
-        ipAddress: req.ip,
-        userAgent: req.headers['user-agent'],
+            ipAddress: req.ip,
+            userAgent: req.headers['user-agent'],
         });
     }
 }

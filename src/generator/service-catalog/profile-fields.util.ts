@@ -35,7 +35,16 @@ export const MAX_PROFILE_FIELDS = 30;
  * profile field must not shadow.
  */
 const RESERVED_PROPERTY_NAMES = new Set([
-    'id', 'user', 'userId', 'email', 'firstName', 'lastName', 'isActive', 'profile', 'createdAt', 'updatedAt',
+    'id',
+    'user',
+    'userId',
+    'email',
+    'firstName',
+    'lastName',
+    'isActive',
+    'profile',
+    'createdAt',
+    'updatedAt',
 ]);
 
 /**

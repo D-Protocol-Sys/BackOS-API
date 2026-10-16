@@ -49,7 +49,11 @@ export class MessagesController {
     getMessages(@CurrentUser() actor: Actor, @Param('id') id: string, @Query('limit') limit?: string) {
         // API-002: bounded page size (1-200); invalid values fall back to the default.
         const parsed = limit ? Number.parseInt(limit, 10) : NaN;
-        return this.messagesService.getMessages(actor, id, Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : undefined);
+        return this.messagesService.getMessages(
+            actor,
+            id,
+            Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 200) : undefined,
+        );
     }
 
     /**
@@ -66,11 +70,7 @@ export class MessagesController {
      * @route POST /messages/direct/:userId
      */
     @Post('direct/:userId')
-    sendDirectMessage(
-        @CurrentUser() actor: Actor,
-        @Param('userId') userId: string,
-        @Body() dto: SendDirectMessageDto,
-    ) {
+    sendDirectMessage(@CurrentUser() actor: Actor, @Param('userId') userId: string, @Body() dto: SendDirectMessageDto) {
         return this.messagesService.sendDirectMessage(actor, userId, dto.content, dto.replyToId);
     }
 

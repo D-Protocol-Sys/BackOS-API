@@ -1,6 +1,4 @@
-import {
-    IsEnum, IsString, IsOptional, MinLength, MaxLength, IsInt, Min, Matches,
-} from 'class-validator';
+import { IsEnum, IsString, IsOptional, MinLength, MaxLength, IsInt, Min, Matches } from 'class-validator';
 import { PlanningItemType } from '@prismamodels/client';
 
 /**
@@ -13,7 +11,6 @@ import { PlanningItemType } from '@prismamodels/client';
  * what lets the same template repeat indefinitely across different real dates.
  */
 export class CreateProgramEntryDto {
-
     /**
      * Category of the templated item (e.g. TASK, EVENT, SHIFT...).
      * Must match a valid value defined in the `PlanningItemType` Prisma enum.

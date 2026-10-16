@@ -11,8 +11,6 @@ import { IsIn } from 'class-validator';
  *     `MessagesService.deleteMessage()`); clears the message content for all participants.
  */
 export class DeleteMessageDto {
-
     @IsIn(['me', 'everyone'])
     scope!: 'me' | 'everyone';
-
 }

@@ -4,12 +4,11 @@ import { generateSecret, generateURI, verify } from 'otplib';
 
 /**
  * Low-level utility service dedicated to Time-based One-Time Password (TOTP) operations.
- * * Acts as a wrapper around the `otplib` library to generate secrets, build OTP Auth URIs, 
+ * * Acts as a wrapper around the `otplib` library to generate secrets, build OTP Auth URIs,
  * and verify time-sensitive verification tokens.
  */
 @Injectable()
 export class TotpService {
-
     constructor(private readonly configService: ConfigService) {}
 
     /**

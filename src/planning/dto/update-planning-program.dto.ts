@@ -8,6 +8,4 @@ import { CreatePlanningProgramDto } from './create-planning-program.dto';
  * dedicated endpoints (`PUT/DELETE .../weeks/:weekIndex`, `PUT .../weeks/:weekIndex/days/:day`)
  * so that adding a new week never requires resending the entire program.
  */
-export class UpdatePlanningProgramDto extends PartialType(
-    OmitType(CreatePlanningProgramDto, ['weeks'] as const),
-) {}
+export class UpdatePlanningProgramDto extends PartialType(OmitType(CreatePlanningProgramDto, ['weeks'] as const)) {}

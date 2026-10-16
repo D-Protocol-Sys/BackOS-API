@@ -2,12 +2,11 @@ import { registerAs } from '@nestjs/config';
 
 /**
  * Bootstrap Owner Identity Configuration Namespace ('owner')
- * * Defines default credentials and information used during database seeding 
+ * * Defines default credentials and information used during database seeding
  * to instantiate the root System Owner (Genesis User).
  * Accessible via `ConfigService.get('owner.property')`.
  */
 export default registerAs('owner', () => ({
-
     /**
      * Primary work email address assigned to the initial system owner account.
      */
@@ -32,5 +31,4 @@ export default registerAs('owner', () => ({
      * Last name of the system owner account.
      */
     username: process.env.OWNER_USERNAME,
-
 }));

@@ -10,7 +10,6 @@ import { CreateProgramDayDto } from './create-program-day.dto';
  * content - see `PlanningProgramService`'s cycle-resolution helpers.
  */
 export class CreateProgramWeekDto {
-
     /**
      * 0-based position of this week inside the program's cycle (0 = first week, 1 = second
      * week, etc.). Must stay below the program's `cycleWeeks`.

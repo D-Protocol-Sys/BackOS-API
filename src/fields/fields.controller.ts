@@ -18,7 +18,6 @@ type Actor = { userId: string; permissions: string[] };
 @ApiBearerAuth('access-token')
 @Controller('platforms/:platformId/entities/:entityId/fields')
 export class FieldsController {
-    
     /**
      * @param fieldsService - Injected service handling domain logic and database operations for fields.
      */
@@ -32,11 +31,7 @@ export class FieldsController {
      * @param entityId - Extracted parent entity ID.
      */
     @Get()
-    list(
-        @CurrentUser() actor: Actor,
-        @Param('platformId') platformId: string,
-        @Param('entityId') entityId: string,
-    ) {
+    list(@CurrentUser() actor: Actor, @Param('platformId') platformId: string, @Param('entityId') entityId: string) {
         return this.fieldsService.list(actor, platformId, entityId);
     }
 

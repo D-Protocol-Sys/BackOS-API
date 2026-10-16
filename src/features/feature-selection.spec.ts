@@ -28,7 +28,6 @@ describe('parseFeatureList', () => {
 });
 
 describe('resolveEnabledFeatures', () => {
-
     it('keeps only the features enabled by default when nothing is set', () => {
         expect(enabled(undefined)).toEqual(['gamma']);
         expect(enabled('')).toEqual(['gamma']);
@@ -55,7 +54,9 @@ describe('resolveEnabledFeatures', () => {
 
     it('rejects an unknown name and lists the installed features', () => {
         expect(() => resolveEnabledFeatures(manifests, 'alpha,alpah')).toThrow(UnknownFeatureError);
-        expect(() => resolveEnabledFeatures(manifests, 'alpah')).toThrow(/"alpah".*Installed features: alpha, beta, gamma/);
+        expect(() => resolveEnabledFeatures(manifests, 'alpah')).toThrow(
+            /"alpah".*Installed features: alpha, beta, gamma/,
+        );
     });
 
     it('rejects an unknown name even with a dash', () => {

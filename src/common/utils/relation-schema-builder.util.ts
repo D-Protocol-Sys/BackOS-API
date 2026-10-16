@@ -1,22 +1,14 @@
-import {
-    computeRelationFieldsByEntity,
-    RelationRow,
-    EntityRef,
-    RelationFieldMeta,
-} from './relation-metadata.util';
+import { computeRelationFieldsByEntity, RelationRow, EntityRef, RelationFieldMeta } from './relation-metadata.util';
 
 /**
  * Generates formatted Prisma schema relation DSL lines grouped by entity ID.
- * * Transforms relation metadata into concrete standard Prisma schema syntax string declarations 
+ * * Transforms relation metadata into concrete standard Prisma schema syntax string declarations
  * for model definitions.
  * * @param entities - List of entity references mapping IDs to table names.
  * @param relations - List of active relationships between entities.
  * @returns A Map where key = entityId and value = array of formatted Prisma schema code lines.
  */
-export function buildRelationLinesByEntity(
-    entities: EntityRef[],
-    relations: RelationRow[],
-): Map<string, string[]> {
+export function buildRelationLinesByEntity(entities: EntityRef[], relations: RelationRow[]): Map<string, string[]> {
     // Calculates metadata attributes for all relations across entities
     const metaByEntity = computeRelationFieldsByEntity(entities, relations);
     const linesByEntity = new Map<string, string[]>();
@@ -24,7 +16,7 @@ export function buildRelationLinesByEntity(
     // Iterates through calculated metadata and maps each entry to its Prisma schema DSL string lines
     for (const [entityId, metas] of metaByEntity.entries()) {
         linesByEntity.set(
-            entityId, 
+            entityId,
             metas.flatMap((meta) => buildLinesForMeta(meta)),
         );
     }
@@ -32,7 +24,7 @@ export function buildRelationLinesByEntity(
 }
 
 /**
- * Helper function that translates a single `RelationFieldMeta` definition into 
+ * Helper function that translates a single `RelationFieldMeta` definition into
  * valid Prisma Schema Language (DSL) lines.
  * * @param meta - Metadata object describing the relation field.
  * @returns An array of code lines corresponding to the relation field declarations.

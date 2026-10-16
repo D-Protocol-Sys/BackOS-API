@@ -5,18 +5,12 @@ import { AuthModule } from '../auth/auth.module';
 import { PlatformAccessModule } from '../platforms/platform-access.module';
 
 @Module({
-
-    imports: [
-        AuthModule,
-        PlatformAccessModule,
-    ],
+    imports: [AuthModule, PlatformAccessModule],
 
     controllers: [UsersController],
 
     providers: [UsersService],
 
     exports: [UsersService],
-
 })
-
 export class UsersModule {}
