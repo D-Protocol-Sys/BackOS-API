@@ -1,0 +1,15 @@
+{
+  // Used ONLY by the end-to-end tests (see test/jest-e2e.json).
+  //
+  // The application is compiled with "module": "nodenext", which keeps `import()` calls as they
+  // are. The Prisma client loads its query engine with such a call, and Jest cannot run a dynamic
+  // import unless Node is started with --experimental-vm-modules, an option that in turn breaks
+  // loading the ES-module-only dependencies (otplib). Compiling the tests to CommonJS turns
+  // `import()` into `require()`, which Jest handles, with no experimental option.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "resolvePackageJsonExports": false
+  }
+}
