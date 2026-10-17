@@ -9,7 +9,18 @@
   "pnpm": {
     "overrides": {
       "deepmerge-ts": ">=8.0.0",
-      "mysql2": ">=3.22.0"
+      "mysql2": ">=3.22.0",
+      "handlebars@<4.7.10": "^4.7.10",
+      "proxy-addr@<2.0.8": "^2.0.8",
+      "multer@<2.3.0": "^2.3.0",
+      "find-my-way@<9.7.0": "^9.7.0",
+      "fast-uri@>=3.0.0 <3.1.7": "^3.1.7",
+      "js-yaml@>=3.0.0 <3.15.2": "^3.15.2",
+      "js-yaml@>=4.0.0 <4.3.2": "^4.3.2",
+      "js-yaml@>=5.0.0 <5.2.2": "^5.2.2",
+      "brace-expansion@<1.1.20": "^1.1.20",
+      "brace-expansion@>=2.0.0 <2.1.6": "^2.1.6",
+      "brace-expansion@>=4.0.0 <5.0.11": "^5.0.11"
     },
     "auditConfig": {
       "ignoreGhsas": [
@@ -30,7 +41,7 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand",
+    "test:e2e": "cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --runInBand",
     "test:e2e:migrate": "cross-env NODE_ENV=test prisma migrate deploy",
     "test:scripts": "node --test scripts/pr-check.test.mjs scripts/list-features.test.mjs scripts/new-feature.test.mjs",
     "feature:new": "node scripts/new-feature.mjs",

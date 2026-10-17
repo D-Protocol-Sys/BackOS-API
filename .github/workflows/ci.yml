@@ -264,7 +264,7 @@ jobs:
           [ -z "$CI_JWT_SECRET" ] || echo "JWT_SECRET=$CI_JWT_SECRET" >> .env.test
 
       - name: Boot the application and check the features
-        run: pnpm exec cross-env NODE_ENV=test jest --config ./test/jest-e2e.json --runInBand features.e2e-spec
+        run: pnpm exec cross-env NODE_ENV=test NODE_OPTIONS=--experimental-vm-modules jest --config ./test/jest-e2e.json --runInBand features.e2e-spec
 
       - name: Capture Docker Compose logs on job failure
         if: failure()
