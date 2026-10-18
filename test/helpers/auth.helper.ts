@@ -1,10 +1,8 @@
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
 import * as fs from 'fs';
-import * as path from 'path';
+import { OWNER_INVITATION_FILE } from './owner-invitation-file';
 import { generateTotpCode } from './totp.helper';
-
-const OWNER_INVITATION_FILE = path.resolve(__dirname, '..', '.e2e-owner-invitation.json');
 
 /**
  * Completes the owner's ONE-TIME activation (invitation -> MFA enrollment -> MFA confirm, see

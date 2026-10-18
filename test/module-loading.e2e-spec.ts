@@ -22,7 +22,10 @@ describe('module loading in the end-to-end tests', () => {
         // Port 1 is never open: the connection is expected to fail. What matters is that it fails
         // because of the unreachable database, and not because the engine could not be loaded.
         const client = new PrismaClient({
-            adapter: new PrismaPg({ connectionString: 'postgresql://u:p@127.0.0.1:1/db', connectionTimeoutMillis: 500 }),
+            adapter: new PrismaPg({
+                connectionString: 'postgresql://u:p@127.0.0.1:1/db',
+                connectionTimeoutMillis: 500,
+            }),
         });
 
         let message = '';

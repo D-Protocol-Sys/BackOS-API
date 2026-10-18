@@ -1,0 +1,105 @@
+diff --git a/.gitignore b/.gitignore
+index 42e8d0b..8c471f2 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -80,3 +80,6 @@ uploads/
+ 
+ # Owner activation details written by the production seed (SEC-031)
+ owner-activation.txt
++
++# Created by the end-to-end test setup (test/global-setup-e2e.ts) with a one-time owner token
++.e2e-owner-invitation.json
+diff --git a/test/global-setup-e2e.ts b/test/global-setup-e2e.ts
+index 8438c50..e863532 100644
+--- a/test/global-setup-e2e.ts
++++ b/test/global-setup-e2e.ts
+@@ -2,6 +2,7 @@ import * as path from 'path';
+ import * as fs from 'fs';
+ import * as dotenv from 'dotenv';
+ import { execSync } from 'child_process';
++import { OWNER_INVITATION_FILE } from './helpers/owner-invitation-file';
+ 
+ /**
+  * Jest `globalSetup` - runs ONCE in its own process before any test file, unlike `setupFiles`
+@@ -51,7 +52,7 @@ export default async function globalSetup() {
+     }
+ 
+     fs.writeFileSync(
+-        path.resolve(repoRoot, '.e2e-owner-invitation.json'),
++        OWNER_INVITATION_FILE,
+         JSON.stringify({ token: tokenMatch[1], code: codeMatch[1], workEmail: emailMatch[1] }, null, 2),
+     );
+ 
+diff --git a/test/global-teardown-e2e.ts b/test/global-teardown-e2e.ts
+index 35ff08d..1781edb 100644
+--- a/test/global-teardown-e2e.ts
++++ b/test/global-teardown-e2e.ts
+@@ -1,6 +1,7 @@
+ import * as path from 'path';
+ import * as fs from 'fs';
+ import { execSync } from 'child_process';
++import { OWNER_INVITATION_FILE } from './helpers/owner-invitation-file';
+ 
+ /**
+  * Jest `globalTeardown` - counterpart to global-setup-e2e.ts. Set KEEP_TEST_INFRA=1 to skip
+@@ -11,8 +12,7 @@ export default async function globalTeardown() {
+     // Contains the owner's raw activation token/code/email in plaintext (see
+     // global-setup-e2e.ts) - always removed, even when KEEP_TEST_INFRA=1 keeps the containers
+     // up, since a stale copy would let anyone with repo access activate that owner account.
+-    const invitationFile = path.resolve(__dirname, '..', '.e2e-owner-invitation.json');
+-    if (fs.existsSync(invitationFile)) fs.unlinkSync(invitationFile);
++    if (fs.existsSync(OWNER_INVITATION_FILE)) fs.unlinkSync(OWNER_INVITATION_FILE);
+ 
+     if (process.env.KEEP_TEST_INFRA === '1') {
+         console.log('[e2e] KEEP_TEST_INFRA=1 - leaving test infra running.');
+diff --git a/test/helpers/auth.helper.ts b/test/helpers/auth.helper.ts
+index 28eac6d..95fe09e 100644
+--- a/test/helpers/auth.helper.ts
++++ b/test/helpers/auth.helper.ts
+@@ -1,11 +1,9 @@
+ import request from 'supertest';
+ import { INestApplication } from '@nestjs/common';
+ import * as fs from 'fs';
+-import * as path from 'path';
++import { OWNER_INVITATION_FILE } from './owner-invitation-file';
+ import { generateTotpCode } from './totp.helper';
+ 
+-const OWNER_INVITATION_FILE = path.resolve(__dirname, '..', '.e2e-owner-invitation.json');
+-
+ /**
+  * Completes the owner's ONE-TIME activation (invitation -> MFA enrollment -> MFA confirm, see
+  * AuthController/AuthService: `POST /auth/invitation/consume` then `POST /auth/mfa/confirm`)
+diff --git a/test/helpers/owner-invitation-file.ts b/test/helpers/owner-invitation-file.ts
+new file mode 100644
+index 0000000..9b7132e
+--- /dev/null
++++ b/test/helpers/owner-invitation-file.ts
+@@ -0,0 +1,12 @@
++import * as path from 'path';
++
++/**
++ * Where the end-to-end setup leaves the owner's one-time invitation (token, code, e-mail).
++ *
++ * Three files use it: test/global-setup-e2e.ts writes it, test/helpers/auth.helper.ts reads it, and
++ * test/global-teardown-e2e.ts deletes it. They once each computed the path on their own, and the
++ * reader was one folder off, so no end-to-end test could sign in. Keep it in this one place.
++ *
++ * The file is at the root of the repository (ignored by Git).
++ */
++export const OWNER_INVITATION_FILE = path.resolve(__dirname, '..', '..', '.e2e-owner-invitation.json');
+diff --git a/test/module-loading.e2e-spec.ts b/test/module-loading.e2e-spec.ts
+index a814b52..b0c3318 100644
+--- a/test/module-loading.e2e-spec.ts
++++ b/test/module-loading.e2e-spec.ts
+@@ -22,7 +22,10 @@ describe('module loading in the end-to-end tests', () => {
+         // Port 1 is never open: the connection is expected to fail. What matters is that it fails
+         // because of the unreachable database, and not because the engine could not be loaded.
+         const client = new PrismaClient({
+-            adapter: new PrismaPg({ connectionString: 'postgresql://u:p@127.0.0.1:1/db', connectionTimeoutMillis: 500 }),
++            adapter: new PrismaPg({
++                connectionString: 'postgresql://u:p@127.0.0.1:1/db',
++                connectionTimeoutMillis: 500,
++            }),
+         });
+ 
+         let message = '';

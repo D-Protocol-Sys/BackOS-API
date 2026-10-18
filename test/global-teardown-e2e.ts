@@ -1,6 +1,7 @@
 import * as path from 'path';
 import * as fs from 'fs';
 import { execSync } from 'child_process';
+import { OWNER_INVITATION_FILE } from './helpers/owner-invitation-file';
 
 /**
  * Jest `globalTeardown` - counterpart to global-setup-e2e.ts. Set KEEP_TEST_INFRA=1 to skip
@@ -11,8 +12,7 @@ export default async function globalTeardown() {
     // Contains the owner's raw activation token/code/email in plaintext (see
     // global-setup-e2e.ts) - always removed, even when KEEP_TEST_INFRA=1 keeps the containers
     // up, since a stale copy would let anyone with repo access activate that owner account.
-    const invitationFile = path.resolve(__dirname, '..', '.e2e-owner-invitation.json');
-    if (fs.existsSync(invitationFile)) fs.unlinkSync(invitationFile);
+    if (fs.existsSync(OWNER_INVITATION_FILE)) fs.unlinkSync(OWNER_INVITATION_FILE);
 
     if (process.env.KEEP_TEST_INFRA === '1') {
         console.log('[e2e] KEEP_TEST_INFRA=1 - leaving test infra running.');

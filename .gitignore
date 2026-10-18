@@ -80,3 +80,6 @@ uploads/
 
 # Owner activation details written by the production seed (SEC-031)
 owner-activation.txt
+
+# Created by the end-to-end test setup (test/global-setup-e2e.ts) with a one-time owner token
+.e2e-owner-invitation.json

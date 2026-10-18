@@ -2,6 +2,7 @@ import * as path from 'path';
 import * as fs from 'fs';
 import * as dotenv from 'dotenv';
 import { execSync } from 'child_process';
+import { OWNER_INVITATION_FILE } from './helpers/owner-invitation-file';
 
 /**
  * Jest `globalSetup` - runs ONCE in its own process before any test file, unlike `setupFiles`
@@ -51,7 +52,7 @@ export default async function globalSetup() {
     }
 
     fs.writeFileSync(
-        path.resolve(repoRoot, '.e2e-owner-invitation.json'),
+        OWNER_INVITATION_FILE,
         JSON.stringify({ token: tokenMatch[1], code: codeMatch[1], workEmail: emailMatch[1] }, null, 2),
     );
 
