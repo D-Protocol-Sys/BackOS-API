@@ -1,8 +1,7 @@
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { AppModule } from '../src/app.module';
 import { bootstrapOwnerSession } from './helpers/auth.helper';
+import { createTestApp } from './helpers/create-test-app';
 
 /**
  * The critical path requested: generate a platform, start its Docker container for real, call
@@ -19,9 +18,7 @@ describe('Platform lifecycle (generate -> Docker start -> gateway call -> stop)'
     let accessToken: string;
 
     beforeAll(async () => {
-        const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-        app = moduleRef.createNestApplication();
-        await app.init();
+        app = await createTestApp();
 
         ({ accessToken } = await bootstrapOwnerSession(app));
     });

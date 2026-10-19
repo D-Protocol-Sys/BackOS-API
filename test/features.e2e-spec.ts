@@ -1,12 +1,11 @@
 import request from 'supertest';
 import { INestApplication } from '@nestjs/common';
-import { Test } from '@nestjs/testing';
-import { AppModule } from '../src/app.module';
 import { collectFeaturePermissions, discoverFeatures } from '../src/features/feature-registry';
 import { resolveEnabledFeatures } from '../src/features/feature-selection';
 import { FeaturesService } from '../src/features/features.service';
 import { PrismaService } from '../src/prisma/prisma.service';
 import { bootstrapOwnerSession } from './helpers/auth.helper';
+import { createTestApp } from './helpers/create-test-app';
 
 /**
  * Boots the REAL application with the ENABLED_FEATURES of the environment (the CI runs this file
@@ -25,9 +24,7 @@ describe(`Optional features (ENABLED_FEATURES="${process.env.ENABLED_FEATURES ??
     const expected = resolveEnabledFeatures(manifests, process.env.ENABLED_FEATURES);
 
     beforeAll(async () => {
-        const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-        app = moduleRef.createNestApplication();
-        await app.init();
+        app = await createTestApp();
 
         ({ accessToken } = await bootstrapOwnerSession(app));
     });

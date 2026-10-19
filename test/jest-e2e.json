@@ -4,10 +4,10 @@
   "testEnvironment": "node",
   "testRegex": ".e2e-spec.ts$",
   "transform": {
-    "^.+\\.(t|j)s$": ["ts-jest", { "tsconfig": "<rootDir>/../tsconfig.e2e.json" }]
+    "^.+\\.(t|j|mj)s$": ["ts-jest", { "tsconfig": "<rootDir>/../tsconfig.e2e.json" }]
   },
   "transformIgnorePatterns": [
-    "node_modules[\\\\/]\\.pnpm[\\\\/](?!(otplib|@otplib\\+[^@]+|@scure\\+[^@]+|@noble\\+[^@]+)@)"
+    "node_modules[\\\\/]\\.pnpm[\\\\/](?!(otplib|@otplib\\+[^@]+|@scure\\+[^@]+|@noble\\+[^@]+|http-proxy-middleware|httpxy|is-plain-obj)@)"
   ],
   "moduleNameMapper": {
     "^@prismamodels/(.*)$": "<rootDir>/../prisma/generated/prisma/$1",
